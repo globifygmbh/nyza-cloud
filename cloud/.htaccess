@@ -1,0 +1,36 @@
+# Nyza Cloud — Apache rewrite + Sicherheits-Deny
+# Dieser File geht zusammen mit nyza/ in den Webroot.
+
+RewriteEngine On
+
+# Wenn das angefragte File nicht existiert (z.B. /api/files, /s/abc, /u/xyz),
+# leite alles auf index.php — Slim übernimmt das Routing.
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]
+
+# Direkten Zugriff auf private Verzeichnisse blockieren.
+RedirectMatch 404 (?i)/(src|vendor|migrations|storage|config\.php|composer\.(json|lock))(/|$)
+
+# Long-cache für gehashte Assets von Vite
+<IfModule mod_expires.c>
+  ExpiresActive On
+  <FilesMatch "\.(?:js|css|woff2?|svg|png|jpg|jpeg|webp|avif)$">
+    ExpiresDefault "access plus 1 year"
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
+
+# Gzip / brotli compression — Apache normalerweise an, aber zur Sicherheit:
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml
+</IfModule>
+
+# Größere Uploads erlauben (greift nur bei mod_php; bei FPM in php.ini setzen).
+<IfModule mod_php.c>
+  php_value upload_max_filesize 2G
+  php_value post_max_size 2G
+  php_value max_execution_time 600
+  php_value max_input_time 600
+  php_value memory_limit 256M
+</IfModule>
