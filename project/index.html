@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8"/>
+<title>Nyza Cloud · Design Canvas</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; }
+  * { box-sizing: border-box; }
+  @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+  /* hide scrollbars inside artboards */
+  .dc-card *::-webkit-scrollbar { display: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="browser-window.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+
+<script type="text/babel" src="nyza-system.jsx"></script>
+<script type="text/babel" src="nyza-desktop.jsx"></script>
+<script type="text/babel" src="nyza-mobile.jsx"></script>
+
+<script type="text/babel">
+const NYZA_TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "violet",
+  "density": "cozy",
+  "blur": 40,
+  "radius": 1.2,
+  "fontPair": "inter",
+  "globalMode": "auto"
+}/*EDITMODE-END*/;
+
+// Theme wrapper that picks light/dark per artboard
+function Themed({ mode, children, frame }) {
+  const tw = (window.__nyzaTweaks) || NYZA_TWEAK_DEFAULTS;
+  return <NyzaTheme mode={mode} tweaks={tw}>{children}</NyzaTheme>;
+}
+
+// Browser window wrapper that uses theme bg as chrome content
+function ChromeFrame({ children, url = 'nyza.cloud', title = 'Nyza Cloud', w = 1280, h = 800 }) {
+  return (
+    <ChromeWindow tabs={[{ title }]} activeIndex={0} url={url} width={w} height={h}>
+      <div style={{ width: '100%', height: '100%' }}>{children}</div>
+    </ChromeWindow>
+  );
+}
+
+function App() {
+  const [tweaks, setTweaks] = useTweaks(NYZA_TWEAK_DEFAULTS);
+  // expose so screens can read in render
+  React.useEffect(() => { window.__nyzaTweaks = tweaks; }, [tweaks]);
+  window.__nyzaTweaks = tweaks;
+
+  // forced for canvas: each artboard has its own mode
+  const card = (mode, content, w = 1280, h = 800, url = 'nyza.cloud') => (
+    <Themed mode={mode}>
+      <ChromeFrame w={w} h={h} url={url}>{content}</ChromeFrame>
+    </Themed>
+  );
+
+  const phone = (mode, content) => (
+    <Themed mode={mode}>
+      <IOSDevice width={402} height={874} dark={mode === 'dark'}>
+        <NyzaTheme mode={mode} tweaks={tweaks} style={{ height: '100%' }}>{content}</NyzaTheme>
+      </IOSDevice>
+    </Themed>
+  );
+
+  return (
+    <>
+      <DesignCanvas>
+        <DCSection id="hero" title="Nyza Cloud" subtitle="Premium cloud storage · 2026 · Glassmorphism mit Apple-Niveau Polish">
+          <DCArtboard id="dashboard-dark" label="01 · Dashboard (Dark)" width={1280} height={800}>
+            {card('dark', <NyzaDashboard view="grid" theme="dark"/>)}
+          </DCArtboard>
+          <DCArtboard id="dashboard-light" label="02 · Dashboard (Light)" width={1280} height={800}>
+            {card('light', <NyzaDashboard view="grid" theme="light"/>)}
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="browse" title="Datei-Ansichten" subtitle="Liste, Galerie, Vollbild — gleiche Daten, drei Modi">
+          <DCArtboard id="list" label="03 · Liste mit Auswahl" width={1280} height={800}>
+            {card('dark', <NyzaListView theme="dark"/>)}
+          </DCArtboard>
+          <DCArtboard id="gallery" label="04 · Galerie-Ordner" width={1280} height={800}>
+            {card('dark', <NyzaGallery theme="dark"/>)}
+          </DCArtboard>
+          <DCArtboard id="viewer" label="05 · Bild-Viewer (Vollbild)" width={1280} height={800}>
+            {card('dark', <NyzaImageViewer/>)}
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="share" title="Teilen & Upload-Links" subtitle="Modal-Flows mit lebendiger Tiefe">
+          <DCArtboard id="share-modal" label="06 · Teilen-Modal" width={1280} height={800}>
+            {card('dark', <NyzaShareModal theme="dark"/>)}
+          </DCArtboard>
+          <DCArtboard id="upload-link-modal" label="07 · Upload-Link erstellen" width={1280} height={800}>
+            {card('dark', <NyzaUploadLinkModal theme="dark"/>)}
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="client" title="Kundenansicht — Share Pages" subtitle="WeTransfer-DNA · Portfolio-Niveau · keine Anmeldung">
+          <DCArtboard id="share-page-light" label="08 · Share-Seite (Light)" width={1280} height={800}>
+            {card('light', <NyzaSharePage/>, 1280, 800, 'nyza.cloud/s/q2-marken-2yk7d3')}
+          </DCArtboard>
+          <DCArtboard id="share-page-dark" label="09 · Share-Seite (Dark)" width={1280} height={800}>
+            {card('dark', <NyzaSharePage/>, 1280, 800, 'nyza.cloud/s/q2-marken-2yk7d3')}
+          </DCArtboard>
+          <DCArtboard id="upload-page" label="10 · Client-Upload-Seite" width={1280} height={800}>
+            {card('dark', <NyzaClientUploadPage/>, 1280, 800, 'nyza.cloud/u/lichtwerk-9k3m1')}
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="states" title="Upload-Flow & States" subtitle="Premium-Gefühl in jedem Schritt">
+          <DCArtboard id="upload-progress" label="11 · Upload läuft" width={1280} height={800}>
+            {card('dark', <NyzaUploadProgress/>, 1280, 800, 'nyza.cloud/u/lichtwerk-9k3m1')}
+          </DCArtboard>
+          <DCArtboard id="upload-success" label="12 · Upload erfolgreich" width={1280} height={800}>
+            {card('dark', <NyzaUploadSuccess/>, 1280, 800, 'nyza.cloud/u/lichtwerk-9k3m1')}
+          </DCArtboard>
+          <DCArtboard id="empty" label="13 · Empty / Onboarding" width={1280} height={800}>
+            {card('dark', <NyzaEmpty theme="dark"/>)}
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="mobile" title="Mobile" subtitle="iPhone-first · Liquid-Glass-Tab-Bar · große Touch-Flächen">
+          <DCArtboard id="m-dashboard-dark" label="14 · Dashboard (Dark)" width={402} height={874}>
+            {phone('dark', <NyzaMobileDashboard theme="dark"/>)}
+          </DCArtboard>
+          <DCArtboard id="m-dashboard-light" label="15 · Dashboard (Light)" width={402} height={874}>
+            {phone('light', <NyzaMobileDashboard theme="light"/>)}
+          </DCArtboard>
+          <DCArtboard id="m-upload" label="16 · Client Upload" width={402} height={874}>
+            {phone('dark', <NyzaMobileUpload/>)}
+          </DCArtboard>
+          <DCArtboard id="m-upload-light" label="17 · Client Upload (Light)" width={402} height={874}>
+            {phone('light', <NyzaMobileUpload/>)}
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+
+      <TweaksPanel title="Nyza Tweaks">
+        <TweakSection title="Akzentfarbe">
+          <TweakColor label="Gradient" value={tweaks.accent}
+            options={[
+              ['#7C5CFF', '#3B82F6'],
+              ['#FF7A59', '#FF3D8A'],
+              ['#00E5A8', '#00C2FF'],
+              ['#F5F5F5', '#A0A0A0'],
+            ]}
+            onChange={(v, i) => setTweaks('accent', ['violet','sunset','aurora','mono'][i] || 'violet')}/>
+        </TweakSection>
+        <TweakSection title="Typografie">
+          <TweakSelect label="Font Pairing" value={tweaks.fontPair}
+            options={[
+              { value: 'inter', label: 'Inter Tight + Inter (default)' },
+              { value: 'spaceGrotesk', label: 'Space Grotesk (geometric)' },
+              { value: 'dmSerif', label: 'Instrument Serif + Inter (editorial)' },
+            ]}
+            onChange={(v) => setTweaks('fontPair', v)}/>
+        </TweakSection>
+        <TweakSection title="Form">
+          <TweakSlider label="Radius scale" min={0.5} max={1.6} step={0.1} value={tweaks.radius}
+            onChange={(v) => setTweaks('radius', v)}/>
+          <TweakSlider label="Glass blur (px)" min={0} max={80} step={4} value={tweaks.blur}
+            onChange={(v) => setTweaks('blur', v)}/>
+          <TweakRadio label="Density" value={tweaks.density}
+            options={[{ value: 'cozy', label: 'Cozy' }, { value: 'compact', label: 'Compact' }]}
+            onChange={(v) => setTweaks('density', v)}/>
+        </TweakSection>
+      </TweaksPanel>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
