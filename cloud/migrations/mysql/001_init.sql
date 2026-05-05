@@ -1,5 +1,10 @@
--- Nyza Cloud · MySQL schema (MySQL 8.0+)
--- Charset: utf8mb4 + utf8mb4_0900_ai_ci. Engine: InnoDB (FK + transactional).
+-- Nyza Cloud · MySQL schema
+-- Charset: utf8 + utf8_unicode_ci. Works on MySQL 5.5+ and MariaDB 10+.
+-- Note: this is the legacy 3-byte utf8 (BMP only — no emoji in filenames /
+-- shared content). To use full 4-byte utf8mb4 instead, set
+--   'charset' => 'utf8mb4'
+-- in config.php AND swap CHARSET=utf8 → utf8mb4 + COLLATE here before
+-- the first migration runs. Engine: InnoDB (FK + transactional).
 
 -- IMPORTANT: each statement is single-statement so PDO::exec works without
 -- multi-query semantics. The migrate runner splits on `;` at line ends.
@@ -13,7 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
     storage_used    BIGINT UNSIGNED NOT NULL DEFAULT 0,
     created_at      TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY ux_users_email (email)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS folders (
     id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -28,7 +33,7 @@ CREATE TABLE IF NOT EXISTS folders (
     KEY ix_folders_parent (parent_id),
     CONSTRAINT fk_folders_user   FOREIGN KEY (user_id)   REFERENCES users(id)   ON DELETE CASCADE,
     CONSTRAINT fk_folders_parent FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS upload_links (
     id                      BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -49,7 +54,7 @@ CREATE TABLE IF NOT EXISTS upload_links (
     KEY ix_uplink_user (user_id),
     CONSTRAINT fk_uplink_user   FOREIGN KEY (user_id)   REFERENCES users(id)   ON DELETE CASCADE,
     CONSTRAINT fk_uplink_folder FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS files (
     id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -70,7 +75,7 @@ CREATE TABLE IF NOT EXISTS files (
     CONSTRAINT fk_files_user   FOREIGN KEY (user_id)        REFERENCES users(id)         ON DELETE CASCADE,
     CONSTRAINT fk_files_folder FOREIGN KEY (folder_id)      REFERENCES folders(id)       ON DELETE SET NULL,
     CONSTRAINT fk_files_uplink FOREIGN KEY (upload_link_id) REFERENCES upload_links(id)  ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS share_links (
     id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -89,7 +94,7 @@ CREATE TABLE IF NOT EXISTS share_links (
     CONSTRAINT fk_share_folder FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE,
     CONSTRAINT fk_share_file   FOREIGN KEY (file_id)   REFERENCES files(id)   ON DELETE CASCADE,
     CONSTRAINT chk_share_target CHECK (folder_id IS NOT NULL OR file_id IS NOT NULL)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS upload_sessions (
     id              CHAR(24)        NOT NULL PRIMARY KEY,
@@ -108,7 +113,7 @@ CREATE TABLE IF NOT EXISTS upload_sessions (
     KEY ix_us_uplink (upload_link_id),
     KEY ix_us_status_updated (status, updated_at),
     CONSTRAINT fk_us_uplink FOREIGN KEY (upload_link_id) REFERENCES upload_links(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS activity (
     id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -118,4 +123,4 @@ CREATE TABLE IF NOT EXISTS activity (
     created_at  TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY ix_activity_user (user_id, created_at),
     CONSTRAINT fk_activity_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;

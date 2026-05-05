@@ -205,7 +205,7 @@ final class SetupWizard
             echo '<form method="post" action="?step=config" class="form">';
             $this->field('db_host', 'MySQL Host', $values['db_host'], 'meist 127.0.0.1 oder localhost');
             $this->field('db_port', 'Port',       $values['db_port'], 'meist 3306');
-            $this->field('db_name', 'Datenbank-Name', $values['db_name'], 'die DB muss bereits existieren (CREATE DATABASE nyza CHARACTER SET utf8mb4)');
+            $this->field('db_name', 'Datenbank-Name', $values['db_name'], 'die DB muss bereits existieren (CREATE DATABASE nyza CHARACTER SET utf8)');
             $this->field('db_user', 'Benutzer',   $values['db_user'], '');
             $this->field('db_pass', 'Passwort',   $values['db_pass'], '', 'password');
             echo '<div class="actions">';
@@ -235,8 +235,10 @@ final class SetupWizard
         ];
 
         // Test the connection BEFORE writing config.php so a bad password
-        // doesn't leave a half-broken installation.
-        $dsn = "mysql:host={$values['db_host']};port={$values['db_port']};dbname={$values['db_name']};charset=utf8mb4";
+        // doesn't leave a half-broken installation. We probe with `utf8`
+        // because that's the schema default and what config.php will write —
+        // hosters with utf8mb4 still accept it (utf8 is a subset).
+        $dsn = "mysql:host={$values['db_host']};port={$values['db_port']};dbname={$values['db_name']};charset=utf8";
         try {
             $pdo = new \PDO($dsn, $values['db_user'], $values['db_pass'], [
                 \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
@@ -410,7 +412,7 @@ return [
         'name'    => '{$esc($v['db_name'])}',
         'user'    => '{$esc($v['db_user'])}',
         'pass'    => '{$esc($v['db_pass'])}',
-        'charset' => 'utf8mb4',
+        'charset' => 'utf8',
         'socket'  => '',
     ],
     'jwt_secret' => '{$jwtSecret}',

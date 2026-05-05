@@ -22,8 +22,15 @@ final class Database
         $name    = getenv('DB_NAME') ?: 'nyza';
         $user    = getenv('DB_USER') ?: 'root';
         $pass    = getenv('DB_PASS') ?: '';
-        $charset = getenv('DB_CHARSET') ?: 'utf8mb4';
+        // Default = legacy utf8 (3-byte). Schema is also utf8 so this matches.
+        // Hosters with full utf8mb4 can override via config['db']['charset'].
+        $charset = getenv('DB_CHARSET') ?: 'utf8';
         $socket  = getenv('DB_SOCKET') ?: '';
+
+        // Pick a collation that exists on whatever charset is configured.
+        // utf8mb4_0900_ai_ci is MySQL 8.0+ only; utf8_unicode_ci is the safe
+        // default that works on MySQL 5.5+/MariaDB 10+ regardless of edition.
+        $collation = $charset === 'utf8mb4' ? 'utf8mb4_unicode_ci' : 'utf8_unicode_ci';
 
         $dsn = $socket
             ? "mysql:unix_socket={$socket};dbname={$name};charset={$charset}"
@@ -34,7 +41,7 @@ final class Database
                 PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                 PDO::ATTR_EMULATE_PREPARES   => false,
-                PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES {$charset} COLLATE utf8mb4_0900_ai_ci, "
+                PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES {$charset} COLLATE {$collation}, "
                                               . "sql_mode='STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION', "
                                               . "time_zone='+00:00'",
             ]);
@@ -48,11 +55,13 @@ final class Database
 
     public static function migrate(PDO $pdo): void
     {
+        // No charset/collate clause — picks up the database's defaults, which
+        // line up with whatever charset Database::pdo() configured at connect.
         $pdo->exec(
             'CREATE TABLE IF NOT EXISTS schema_migrations ('
             . '  version VARCHAR(64) NOT NULL PRIMARY KEY,'
             . '  applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP'
-            . ') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+            . ') ENGINE=InnoDB'
         );
 
         $applied = [];

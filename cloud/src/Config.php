@@ -33,7 +33,7 @@ final class Config
         putenv('DB_NAME=' . ($db['name'] ?? 'nyza'));
         putenv('DB_USER=' . ($db['user'] ?? 'root'));
         putenv('DB_PASS=' . ($db['pass'] ?? ''));
-        putenv('DB_CHARSET=' . ($db['charset'] ?? 'utf8mb4'));
+        putenv('DB_CHARSET=' . ($db['charset'] ?? 'utf8'));
         putenv('DB_SOCKET=' . ($db['socket'] ?? ''));
 
         putenv('JWT_SECRET=' . ($cfg['jwt_secret'] ?? ''));

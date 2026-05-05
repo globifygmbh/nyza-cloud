@@ -13,14 +13,19 @@
  */
 
 return [
-    // ───── Datenbank (MySQL 8.0+) ────────────────────────────────────────────
+    // ───── Datenbank (MySQL 5.5+ / MariaDB 10+) ──────────────────────────────
     'db' => [
         'host'    => '127.0.0.1',
         'port'    => 3306,
         'name'    => 'nyza',          // CREATE DATABASE nyza vorher anlegen
         'user'    => 'nyza',
         'pass'    => 'CHANGE_ME',
-        'charset' => 'utf8mb4',
+        // Default: legacy 3-byte 'utf8' — funktioniert auch auf älteren/
+        // Shared-Hostern. Wenn dein Server volles utf8mb4 unterstützt (für
+        // Emojis in Filenames), hier 'utf8mb4' eintragen UND VOR dem ersten
+        // Setup das Schema in migrations/mysql/001_init.sql ebenfalls auf
+        // utf8mb4 umstellen.
+        'charset' => 'utf8',
         // Falls dein Hoster nur Unix-Socket erlaubt, hier den Pfad eintragen
         // und host/port leer lassen. Z.B.: '/var/run/mysqld/mysqld.sock'
         'socket'  => '',
