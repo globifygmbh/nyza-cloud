@@ -39,11 +39,16 @@ final class SetupWizard
             $this->processAdminForm();
             return;
         }
+        if ($method === 'POST' && $step === 'reset') {
+            $this->processResetForm();
+            return;
+        }
 
         switch ($step) {
             case 'config':  $this->renderConfigForm(); break;
             case 'admin':   $this->renderAdminForm(); break;
             case 'finish':  $this->renderFinish(); break;
+            case 'reset':   $this->renderResetConfirm(); break;
             case 'checks':
             default:        $this->renderChecks(); break;
         }
@@ -313,12 +318,36 @@ final class SetupWizard
             // submit handler will surface the real error.
         }
 
-        $this->page('Admin-Account anlegen', function () use ($error, $email) {
+        // If the error looks like a migration / FK / table-state issue, the
+        // user almost certainly wants the DB-reset button in front of them.
+        $isSchemaIssue = $error && (
+            stripos($error, 'migration') !== false ||
+            stripos($error, 'errno: 121') !== false ||
+            stripos($error, 'errno: 150') !== false ||
+            stripos($error, "doesn't exist") !== false ||
+            stripos($error, 'already exists') !== false
+        );
+
+        $justReset = isset($_GET['reset']);
+
+        $this->page('Admin-Account anlegen', function () use ($error, $email, $isSchemaIssue, $justReset) {
             echo '<h1>Setup · Admin-Account</h1>';
             echo '<p class="lede">Es gibt nur einen Account (dich). Eine öffentliche Registrierung ist deaktiviert. ';
             echo 'Trag deine E-Mail ein — die Wizard generiert ein zufälliges Passwort, das du danach (einmal!) zu sehen bekommst und änderst, sobald du eingeloggt bist.</p>';
 
-            if ($error) echo '<div class="err">✗ ' . htmlspecialchars($error) . '</div>';
+            if ($justReset && !$error) {
+                echo '<div class="ok-box" style="margin-bottom:18px">✓ DB wurde geleert — Schema wird beim Submit neu angelegt.</div>';
+            }
+
+            if ($error) {
+                echo '<div class="err">✗ ' . htmlspecialchars($error) . '</div>';
+                if ($isSchemaIssue) {
+                    echo '<div class="warn" style="margin-bottom:18px">';
+                    echo '🛠 Sieht aus wie ein Schema-Problem (alte Karteileichen aus einem fehlgeschlagenen Setup-Versuch). ';
+                    echo '<a href="?step=reset" class="btn" style="margin-left:8px">DB zurücksetzen…</a>';
+                    echo '</div>';
+                }
+            }
 
             echo '<form method="post" action="?step=admin" class="form">';
             $this->field('admin_email', 'Admin E-Mail', $email, 'für Login + Upload-Notifications', 'email');
@@ -383,6 +412,98 @@ final class SetupWizard
         // The plaintext password is passed to the finish page via a one-shot
         // server-side render (no redirect) so it never appears in URLs/history.
         $this->renderFinishWithCredentials($email, $password);
+    }
+
+    // ───── DB-Reset (Notausgang bei Migration-Fehlern) ───────────────────
+    //
+    // Drops *only* the tables this app owns (not arbitrary tables in a shared
+    // database). Disables FK-checks during the drop so orphaned constraints
+    // from a half-applied migration come off cleanly. Used after errno 121 /
+    // 150 / "table already exists" — anything where state from a previous
+    // failed run is blocking the next attempt.
+
+    /** Tables owned by Nyza, in dependency-safe drop order. */
+    private const OWNED_TABLES = [
+        'schema_migrations', 'activity', 'upload_sessions', 'share_links',
+        'files', 'upload_links', 'folders', 'users',
+    ];
+
+    private function renderResetConfirm(?string $error = null): void
+    {
+        if (!is_file($this->cloudDir . '/config.php')) {
+            header('Location: ?step=checks');
+            exit;
+        }
+        $this->page('Datenbank zurücksetzen', function () use ($error) {
+            echo '<h1>Setup · DB zurücksetzen</h1>';
+            echo '<p class="lede">Löscht <b>alle Nyza-Tabellen</b> in deiner Datenbank, damit das Setup mit einem sauberen Schema neu starten kann. Andere Tabellen in derselben DB bleiben unangetastet.</p>';
+
+            echo '<div class="warn" style="margin-bottom:18px">';
+            echo '⚠ <b>Daten gehen verloren.</b> Falls du schon Dateien hochgeladen hast, sind die danach in der DB nicht mehr referenziert (die Blobs in <code>storage/files/</code> bleiben physisch liegen — kannst du danach manuell aufräumen).';
+            echo '</div>';
+
+            echo '<p class="muted">Wird gedroppt (in dieser Reihenfolge):</p>';
+            echo '<ul class="checks">';
+            foreach (self::OWNED_TABLES as $t) {
+                echo '<li class="info"><span class="icon">·</span><div><code>' . htmlspecialchars($t) . '</code></div></li>';
+            }
+            echo '</ul>';
+
+            if ($error) echo '<div class="err">✗ ' . htmlspecialchars($error) . '</div>';
+
+            echo '<form method="post" action="?step=reset" class="form">';
+            echo '<label><span>Zur Bestätigung tippe <code>RESET</code> ein</span>';
+            echo '<input type="text" name="confirm" required autocomplete="off" placeholder="RESET"/>';
+            echo '</label>';
+            echo '<div class="actions">';
+            echo '<a href="?step=admin" class="btn">← Zurück</a>';
+            echo '<button type="submit" class="btn btn-primary">DB zurücksetzen</button>';
+            echo '</div>';
+            echo '</form>';
+        });
+    }
+
+    private function processResetForm(): void
+    {
+        if (!is_file($this->cloudDir . '/config.php')) {
+            header('Location: ?step=checks');
+            exit;
+        }
+        if (trim((string)($_POST['confirm'] ?? '')) !== 'RESET') {
+            $this->renderResetConfirm('Bestätigung fehlt — bitte exakt "RESET" eintippen.');
+            return;
+        }
+
+        try {
+            Config::load($this->cloudDir . '/config.php');
+            // Use a raw PDO (not Database::pdo, which would auto-migrate again
+            // and re-trigger whatever broke us).
+            $host    = getenv('DB_HOST') ?: '127.0.0.1';
+            $port    = (int)(getenv('DB_PORT') ?: 3306);
+            $name    = getenv('DB_NAME');
+            $user    = getenv('DB_USER');
+            $pass    = getenv('DB_PASS');
+            $charset = getenv('DB_CHARSET') ?: 'utf8';
+            $dsn = "mysql:host={$host};port={$port};dbname={$name};charset={$charset}";
+            $pdo = new \PDO($dsn, $user, $pass, [
+                \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+            ]);
+            $pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
+            foreach (self::OWNED_TABLES as $t) {
+                // Backtick-quote the table name to keep it safe even if a
+                // future entry in OWNED_TABLES contains a reserved word.
+                $pdo->exec('DROP TABLE IF EXISTS `' . $t . '`');
+            }
+            $pdo->exec('SET FOREIGN_KEY_CHECKS = 1');
+        } catch (\Throwable $e) {
+            $this->renderResetConfirm('Konnte DB nicht zurücksetzen: ' . $e->getMessage());
+            return;
+        }
+
+        // Send the user back to the admin step — Database::pdo() there will
+        // re-run migrations against the now-empty database.
+        header('Location: ?step=admin&reset=1');
+        exit;
     }
 
     private function randomPassword(int $len): string
