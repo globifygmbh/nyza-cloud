@@ -83,8 +83,14 @@ final class Database
             $pdo->beginTransaction();
             try {
                 foreach ($stmts as $s) {
+                    // Strip any combination of leading whitespace, blank lines,
+                    // and `--`-comment lines so a statement preceded by
+                    // explanatory comments still runs. Stops at the first
+                    // line that isn't whitespace and doesn't start with `--`.
+                    // Mid-statement comments are valid SQL and stay untouched.
+                    $s = preg_replace('/^\s*(?:--[^\n]*\R\s*)*/', '', $s);
                     $s = trim($s);
-                    if ($s === '' || str_starts_with($s, '--')) continue;
+                    if ($s === '') continue;
                     $pdo->exec($s);
                 }
                 $pdo->prepare('INSERT INTO schema_migrations (version) VALUES (?)')->execute([$version]);
