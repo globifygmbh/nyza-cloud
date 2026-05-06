@@ -191,7 +191,7 @@ final class SetupWizard
         $values = array_merge([
             'db_host' => '127.0.0.1',
             'db_port' => '3306',
-            'db_name' => 'nyza',
+            'db_name' => '',
             'db_user' => '',
             'db_pass' => '',
         ], $values);
@@ -205,7 +205,7 @@ final class SetupWizard
             echo '<form method="post" action="?step=config" class="form">';
             $this->field('db_host', 'MySQL Host', $values['db_host'], 'meist 127.0.0.1 oder localhost');
             $this->field('db_port', 'Port',       $values['db_port'], 'meist 3306');
-            $this->field('db_name', 'Datenbank-Name', $values['db_name'], 'die DB muss bereits existieren (CREATE DATABASE nyza CHARACTER SET utf8)');
+            $this->field('db_name', 'Datenbank-Name', $values['db_name'], 'genau so wie dein Hoster sie nennt — z.B. nicolas_db27 oder web123_nyza');
             $this->field('db_user', 'Benutzer',   $values['db_user'], '');
             $this->field('db_pass', 'Passwort',   $values['db_pass'], '', 'password');
             echo '<div class="actions">';

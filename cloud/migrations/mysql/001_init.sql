@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS users (
     UNIQUE KEY ux_users_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
+-- folders: the self-referencing parent_id FK is added AFTER the table is
+-- created. Inline self-FK in CREATE TABLE trips errno 150 ("Foreign key
+-- constraint is incorrectly formed") on some MariaDB and shared-host MySQL
+-- builds. Splitting it sidesteps the issue without changing semantics.
 CREATE TABLE IF NOT EXISTS folders (
     id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     user_id     BIGINT UNSIGNED NOT NULL,
@@ -31,9 +35,11 @@ CREATE TABLE IF NOT EXISTS folders (
     updated_at  TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY ix_folders_user (user_id),
     KEY ix_folders_parent (parent_id),
-    CONSTRAINT fk_folders_user   FOREIGN KEY (user_id)   REFERENCES users(id)   ON DELETE CASCADE,
-    CONSTRAINT fk_folders_parent FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE
+    CONSTRAINT fk_folders_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+ALTER TABLE folders
+    ADD CONSTRAINT fk_folders_parent FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE;
 
 CREATE TABLE IF NOT EXISTS upload_links (
     id                      BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -52,6 +58,7 @@ CREATE TABLE IF NOT EXISTS upload_links (
     created_at              TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY ux_uplink_token (token),
     KEY ix_uplink_user (user_id),
+    KEY ix_uplink_folder (folder_id),
     CONSTRAINT fk_uplink_user   FOREIGN KEY (user_id)   REFERENCES users(id)   ON DELETE CASCADE,
     CONSTRAINT fk_uplink_folder FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
@@ -77,6 +84,10 @@ CREATE TABLE IF NOT EXISTS files (
     CONSTRAINT fk_files_uplink FOREIGN KEY (upload_link_id) REFERENCES upload_links(id)  ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
+-- share_links: the "exactly one of folder_id/file_id is set" invariant is
+-- enforced in PHP (ShareRoutes::create checks before INSERT). A SQL CHECK
+-- constraint is silently ignored on MySQL ≤ 8.0.16 and triggers parser
+-- errors on a few older builds, so we don't ship one.
 CREATE TABLE IF NOT EXISTS share_links (
     id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     user_id         BIGINT UNSIGNED NOT NULL,
@@ -90,10 +101,11 @@ CREATE TABLE IF NOT EXISTS share_links (
     created_at      TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY ux_share_token (token),
     KEY ix_share_user (user_id),
+    KEY ix_share_folder (folder_id),
+    KEY ix_share_file (file_id),
     CONSTRAINT fk_share_user   FOREIGN KEY (user_id)   REFERENCES users(id)   ON DELETE CASCADE,
     CONSTRAINT fk_share_folder FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE,
-    CONSTRAINT fk_share_file   FOREIGN KEY (file_id)   REFERENCES files(id)   ON DELETE CASCADE,
-    CONSTRAINT chk_share_target CHECK (folder_id IS NOT NULL OR file_id IS NOT NULL)
+    CONSTRAINT fk_share_file   FOREIGN KEY (file_id)   REFERENCES files(id)   ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS upload_sessions (
@@ -115,11 +127,13 @@ CREATE TABLE IF NOT EXISTS upload_sessions (
     CONSTRAINT fk_us_uplink FOREIGN KEY (upload_link_id) REFERENCES upload_links(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 
+-- payload is TEXT (not JSON) so this works on MariaDB 10.0 and MySQL ≤ 5.7.7.
+-- We never query inside the payload — it's just a serialised event blob.
 CREATE TABLE IF NOT EXISTS activity (
     id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     user_id     BIGINT UNSIGNED NOT NULL,
     kind        VARCHAR(40)     NOT NULL,
-    payload     JSON            NOT NULL,
+    payload     TEXT            NOT NULL,
     created_at  TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY ix_activity_user (user_id, created_at),
     CONSTRAINT fk_activity_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
