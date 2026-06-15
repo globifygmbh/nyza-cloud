@@ -225,6 +225,10 @@ final class ShareRoutes
         $file = $stmt->fetch();
         if (!$file) return Json::err($res, 'Not found', 404);
 
-        return FileRoutes::stream($res, $file, true);
+        // Inline by default so the MediaViewer can preview images/video/PDF in
+        // place; force a download only when ?dl=1 is present (the explicit
+        // "Download" buttons append it).
+        $download = isset($req->getQueryParams()['dl']);
+        return FileRoutes::stream($res, $file, $download);
     }
 }

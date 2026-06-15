@@ -36,12 +36,15 @@ final class FileRoutes
         $limit = min(200, max(1, (int)($q['limit'] ?? 50)));
 
         $pdo = Database::pdo();
+        // $limit is inlined (already cast + clamped to an int above). Binding it
+        // as a parameter would break on MySQL with emulated prepares off —
+        // `LIMIT ?` receives the value as a string ('50') which is a syntax error.
         if ($folder === null) {
-            $stmt = $pdo->prepare('SELECT * FROM files WHERE user_id = ? ORDER BY created_at DESC LIMIT ?');
-            $stmt->execute([$uid, $limit]);
+            $stmt = $pdo->prepare("SELECT * FROM files WHERE user_id = ? ORDER BY created_at DESC LIMIT $limit");
+            $stmt->execute([$uid]);
         } else {
-            $stmt = $pdo->prepare('SELECT * FROM files WHERE user_id = ? AND folder_id = ? ORDER BY created_at DESC LIMIT ?');
-            $stmt->execute([$uid, $folder, $limit]);
+            $stmt = $pdo->prepare("SELECT * FROM files WHERE user_id = ? AND folder_id = ? ORDER BY created_at DESC LIMIT $limit");
+            $stmt->execute([$uid, $folder]);
         }
         return Json::ok($res, ['files' => $stmt->fetchAll()]);
     }

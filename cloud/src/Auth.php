@@ -43,11 +43,22 @@ final class Auth
 
     public static function fromRequest(Request $req): ?array
     {
+        // 1) Standard: Authorization: Bearer <jwt> header (used by fetch/XHR).
         $h = $req->getHeaderLine('Authorization');
-        if (!preg_match('/^Bearer\s+(.+)$/i', $h, $m)) {
-            return null;
+        if (preg_match('/^Bearer\s+(.+)$/i', $h, $m)) {
+            return self::decode($m[1]);
         }
-        return self::decode($m[1]);
+        // 2) Fallback: ?token=<jwt> query param. <img>/<video>/<iframe> tags and
+        //    direct download links can't set request headers, so media + raw
+        //    file endpoints accept the JWT via query string. It's the same
+        //    signed, short-lived token — acceptable for a single-user app served
+        //    over HTTPS. (Tokens can land in server logs; rely on TLS + the
+        //    30-day expiry, and never log query strings with secrets.)
+        $qs = $req->getQueryParams();
+        if (!empty($qs['token']) && is_string($qs['token'])) {
+            return self::decode($qs['token']);
+        }
+        return null;
     }
 
     public static function userId(Request $req): ?int

@@ -80,7 +80,15 @@ final class Database
             // inside string literals intact because we only split on `;` followed
             // by newline.
             $stmts = preg_split('/;\s*\R/', $sql) ?: [];
-            $pdo->beginTransaction();
+
+            // NOTE: no transaction wrapping. MySQL issues an *implicit commit*
+            // before every DDL statement (CREATE TABLE, ALTER TABLE, …), so a
+            // beginTransaction()/commit() pair around DDL is meaningless — the
+            // first CREATE TABLE silently ends the transaction, and the final
+            // commit() then throws "There is no active transaction". DDL simply
+            // can't be rolled back on MySQL. If a statement fails mid-file the
+            // schema is left partially built; the setup wizard's "DB
+            // zurücksetzen" button exists precisely to recover from that.
             try {
                 foreach ($stmts as $s) {
                     // Strip any combination of leading whitespace, blank lines,
@@ -94,9 +102,7 @@ final class Database
                     $pdo->exec($s);
                 }
                 $pdo->prepare('INSERT INTO schema_migrations (version) VALUES (?)')->execute([$version]);
-                $pdo->commit();
             } catch (\Throwable $e) {
-                $pdo->rollBack();
                 throw new \RuntimeException("Migration $version failed: " . $e->getMessage(), 0, $e);
             }
         }

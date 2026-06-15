@@ -104,8 +104,14 @@ export const API = {
   deleteShare: (id) => request('/api/shares/' + id, { method: 'DELETE' }),
   publicShare: (token, password) =>
     request('/api/s/' + token + (password ? '?p=' + encodeURIComponent(password) : ''), { skipAuth: true }),
-  shareFileUrl: (token, fileId, password) =>
-    url('/api/s/' + token + '/file/' + fileId + (password ? '?p=' + encodeURIComponent(password) : '')),
+  // download=true forces an attachment (the explicit Download buttons);
+  // omit it for inline preview in the MediaViewer.
+  shareFileUrl: (token, fileId, password, download = false) => {
+    const qs = [];
+    if (password) qs.push('p=' + encodeURIComponent(password));
+    if (download) qs.push('dl=1');
+    return url('/api/s/' + token + '/file/' + fileId + (qs.length ? '?' + qs.join('&') : ''));
+  },
   shareZipUrl: (token, password) =>
     url('/api/s/' + token + '/zip' + (password ? '?p=' + encodeURIComponent(password) : '')),
 

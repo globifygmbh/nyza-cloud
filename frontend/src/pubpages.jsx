@@ -128,7 +128,7 @@ export function PublicSharePage({ token }) {
                 </Btn>
               ) : (
                 <Btn variant="primary" size="xl" icon={Ic.download(20)}
-                  onClick={() => location.href = API.shareFileUrl(token, data.file.id, password)}>
+                  onClick={() => location.href = API.shareFileUrl(token, data.file.id, password, true)}>
                   Datei herunterladen
                 </Btn>
               )}
@@ -182,7 +182,7 @@ export function PublicSharePage({ token }) {
                   </div>
                   {data.allow_download && (
                     <Btn variant="glass" size="sm" icon={Ic.download(13)}
-                      onClick={(e) => { e.stopPropagation(); location.href = API.shareFileUrl(token, f.id, password); }}>
+                      onClick={(e) => { e.stopPropagation(); location.href = API.shareFileUrl(token, f.id, password, true); }}>
                       Download
                     </Btn>
                   )}
@@ -197,7 +197,7 @@ export function PublicSharePage({ token }) {
         <MediaViewer
           file={viewing}
           src={API.shareFileUrl(token, viewing.id, password)}
-          downloadHref={data.allow_download ? API.shareFileUrl(token, viewing.id, password) : null}
+          downloadHref={data.allow_download ? API.shareFileUrl(token, viewing.id, password, true) : null}
           onClose={() => setViewing(null)}
         />
       )}

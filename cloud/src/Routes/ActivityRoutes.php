@@ -21,9 +21,11 @@ final class ActivityRoutes
     public static function list(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        // $limit is inlined (cast + clamped). See FileRoutes::list — `LIMIT ?`
+        // with a bound param breaks on MySQL when emulated prepares are off.
         $limit = min(100, max(1, (int)($req->getQueryParams()['limit'] ?? 50)));
-        $stmt = Database::pdo()->prepare('SELECT id, kind, payload, created_at FROM activity WHERE user_id = ? ORDER BY created_at DESC LIMIT ?');
-        $stmt->execute([$uid, $limit]);
+        $stmt = Database::pdo()->prepare("SELECT id, kind, payload, created_at FROM activity WHERE user_id = ? ORDER BY created_at DESC LIMIT $limit");
+        $stmt->execute([$uid]);
         $rows = array_map(static function (array $r): array {
             $r['payload'] = json_decode((string)$r['payload'], true) ?: [];
             return $r;
@@ -49,7 +51,7 @@ final class ActivityRoutes
         $uplinks = $pdo->prepare('SELECT COUNT(*) AS c FROM upload_links WHERE user_id = ?');
         $uplinks->execute([$uid]);
 
-        $week = $pdo->prepare("SELECT COUNT(*) AS c FROM files WHERE user_id = ? AND created_at >= datetime('now', '-7 days')");
+        $week = $pdo->prepare('SELECT COUNT(*) AS c FROM files WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)');
         $week->execute([$uid]);
 
         $u = $pdo->prepare('SELECT storage_quota, storage_used FROM users WHERE id = ?');

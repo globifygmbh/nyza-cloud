@@ -100,23 +100,38 @@ final class FolderRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $id = (int)$args['id'];
-        // ON DELETE CASCADE removes child folders + files rows, but the file
-        // blobs on disk need explicit cleanup. Walk the folder tree first so
-        // we have the storage paths before the DELETE wipes the rows.
         $pdo = Database::pdo();
-        $blobs = $pdo->prepare(
-            'WITH RECURSIVE descendants (id) AS ('
-            . '  SELECT id FROM folders WHERE id = ? AND user_id = ?'
-            . '  UNION ALL'
-            . '  SELECT f.id FROM folders f JOIN descendants d ON f.parent_id = d.id WHERE f.user_id = ?'
-            . ') '
-            . 'SELECT storage_path FROM files WHERE user_id = ? AND folder_id IN (SELECT id FROM descendants)'
-        );
-        $blobs->execute([$id, $uid, $uid, $uid]);
+
+        // ON DELETE CASCADE removes child folders + files rows, but the file
+        // blobs on disk need explicit cleanup. Walk the folder subtree in PHP
+        // (breadth-first) instead of a recursive CTE — WITH RECURSIVE needs
+        // MySQL 8.0+ / MariaDB 10.2.2+, and this app must run on older shared
+        // hosts too.
+        $allIds = [$id];
+        $frontier = [$id];
+        $childStmt = $pdo->prepare('SELECT id FROM folders WHERE parent_id = ? AND user_id = ?');
+        $guard = 0;
+        while ($frontier && $guard++ < 10000) {
+            $next = [];
+            foreach ($frontier as $fid) {
+                $childStmt->execute([$fid, $uid]);
+                foreach ($childStmt->fetchAll() as $row) {
+                    $cid = (int)$row['id'];
+                    $allIds[] = $cid;
+                    $next[] = $cid;
+                }
+            }
+            $frontier = $next;
+        }
+
+        // Collect blob paths for every file in the subtree before deletion.
+        $place = implode(',', array_fill(0, count($allIds), '?'));
+        $blobs = $pdo->prepare("SELECT storage_path FROM files WHERE user_id = ? AND folder_id IN ($place)");
+        $blobs->execute(array_merge([$uid], $allIds));
         $paths = array_column($blobs->fetchAll(), 'storage_path');
 
-        $del = $pdo->prepare('DELETE FROM folders WHERE id = ? AND user_id = ?');
-        $del->execute([$id, $uid]);
+        // Deleting the root cascades the rest via FK ON DELETE CASCADE.
+        $pdo->prepare('DELETE FROM folders WHERE id = ? AND user_id = ?')->execute([$id, $uid]);
 
         foreach ($paths as $p) {
             \Nyza\Storage::deleteRel($p);
