@@ -109,6 +109,10 @@ final class ShareRoutes
 
     public static function unlock(Request $req, Response $res, array $args): Response
     {
+        // Brute-force guard: 10 password attempts / 5 min per token+IP.
+        if (!\Nyza\RateLimiter::allowReq($req, 'share_unlock', 10, 300, $args['token'])) {
+            return Json::err($res, 'Zu viele Versuche — bitte später erneut', 429, 'rate_limited');
+        }
         $share = self::loadByToken($args['token']);
         if (!$share) return Json::err($res, 'Not found', 404);
         $err = self::gate($share, $req);
@@ -152,7 +156,7 @@ final class ShareRoutes
             $f = $pdo->prepare('SELECT id, name, kind FROM folders WHERE id = ?');
             $f->execute([(int)$share['folder_id']]);
             $folder = $f->fetch();
-            $files = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue FROM files WHERE folder_id = ? ORDER BY created_at DESC');
+            $files = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
             $files->execute([(int)$share['folder_id']]);
             $payload['folder'] = $folder ?: null;
             $payload['files'] = $files->fetchAll();
@@ -176,7 +180,7 @@ final class ShareRoutes
         if ($err) return Json::err($res, $err['error'], $err['status']);
         if (!$share['folder_id']) return Json::err($res, 'Single file — use file endpoint', 400);
 
-        $files = Database::pdo()->prepare('SELECT * FROM files WHERE folder_id = ?');
+        $files = Database::pdo()->prepare('SELECT * FROM files WHERE folder_id = ? AND deleted_at IS NULL');
         $files->execute([(int)$share['folder_id']]);
         $rows = $files->fetchAll();
         if (!$rows) return Json::err($res, 'No files', 404);
@@ -220,7 +224,7 @@ final class ShareRoutes
             if (!$check->fetch()) return Json::err($res, 'Forbidden', 403);
         }
 
-        $stmt = $pdo->prepare('SELECT * FROM files WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT * FROM files WHERE id = ? AND deleted_at IS NULL');
         $stmt->execute([$fileId]);
         $file = $stmt->fetch();
         if (!$file) return Json::err($res, 'Not found', 404);

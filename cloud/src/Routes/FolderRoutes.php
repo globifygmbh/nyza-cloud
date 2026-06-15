@@ -31,8 +31,8 @@ final class FolderRoutes
         $pdo = Database::pdo();
 
         $sql = 'SELECT f.*, '
-             . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id) AS item_count, '
-             . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id) AS total_size '
+             . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
+             . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
              . 'FROM folders f WHERE user_id = ? '
              . ($parent === null ? 'AND parent_id IS NULL ' : 'AND parent_id = ? ')
              . 'ORDER BY updated_at DESC';
@@ -67,7 +67,7 @@ final class FolderRoutes
         $folder = self::fetchOne($uid, $id);
         if (!$folder) return Json::err($res, 'Not found', 404);
 
-        $files = Database::pdo()->prepare('SELECT * FROM files WHERE user_id = ? AND folder_id = ? ORDER BY created_at DESC');
+        $files = Database::pdo()->prepare('SELECT * FROM files WHERE user_id = ? AND folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
         $files->execute([$uid, $id]);
         $sub = Database::pdo()->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id = ?');
         $sub->execute([$uid, $id]);
@@ -143,8 +143,8 @@ final class FolderRoutes
     {
         $stmt = Database::pdo()->prepare(
             'SELECT f.*, '
-            . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id) AS item_count, '
-            . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id) AS total_size '
+            . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
+            . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
             . 'FROM folders f WHERE id = ? AND user_id = ?'
         );
         $stmt->execute([$id, $uid]);

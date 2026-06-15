@@ -77,3 +77,12 @@ function Root() {
 }
 
 createRoot(document.getElementById('root')).render(<Root/>);
+
+// PWA: register the service worker (served by PHP at <base>/sw.js with the
+// right Service-Worker-Allowed scope so it controls the whole app).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    const root = (BASE || '') + '/';
+    navigator.serviceWorker.register((BASE || '') + '/sw.js', { scope: root }).catch(() => {});
+  });
+}

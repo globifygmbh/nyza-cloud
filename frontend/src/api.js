@@ -73,6 +73,49 @@ function upload(path, file, extraFields = {}, onProgress) {
   });
 }
 
+// XHR raw-body PUT/POST for a single chunk (Blob), with progress + Bearer.
+function rawPut(path, blob, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url(path));
+    const token = getToken();
+    if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(Object.assign(new Error(data.error || 'Chunk failed'), { status: xhr.status, code: data.code }));
+      } catch { reject(new Error('Chunk failed (' + xhr.status + ')')); }
+    };
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.send(blob);
+  });
+}
+
+// Generic public-path POST with JSON body (no auth) — for client chunk flow.
+function pub(path, body) {
+  return request(path, { method: 'POST', body, skipAuth: true });
+}
+function pubRaw(path, blob, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url(path));
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+        else reject(Object.assign(new Error(data.error || 'Chunk failed'), { status: xhr.status, code: data.code }));
+      } catch { reject(new Error('Chunk failed (' + xhr.status + ')')); }
+    };
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.send(blob);
+  });
+}
+
 export const API = {
   // Auth — single-user model. Registration happens once via the setup wizard.
   login:          (body) => request('/api/auth/login', { method: 'POST', body, skipAuth: true }),
@@ -97,6 +140,17 @@ export const API = {
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
     body: JSON.stringify(body),
   }),
+  // Owner chunked/resumable upload (large files)
+  chunkInit:     (body) => request('/api/files/chunk/init', { method: 'POST', body }),
+  chunkStatus:   (sid) => request('/api/files/chunk/' + sid),
+  chunkAppend:   (sid, blob, onProgress) => rawPut('/api/files/chunk/' + sid, blob, onProgress),
+  chunkFinalize: (sid) => request('/api/files/chunk/' + sid + '/finalize', { method: 'POST', body: {} }),
+
+  // Trash (soft delete)
+  trash:        () => request('/api/trash'),
+  restoreFile:  (id) => request('/api/files/' + id + '/restore', { method: 'POST', body: {} }),
+  deleteForever:(id) => request('/api/files/' + id + '/permanent', { method: 'DELETE' }),
+  emptyTrash:   () => request('/api/trash/empty', { method: 'POST', body: {} }),
 
   // Shares
   shares:      () => request('/api/shares'),
@@ -128,6 +182,11 @@ export const API = {
     upload('/api/u/' + token + '/upload', file, {
       password: opts.password, uploader_name: opts.uploaderName,
     }, onProgress),
+  // Client chunked/resumable upload
+  clientChunkInit:     (token, body) => pub('/api/u/' + token + '/chunk/init', body),
+  clientChunkStatus:   (token, sid) => request('/api/u/' + token + '/chunk/' + sid, { skipAuth: true }),
+  clientChunkAppend:   (token, sid, blob, onProgress) => pubRaw('/api/u/' + token + '/chunk/' + sid, blob, onProgress),
+  clientChunkFinalize: (token, sid) => pub('/api/u/' + token + '/chunk/' + sid + '/finalize', {}),
 
   // Activity / stats
   activity: () => request('/api/activity'),

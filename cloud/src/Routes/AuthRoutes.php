@@ -29,6 +29,10 @@ final class AuthRoutes
 
     public static function login(Request $req, Response $res): Response
     {
+        // Brute-force guard: 10 attempts / 5 min per IP.
+        if (!\Nyza\RateLimiter::allowReq($req, 'login', 10, 300)) {
+            return Json::err($res, 'Zu viele Login-Versuche — bitte später erneut', 429, 'rate_limited');
+        }
         $b = (array) $req->getParsedBody();
         $email = trim((string)($b['email'] ?? ''));
         $password = (string)($b['password'] ?? '');

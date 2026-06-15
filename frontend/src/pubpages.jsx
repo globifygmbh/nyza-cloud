@@ -1,13 +1,14 @@
 // Public pages — no login. Mounted at /s/:token (share view) and /u/:token
 // (client upload). Both fetch from public endpoints; no Bearer auth.
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { API } from './api.js';
 import {
   Ic, Glass, Btn, NyzaWordmark, FileIcon, PhotoPlaceholder,
   humanSize,
 } from './system.jsx';
 import { Dropzone, UploadRow, MediaViewer } from './app.jsx';
+import { uploadClient } from './uploads.js';
 import { toast } from './toast.jsx';
 
 export function CenteredLoader() {
@@ -193,14 +194,19 @@ export function PublicSharePage({ token }) {
         </div>
       )}
 
-      {viewing && (
-        <MediaViewer
-          file={viewing}
-          src={API.shareFileUrl(token, viewing.id, password)}
-          downloadHref={data.allow_download ? API.shareFileUrl(token, viewing.id, password, true) : null}
-          onClose={() => setViewing(null)}
-        />
-      )}
+      {viewing && (() => {
+        const gal = items.filter((f) => ['image', 'video', 'pdf'].includes(f.kind));
+        const list = gal.length ? gal : [viewing];
+        return (
+          <MediaViewer
+            items={list}
+            startIndex={Math.max(0, list.findIndex((x) => x.id === viewing.id))}
+            srcFor={(f) => API.shareFileUrl(token, f.id, password)}
+            downloadFor={(f) => data.allow_download ? API.shareFileUrl(token, f.id, password, true) : null}
+            onClose={() => setViewing(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -212,6 +218,7 @@ export function PublicUploadPage({ token }) {
   const [uploaderName, setUploaderName] = useState('');
   const [uploads, setUploads] = useState([]);
   const [done, setDone] = useState(false);
+  const cameraRef = useRef(null);
 
   const load = () => {
     setState({ status: 'loading' });
@@ -280,7 +287,7 @@ export function PublicUploadPage({ token }) {
     for (let i = 0; i < files.length; i++) {
       setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'uploading' } : x));
       try {
-        await API.clientUpload(token, files[i],
+        await uploadClient(token, files[i],
           { password, uploaderName: uploaderName || undefined },
           (p) => setUploads((u) => u.map((x, j) => j === i ? { ...x, pct: p } : x)));
         setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'done', pct: 1 } : x));
@@ -345,6 +352,12 @@ export function PublicUploadPage({ token }) {
             <Dropzone big onFiles={onFiles}
               label="Zieh deine Dateien hier rein"
               sub={'oder klicke zum Auswählen' + (link.max_file_size ? ' · max. ' + humanSize(link.max_file_size) + ' pro Datei' : '')}/>
+            {/* Mobile camera capture — opens the camera directly on phones. */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}>
+              <Btn variant="glass" size="md" icon={Ic.camera(16)} onClick={() => cameraRef.current?.click()}>Foto aufnehmen</Btn>
+            </div>
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+              onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) onFiles(fs); e.target.value = ''; }}/>
           </div>
         )}
 

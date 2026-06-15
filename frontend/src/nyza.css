@@ -144,3 +144,43 @@ input, textarea {
 .dropzone.is-dragover {
   background: color-mix(in oklab, var(--accent) 18%, var(--surface-hi)) !important;
 }
+
+/* Skeleton shimmer */
+.nyza-skeleton {
+  position: relative; overflow: hidden;
+  background: var(--surface-hi);
+}
+.nyza-skeleton::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--fg) 8%, transparent), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 1.3s infinite;
+}
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+
+/* ───── Mobile responsive ───────────────────────────────────────────────── */
+@media (max-width: 760px) {
+  /* TopBar wraps instead of overflowing */
+  .nyza-topbar {
+    height: auto !important;
+    flex-wrap: wrap;
+    padding: 10px 16px !important;
+    row-gap: 8px;
+  }
+  .nyza-search { width: 100% !important; order: 10; }
+
+  /* Content gets breathing room + clears the bottom nav */
+  .nyza-mobile-content [data-scroll] { padding: 16px 16px 110px !important; }
+
+  /* Stats: 4 cols → 2 */
+  .nyza-stat-grid { grid-template-columns: 1fr 1fr !important; }
+
+  /* Hero title smaller */
+  .nyza-hero-title { font-size: 28px !important; }
+
+  /* Folders: single/again-auto already responsive; tighten file tiles */
+  .file-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important; }
+
+  /* Selection bar sits above the bottom nav */
+  .nyza-selectionbar { bottom: 92px !important; }
+}

@@ -69,6 +69,39 @@ final class Storage
         return 'doc';
     }
 
+    /**
+     * Server-executable / script extensions that must never land in storage.
+     * The storage dir is .htaccess-blocked from direct web access, but this is
+     * defense-in-depth: if that protection is ever misconfigured, an uploaded
+     * .php must not be executable. Applies to owner AND upload-link guests.
+     */
+    private const BLOCKED_EXT = [
+        'php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phps', 'phtml', 'pht',
+        'phar', 'cgi', 'pl', 'py', 'asp', 'aspx', 'jsp', 'jspx', 'sh', 'bash',
+        'exe', 'com', 'bat', 'cmd', 'msi', 'scr', 'vbs', 'ws', 'wsf',
+    ];
+
+    public static function isDangerous(string $name): bool
+    {
+        $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+        return in_array($ext, self::BLOCKED_EXT, true);
+    }
+
+    /**
+     * MIME types that can execute script in the app's own origin if served
+     * inline (stored-XSS vector — e.g. an upload-link guest dropping a
+     * malicious .svg/.html that the admin then previews, stealing the JWT from
+     * localStorage). These are always sent as downloads with nosniff.
+     */
+    public static function mustDownload(string $mime): bool
+    {
+        $m = strtolower(trim(explode(';', $mime)[0]));
+        return in_array($m, [
+            'text/html', 'application/xhtml+xml', 'image/svg+xml',
+            'application/xml', 'text/xml',
+        ], true);
+    }
+
     public static function humanSize(int $bytes): string
     {
         $u = ['B', 'KB', 'MB', 'GB', 'TB'];

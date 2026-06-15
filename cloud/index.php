@@ -66,6 +66,12 @@ $serveSpa = function ($res) use ($assetsRoot, $basePath) {
         '$1' . $assetPrefix . '$2',
         $html
     );
+    // PWA links are relative in the template; anchor them to the deploy root so
+    // they resolve on deep client-side routes too (/cloud/s/<token> etc.).
+    $root = ($basePath === '' || $basePath === '/') ? '/' : $basePath . '/';
+    $html = str_replace('href="manifest.webmanifest"', 'href="' . $root . 'manifest.webmanifest"', $html);
+    $html = str_replace('href="icon.svg"', 'href="' . $root . 'icon.svg"', $html);
+
     $hint = '<script>window.NYZA_BASE=' . json_encode($basePath ?: '') . ';</script>';
     $html = preg_replace('/<head([^>]*)>/i', '<head$1>' . $hint, $html, 1);
     $res->getBody()->write($html);
@@ -80,6 +86,85 @@ $app->get('/', function ($req, $res) use ($assetsRoot, $serveSpa) {
 });
 
 $app->get('/healthz', fn($req, $res) => Json::ok($res, ['ok' => true]));
+
+// ───── PWA: manifest, icon, service worker (base-path aware) ────────────────
+$pwaBase = ($basePath === '' || $basePath === '/') ? '' : $basePath;
+
+$app->get('/manifest.webmanifest', function ($req, $res) use ($pwaBase) {
+    $manifest = [
+        'name' => 'Nyza Cloud',
+        'short_name' => 'Nyza',
+        'start_url' => ($pwaBase ?: '') . '/',
+        'scope' => ($pwaBase ?: '') . '/',
+        'display' => 'standalone',
+        'background_color' => '#0B0B0F',
+        'theme_color' => '#0B0B0F',
+        'description' => 'Premium Cloud-Storage mit Upload-Links.',
+        'icons' => [
+            ['src' => ($pwaBase ?: '') . '/icon.svg', 'sizes' => 'any', 'type' => 'image/svg+xml', 'purpose' => 'any maskable'],
+        ],
+    ];
+    $res->getBody()->write(json_encode($manifest, JSON_UNESCAPED_SLASHES));
+    return $res->withHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+});
+
+$app->get('/icon.svg', function ($req, $res) {
+    $svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'>"
+         . "<defs><linearGradient id='g' x1='0' x2='1' y1='0' y2='1'>"
+         . "<stop offset='0' stop-color='#7C5CFF'/><stop offset='1' stop-color='#3B82F6'/></linearGradient></defs>"
+         . "<rect width='512' height='512' rx='112' fill='url(#g)'/>"
+         . "<path d='M150 368V144l212 224V144' stroke='white' stroke-width='44' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>";
+    $res->getBody()->write($svg);
+    return $res->withHeader('Content-Type', 'image/svg+xml')->withHeader('Cache-Control', 'public, max-age=86400');
+});
+
+$app->get('/sw.js', function ($req, $res) use ($pwaBase) {
+    // Network-first service worker. Never serves a stale app shell while online;
+    // falls back to cache only when offline. API + media are always network-only.
+    $scope = ($pwaBase ?: '') . '/';
+    $js = <<<JS
+const CACHE = 'nyza-v1';
+const SCOPE = '{$scope}';
+self.addEventListener('install', (e) => self.skipWaiting());
+self.addEventListener('activate', (e) => {
+  e.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)));
+    await self.clients.claim();
+  })());
+});
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  const url = new URL(req.url);
+  if (req.method !== 'GET' || url.origin !== location.origin) return;
+  if (url.pathname.indexOf('/api/') !== -1) return; // never cache API/media
+  e.respondWith((async () => {
+    try {
+      const fresh = await fetch(req);
+      if (fresh && fresh.status === 200) {
+        const c = await caches.open(CACHE);
+        c.put(req, fresh.clone());
+      }
+      return fresh;
+    } catch (err) {
+      const cached = await caches.match(req);
+      if (cached) return cached;
+      // offline navigation → fall back to app shell
+      if (req.mode === 'navigate') {
+        const shell = await caches.match(SCOPE);
+        if (shell) return shell;
+      }
+      throw err;
+    }
+  })());
+});
+JS;
+    $res->getBody()->write($js);
+    return $res
+        ->withHeader('Content-Type', 'text/javascript; charset=utf-8')
+        ->withHeader('Service-Worker-Allowed', $scope)
+        ->withHeader('Cache-Control', 'no-cache');
+});
 
 AuthRoutes::mount($app);
 FolderRoutes::mount($app);

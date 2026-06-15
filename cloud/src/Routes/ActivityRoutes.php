@@ -38,9 +38,12 @@ final class ActivityRoutes
         $uid = (int)$req->getAttribute('uid');
         $pdo = Database::pdo();
 
-        $files = $pdo->prepare('SELECT COUNT(*) AS c, COALESCE(SUM(size),0) AS s FROM files WHERE user_id = ?');
+        $files = $pdo->prepare('SELECT COUNT(*) AS c, COALESCE(SUM(size),0) AS s FROM files WHERE user_id = ? AND deleted_at IS NULL');
         $files->execute([$uid]);
         $f = $files->fetch();
+
+        $trash = $pdo->prepare('SELECT COUNT(*) AS c FROM files WHERE user_id = ? AND deleted_at IS NOT NULL');
+        $trash->execute([$uid]);
 
         $folders = $pdo->prepare('SELECT COUNT(*) AS c FROM folders WHERE user_id = ?');
         $folders->execute([$uid]);
@@ -51,7 +54,7 @@ final class ActivityRoutes
         $uplinks = $pdo->prepare('SELECT COUNT(*) AS c FROM upload_links WHERE user_id = ?');
         $uplinks->execute([$uid]);
 
-        $week = $pdo->prepare('SELECT COUNT(*) AS c FROM files WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)');
+        $week = $pdo->prepare('SELECT COUNT(*) AS c FROM files WHERE user_id = ? AND deleted_at IS NULL AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)');
         $week->execute([$uid]);
 
         $u = $pdo->prepare('SELECT storage_quota, storage_used FROM users WHERE id = ?');
@@ -64,6 +67,7 @@ final class ActivityRoutes
             'shares' => (int)$shares->fetch()['c'],
             'upload_links' => (int)$uplinks->fetch()['c'],
             'week_uploads' => (int)$week->fetch()['c'],
+            'trash' => (int)$trash->fetch()['c'],
             'quota' => (int)$u->fetch()['storage_quota'],
         ]);
     }

@@ -131,6 +131,9 @@ final class UploadLinkRoutes
 
     public static function unlock(Request $req, Response $res, array $args): Response
     {
+        if (!\Nyza\RateLimiter::allowReq($req, 'uplink_unlock', 10, 300, $args['token'])) {
+            return Json::err($res, 'Zu viele Versuche — bitte später erneut', 429, 'rate_limited');
+        }
         $link = self::loadByToken($args['token']);
         if (!$link) return Json::err($res, 'Not found', 404);
         $b = (array) $req->getParsedBody();
@@ -182,6 +185,9 @@ final class UploadLinkRoutes
         $name = $files->getClientFilename() ?: 'upload.bin';
         $mime = $files->getClientMediaType() ?: 'application/octet-stream';
 
+        if (Storage::isDangerous($name)) {
+            return Json::err($res, 'Dieser Dateityp ist aus Sicherheitsgründen nicht erlaubt', 415, 'blocked_type');
+        }
         if ($link['max_file_size'] && $size > (int)$link['max_file_size']) {
             return Json::err($res, 'file_too_large', 413);
         }
@@ -205,6 +211,7 @@ final class UploadLinkRoutes
         $size = (int)($b['total_size'] ?? 0);
         $chunkSize = (int)($b['chunk_size'] ?? (10 * 1024 * 1024));
         if ($name === '' || $size <= 0) return Json::err($res, 'file_name + total_size required', 422);
+        if (Storage::isDangerous($name)) return Json::err($res, 'Dieser Dateityp ist nicht erlaubt', 415, 'blocked_type');
 
         if ($link['max_file_size'] && $size > (int)$link['max_file_size']) {
             return Json::err($res, 'file_too_large', 413);

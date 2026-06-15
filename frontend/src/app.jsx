@@ -7,6 +7,18 @@ import {
   Toggle, CircularProgress, humanSize, timeAgo,
 } from './system.jsx';
 import { toast } from './toast.jsx';
+import { uploadOwner } from './uploads.js';
+
+// Track viewport for mobile-responsive chrome.
+function useIsMobile() {
+  const [m, setM] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 760);
+  useEffect(() => {
+    const fn = () => setM(window.innerWidth <= 760);
+    window.addEventListener('resize', fn);
+    return () => window.removeEventListener('resize', fn);
+  }, []);
+  return m;
+}
 
 // Authenticated media URL — <img>/<video>/<iframe> can't send an Authorization
 // header, so the JWT rides along as ?token= (backend Auth::fromRequest accepts
@@ -15,9 +27,28 @@ const fileSrc = (id) => API.fileRawUrl(id) + '?token=' + (getToken() || '');
 const fileDownload = (id) => API.fileRawUrl(id) + '?token=' + (getToken() || '');
 
 // ───── MediaViewer — fullscreen modal for images / videos / PDFs / files ───
-export function MediaViewer({ file, src, downloadHref, onClose }) {
+// Gallery-capable: pass items[] + startIndex + srcFor()/downloadFor() to enable
+// ←/→ keys, on-screen arrows and touch-swipe between files. Single-file mode
+// (file + src + downloadHref) still works.
+export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onClose }) {
+  const gallery = Array.isArray(items) && items.length > 0;
+  const [idx, setIdx] = useState(startIndex);
+  const cur = gallery ? items[idx] : file;
+  const curSrc = gallery ? srcFor(cur) : src;
+  const curDl = gallery ? (downloadFor ? downloadFor(cur) : null) : downloadHref;
+  const touch = useRef(null);
+
+  const go = useCallback((d) => {
+    if (!gallery) return;
+    setIdx((i) => (i + d + items.length) % items.length);
+  }, [gallery, items]);
+
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowRight') go(1);
+      else if (e.key === 'ArrowLeft') go(-1);
+    };
     document.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -25,10 +56,17 @@ export function MediaViewer({ file, src, downloadHref, onClose }) {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = prevOverflow;
     };
-  }, [onClose]);
+  }, [onClose, go]);
 
-  const kind = file.kind || 'doc';
+  const kind = cur.kind || 'doc';
   const stop = (e) => e.stopPropagation();
+  const onTouchStart = (e) => { touch.current = e.touches[0].clientX; };
+  const onTouchEnd = (e) => {
+    if (touch.current == null) return;
+    const dx = e.changedTouches[0].clientX - touch.current;
+    if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1);
+    touch.current = null;
+  };
 
   return (
     <div onClick={onClose} style={{
@@ -43,13 +81,13 @@ export function MediaViewer({ file, src, downloadHref, onClose }) {
         color: '#fff', flexShrink: 0,
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</div>
+          <div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cur.name}</div>
           <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
-            {humanSize(file.size)}{file.mime_type ? ' · ' + file.mime_type : ''}
+            {humanSize(cur.size)}{cur.mime_type ? ' · ' + cur.mime_type : ''}{gallery && items.length > 1 ? ' · ' + (idx + 1) + ' / ' + items.length : ''}
           </div>
         </div>
-        {downloadHref && (
-          <a href={downloadHref} download={file.name} style={{ display: 'inline-flex', textDecoration: 'none' }}>
+        {curDl && (
+          <a href={curDl} download={cur.name} style={{ display: 'inline-flex', textDecoration: 'none' }}>
             <Btn variant="glass" size="sm" icon={Ic.download(14)}>Download</Btn>
           </a>
         )}
@@ -60,26 +98,29 @@ export function MediaViewer({ file, src, downloadHref, onClose }) {
         }}>{Ic.close(18)}</button>
       </div>
 
-      <div onClick={stop} style={{
+      <div onClick={stop} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{
         flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 24, minHeight: 0,
+        padding: 24, minHeight: 0, position: 'relative',
       }}>
+        {gallery && items.length > 1 && (
+          <button onClick={() => go(-1)} title="Zurück (←)" style={navArrow('left')}>{Ic.chevronL ? Ic.chevronL(22) : '‹'}</button>
+        )}
         {kind === 'video' && (
-          <video controls autoPlay src={src} onClick={stop} style={{
+          <video key={cur.id} controls autoPlay src={curSrc} onClick={stop} style={{
             maxWidth: '100%', maxHeight: '100%', borderRadius: 'var(--r-lg)',
             boxShadow: '0 30px 80px rgba(0,0,0,0.6)', background: '#000',
           }}>
-            Dein Browser unterstützt das Format nicht. <a href={downloadHref}>Download</a>
+            Dein Browser unterstützt das Format nicht. <a href={curDl}>Download</a>
           </video>
         )}
         {kind === 'image' && (
-          <img src={src} alt={file.name} onClick={stop} style={{
+          <img key={cur.id} src={curSrc} alt={cur.name} onClick={stop} style={{
             maxWidth: '100%', maxHeight: '100%', borderRadius: 'var(--r-md)',
             boxShadow: '0 30px 80px rgba(0,0,0,0.6)', objectFit: 'contain',
           }}/>
         )}
         {kind === 'pdf' && (
-          <iframe src={src} title={file.name} onClick={stop} style={{
+          <iframe key={cur.id} src={curSrc} title={cur.name} onClick={stop} style={{
             width: '100%', height: '100%', maxWidth: 1100, border: 0,
             borderRadius: 'var(--r-md)', background: '#fff',
             boxShadow: '0 30px 80px rgba(0,0,0,0.6)',
@@ -88,7 +129,7 @@ export function MediaViewer({ file, src, downloadHref, onClose }) {
         {kind !== 'video' && kind !== 'image' && kind !== 'pdf' && (
           <Glass style={{ padding: '40px 48px', borderRadius: 'var(--r-xl)', textAlign: 'center' }}>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
-              <FileIcon kind={kind} size={42} tint={file.hue || 280}/>
+              <FileIcon kind={kind} size={42} tint={cur.hue || 280}/>
             </div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, marginBottom: 6 }}>
               Vorschau nicht verfügbar
@@ -96,16 +137,29 @@ export function MediaViewer({ file, src, downloadHref, onClose }) {
             <div style={{ fontSize: 13, color: 'var(--fg-3)', marginBottom: 20 }}>
               Dieser Dateityp kann nicht direkt im Browser angezeigt werden.
             </div>
-            {downloadHref && (
-              <a href={downloadHref} download={file.name} style={{ textDecoration: 'none' }}>
+            {curDl && (
+              <a href={curDl} download={cur.name} style={{ textDecoration: 'none' }}>
                 <Btn variant="primary" size="md" icon={Ic.download(15)}>Herunterladen</Btn>
               </a>
             )}
           </Glass>
         )}
+        {gallery && items.length > 1 && (
+          <button onClick={() => go(1)} title="Weiter (→)" style={navArrow('right')}>{Ic.chevronR(22)}</button>
+        )}
       </div>
     </div>
   );
+}
+
+function navArrow(side) {
+  return {
+    position: 'absolute', top: '50%', [side]: 16, transform: 'translateY(-50%)',
+    width: 48, height: 48, borderRadius: '50%', border: 'none', cursor: 'pointer',
+    background: 'rgba(255,255,255,0.12)', color: '#fff', zIndex: 2,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    backdropFilter: 'blur(8px)',
+  };
 }
 
 // ───── Auth screen — login only (single-user model) ────────────────────────
@@ -233,6 +287,7 @@ function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, on
     { id: 'shared',   label: 'Geteilt',       icon: Ic.share,  count: stats?.shares },
     { id: 'links',    label: 'Upload-Links',  icon: Ic.link,   count: stats?.upload_links, badge: 'NEU' },
     { id: 'activity', label: 'Aktivität',     icon: Ic.clock },
+    { id: 'trash',    label: 'Papierkorb',    icon: Ic.trash,  count: stats?.trash || null },
   ];
   const used = stats?.storage_used || 0;
   const quota = stats?.quota || 200 * 1024 * 1024 * 1024;
@@ -298,10 +353,75 @@ function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, on
   );
 }
 
+// ───── Mobile bottom nav + FAB + "more" sheet ──────────────────────────────
+function MobileNav({ active, onNavigate, onUpload, onMore }) {
+  const items = [
+    { id: 'files', label: 'Dateien', icon: Ic.home },
+    { id: 'shared', label: 'Geteilt', icon: Ic.share },
+    { id: '__upload__' },
+    { id: 'links', label: 'Links', icon: Ic.link },
+    { id: '__more__', label: 'Mehr', icon: Ic.more },
+  ];
+  return (
+    <div style={{
+      position: 'fixed', left: 12, right: 12, bottom: 12, height: 64, zIndex: 80,
+      borderRadius: 32, padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-around',
+      background: 'var(--surface)', border: '1px solid var(--border-hi)',
+      backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+      boxShadow: '0 1px 0 var(--inner-hi) inset, 0 20px 40px -10px rgba(0,0,0,0.4)',
+    }}>
+      {items.map((it) => it.id === '__upload__' ? (
+        <button key="up" onClick={onUpload} style={{
+          width: 52, height: 52, borderRadius: 26, border: 'none', cursor: 'pointer',
+          background: 'var(--accent-grad)', color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 1px 0 rgba(255,255,255,0.3) inset, 0 8px 24px -4px var(--accent-glow)',
+        }}>{Ic.plus(24)}</button>
+      ) : (
+        <button key={it.id} onClick={() => it.id === '__more__' ? onMore() : onNavigate({ name: it.id })} style={{
+          background: 'none', border: 'none', cursor: 'pointer', flex: 1,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+          color: active === it.id ? 'var(--accent)' : 'var(--fg-3)', fontSize: 9.5, fontWeight: 540,
+        }}>
+          {it.icon(20)}{it.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MoreSheet({ user, theme, onTheme, onNavigate, onChangePassword, onLogout, onClose }) {
+  const item = (icon, label, onClick, danger) => (
+    <button onClick={() => { onClick(); onClose(); }} style={{
+      display: 'flex', alignItems: 'center', gap: 14, width: '100%', padding: '14px 16px',
+      background: 'none', border: 'none', borderRadius: 'var(--r-md)', cursor: 'pointer',
+      fontSize: 15, color: danger ? 'var(--danger)' : 'var(--fg)', fontFamily: 'inherit',
+    }}>
+      <span style={{ color: danger ? 'var(--danger)' : 'var(--fg-3)' }}>{icon}</span>{label}
+    </button>
+  );
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose} style={{ alignItems: 'flex-end' }}>
+      <Glass style={{ width: '100%', maxWidth: 520, borderRadius: '24px 24px 0 0', padding: 16, paddingBottom: 28 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ width: 40, height: 4, borderRadius: 2, background: 'var(--border-hi)', margin: '4px auto 14px' }}/>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 16px 14px' }}>
+          <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg, oklch(0.72 0.16 60), oklch(0.55 0.2 25))', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 600, fontSize: 14 }}>{(user?.name || '?').slice(0, 2).toUpperCase()}</div>
+          <div><div style={{ fontSize: 14, fontWeight: 600 }}>{user?.name}</div><div style={{ fontSize: 12, color: 'var(--fg-3)' }}>{user?.email}</div></div>
+        </div>
+        {item(Ic.clock(18), 'Aktivität', () => onNavigate({ name: 'activity' }))}
+        {item(Ic.trash(18), 'Papierkorb', () => onNavigate({ name: 'trash' }))}
+        {item(theme === 'dark' ? Ic.sun(18) : Ic.moon(18), theme === 'dark' ? 'Helles Design' : 'Dunkles Design', onTheme)}
+        {item(Ic.lock(18), 'Passwort ändern', onChangePassword)}
+        {item(Ic.logout(18), 'Abmelden', onLogout, true)}
+      </Glass>
+    </div>
+  );
+}
+
 // ───── Top bar ─────────────────────────────────────────────────────────────
 function TopBar({ crumbs = ['Meine Dateien'], view, onView, onSearch, search, sort, onSort, right }) {
   return (
-    <div style={{
+    <div className="nyza-topbar" style={{
       height: 64, padding: '0 28px', display: 'flex', alignItems: 'center', gap: 14,
       borderBottom: '1px solid var(--border)', flexShrink: 0,
       background: 'var(--surface-2)', backdropFilter: 'blur(20px)',
@@ -326,7 +446,7 @@ function TopBar({ crumbs = ['Meine Dateien'], view, onView, onSearch, search, so
       </div>
       <div style={{ flex: 1 }}/>
       {onSearch && (
-        <div style={{
+        <div className="nyza-search" style={{
           display: 'flex', alignItems: 'center', gap: 10, height: 38, padding: '0 14px',
           borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)',
           width: 280, color: 'var(--fg-3)',
@@ -523,14 +643,75 @@ function FileTile({ file, selected, selecting, onOpen, onToggleSelect }) {
 }
 
 // ───── File grid + list (reusable) ─────────────────────────────────────────
-function FileGrid({ files, selected, onOpen, onToggleSelect }) {
+function FileGrid({ files, selected, onOpen, onToggleSelect, onDragSelect }) {
   const selecting = selected.size > 0;
+  const wrapRef = useRef(null);
+  const [rect, setRect] = useState(null); // rubber-band {l,t,w,h} in container coords
+  const drag = useRef(null);
+
+  const onPointerDown = (e) => {
+    // Only start a rubber-band on empty grid background (not on a tile/checkbox),
+    // primary button, non-touch.
+    if (e.button !== 0 || !onDragSelect) return;
+    if (e.target.closest('[data-fid]')) return;
+    const box = wrapRef.current.getBoundingClientRect();
+    drag.current = { ox: box.left, oy: box.top, sx: e.clientX, sy: e.clientY, base: new Set(selected) };
+    setRect({ l: e.clientX - box.left, t: e.clientY - box.top, w: 0, h: 0 });
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+  const onMove = (e) => {
+    const d = drag.current; if (!d) return;
+    const l = Math.min(d.sx, e.clientX), t = Math.min(d.sy, e.clientY);
+    const r = Math.max(d.sx, e.clientX), b = Math.max(d.sy, e.clientY);
+    setRect({ l: l - d.ox, t: t - d.oy, w: r - l, h: b - t });
+    const ids = new Set(d.base);
+    wrapRef.current.querySelectorAll('[data-fid]').forEach((el) => {
+      const bb = el.getBoundingClientRect();
+      const hit = bb.right >= l && bb.left <= r && bb.bottom >= t && bb.top <= b;
+      if (hit) ids.add(Number(el.dataset.fid));
+    });
+    onDragSelect(ids);
+  };
+  const onUp = () => {
+    drag.current = null; setRect(null);
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+  };
+
+  return (
+    <div ref={wrapRef} onPointerDown={onPointerDown} style={{ position: 'relative' }}>
+      <div className="file-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
+        {files.map((f) => (
+          <div data-fid={f.id} key={f.id}>
+            <FileTile file={f}
+              selected={selected.has(f.id)} selecting={selecting}
+              onOpen={() => onOpen(f)} onToggleSelect={() => onToggleSelect(f.id)}/>
+          </div>
+        ))}
+      </div>
+      {rect && rect.w > 3 && rect.h > 3 && (
+        <div style={{
+          position: 'absolute', left: rect.l, top: rect.t, width: rect.w, height: rect.h,
+          background: 'color-mix(in oklab, var(--accent) 18%, transparent)',
+          border: '1px solid var(--accent)', borderRadius: 6, pointerEvents: 'none', zIndex: 5,
+        }}/>
+      )}
+    </div>
+  );
+}
+
+function SkeletonGrid({ count = 10 }) {
   return (
     <div className="file-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
-      {files.map((f) => (
-        <FileTile key={f.id} file={f}
-          selected={selected.has(f.id)} selecting={selecting}
-          onOpen={() => onOpen(f)} onToggleSelect={() => onToggleSelect(f.id)}/>
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} style={{ borderRadius: 'var(--r-md)', overflow: 'hidden', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+          <div className="nyza-skeleton" style={{ aspectRatio: '4/3' }}/>
+          <div style={{ padding: '10px 12px' }}>
+            <div className="nyza-skeleton" style={{ height: 11, borderRadius: 4, width: '70%' }}/>
+            <div className="nyza-skeleton" style={{ height: 9, borderRadius: 4, width: '40%', marginTop: 7 }}/>
+          </div>
+        </div>
       ))}
     </div>
   );
@@ -595,7 +776,7 @@ function FileList({ files, selected, onOpen, onToggleSelect, onShareFile, onDele
 // ───── Selection action bar ────────────────────────────────────────────────
 function SelectionBar({ count, onZip, onDelete, onClear, busy }) {
   return (
-    <div style={{
+    <div className="nyza-selectionbar" style={{
       position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', zIndex: 90,
       display: 'flex', alignItems: 'center', gap: 14, padding: '10px 14px 10px 18px',
       borderRadius: 999, background: 'var(--surface)', border: '1px solid var(--border-hi)',
@@ -1009,9 +1190,15 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
   const [showUploadLinkModal, setShowUploadLinkModal] = useState(false);
   const [uploadLinkFolder, setUploadLinkFolder] = useState(null);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [viewingFile, setViewingFile] = useState(null);
+  const [viewing, setViewing] = useState(null); // { items, index }
+  const openViewer = (f, list) => {
+    const items = (list && list.length) ? list : [f];
+    setViewing({ items, index: Math.max(0, items.findIndex((x) => x.id === f.id)) });
+  };
   const [uploads, setUploads] = useState([]);
   const [showUploadProgress, setShowUploadProgress] = useState(false);
+  const [showMore, setShowMore] = useState(false);
+  const isMobile = useIsMobile();
 
   const uploadInputRef = useRef(null);
   const uploadTargetFolder = useRef(null);
@@ -1034,7 +1221,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
     for (let i = 0; i < filesArr.length; i++) {
       setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'uploading' } : x));
       try {
-        await API.uploadFile(filesArr[i], folderId, (p) => setUploads((u) => u.map((x, j) => j === i ? { ...x, pct: p } : x)));
+        await uploadOwner(filesArr[i], folderId, (p) => setUploads((u) => u.map((x, j) => j === i ? { ...x, pct: p } : x)));
         setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'done', pct: 1 } : x));
       } catch (err) {
         setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'error' } : x));
@@ -1050,13 +1237,15 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
 
   return (
     <div style={{ display: 'flex', height: '100%', position: 'relative', zIndex: 1 }}>
-      <Sidebar active={activeNav} stats={stats} user={user} onTheme={onTheme} theme={theme}
-        onNavigate={(n) => { setNav(n); setSearch(''); }}
-        onUpload={() => triggerUpload(null)}
-        onChangePassword={() => setShowPasswordModal(true)}
-        onLogout={() => { setToken(null); location.reload(); }}/>
+      {!isMobile && (
+        <Sidebar active={activeNav} stats={stats} user={user} onTheme={onTheme} theme={theme}
+          onNavigate={(n) => { setNav(n); setSearch(''); }}
+          onUpload={() => triggerUpload(null)}
+          onChangePassword={() => setShowPasswordModal(true)}
+          onLogout={() => { setToken(null); location.reload(); }}/>
+      )}
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <div className={isMobile ? 'nyza-mobile-content' : ''} style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {nav.name === 'files' && (
           <FilesView
             user={user} stats={stats} folders={folders} view={view} setView={setView}
@@ -1068,7 +1257,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
             onNewFolder={async (name, kind, tone) => { try { await API.newFolder({ name, kind, tone }); toast('Ordner erstellt', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onUpload={() => triggerUpload(null)}
             onUploadLink={() => { setUploadLinkFolder(null); setShowUploadLinkModal(true); }}
-            onOpenFile={setViewingFile}
+            onOpenFile={openViewer}
             onShareFile={(f) => setShareTarget({ file: f })}
             onDeleteFile={async (f) => { try { await API.deleteFile(f.id); toast('Gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
           />
@@ -1082,7 +1271,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
             onUpload={(fid) => triggerUpload(fid)}
             onShareFolder={(f) => setShareTarget({ folder: f })}
             onUploadLink={(f) => { setUploadLinkFolder(f.id); setShowUploadLinkModal(true); }}
-            onOpenFile={setViewingFile}
+            onOpenFile={openViewer}
             onShareFile={(f) => setShareTarget({ file: f })}
             onDeleteFile={async (f) => { try { await API.deleteFile(f.id); toast('Gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             afterChange={refreshAll}
@@ -1099,6 +1288,9 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
+        {nav.name === 'trash' && (
+          <TrashView refreshTick={refreshTick} onOpenFile={openViewer} afterChange={refreshAll}/>
+        )}
       </div>
 
       {shareTarget && (
@@ -1113,8 +1305,22 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
         <UploadProgress items={uploads} onClose={() => { setShowUploadProgress(false); setUploads([]); }}/>
       )}
       {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)}/>}
-      {viewingFile && (
-        <MediaViewer file={viewingFile} src={fileSrc(viewingFile.id)} downloadHref={fileDownload(viewingFile.id)} onClose={() => setViewingFile(null)}/>
+      {viewing && (
+        <MediaViewer items={viewing.items} startIndex={viewing.index}
+          srcFor={(f) => fileSrc(f.id)} downloadFor={(f) => fileDownload(f.id)}
+          onClose={() => setViewing(null)}/>
+      )}
+
+      {isMobile && (
+        <MobileNav active={activeNav} onNavigate={(n) => { setNav(n); setSearch(''); }}
+          onUpload={() => triggerUpload(null)} onMore={() => setShowMore(true)}/>
+      )}
+      {showMore && (
+        <MoreSheet user={user} theme={theme} onTheme={onTheme}
+          onNavigate={(n) => { setNav(n); setSearch(''); }}
+          onChangePassword={() => setShowPasswordModal(true)}
+          onLogout={() => { setToken(null); location.reload(); }}
+          onClose={() => setShowMore(false)}/>
       )}
 
       <input ref={uploadInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => {
@@ -1132,16 +1338,16 @@ function FilesView({
   onOpenFolder, onShareFolder, onDeleteFolder, onNewFolder, onUpload, onUploadLink,
   onOpenFile, onShareFile, onDeleteFile,
 }) {
-  const [files, setFiles] = useState([]);
+  const [files, setFiles] = useState(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [zipBusy, setZipBusy] = useState(false);
 
-  useEffect(() => { API.files().then((d) => setFiles(d.files || [])).catch(() => {}); }, [refreshTick]);
+  useEffect(() => { API.files().then((d) => setFiles(d.files || [])).catch(() => setFiles([])); }, [refreshTick]);
 
   const q = search.toLowerCase();
   const fFolders = folders.filter((f) => !q || f.name.toLowerCase().includes(q));
-  const fFiles = sortFiles(files.filter((f) => !q || f.name.toLowerCase().includes(q)), sort);
+  const fFiles = files === null ? [] : sortFiles(files.filter((f) => !q || f.name.toLowerCase().includes(q)), sort);
 
   const toggleSelect = (id) => {
     if (id === '__all__') {
@@ -1162,11 +1368,11 @@ function FilesView({
   return (
     <>
       <TopBar crumbs={['Meine Dateien']} view={view} onView={setView} search={search} onSearch={setSearch} sort={sort} onSort={setSort}/>
-      <div style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px' }}>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 24, marginBottom: 28 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, color: 'var(--fg-3)', marginBottom: 6 }}>{greeting()}, {user?.name}</div>
-            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 38, fontWeight: 600, letterSpacing: -1.2, margin: 0, lineHeight: 1.05 }}>
+            <h1 className="nyza-hero-title" style={{ fontFamily: 'var(--font-display)', fontSize: 38, fontWeight: 600, letterSpacing: -1.2, margin: 0, lineHeight: 1.05 }}>
               Deine Dateien.<span style={{ color: 'var(--fg-3)' }}> Schön sortiert.</span>
             </h1>
           </div>
@@ -1176,7 +1382,7 @@ function FilesView({
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 32 }}>
+        <div className="nyza-stat-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 32 }}>
           {[
             { label: 'Gespeichert', v: humanSize(stats?.storage_used || 0), sub: 'von ' + humanSize(stats?.quota || 0), accent: true },
             { label: 'Dateien gesamt', v: stats?.files || 0, sub: 'in ' + (stats?.folders || 0) + ' Ordnern' },
@@ -1203,11 +1409,13 @@ function FilesView({
             actions={<><Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn><Btn variant="glass" size="md" icon={Ic.upload(14)} onClick={onUpload}>Hochladen</Btn></>}/>
         )}
 
-        <SectionHeader title="Letzte Dateien" count={fFiles.length}/>
-        {fFiles.length > 0 ? (
+        <SectionHeader title="Letzte Dateien" count={files === null ? null : fFiles.length}/>
+        {files === null ? (
+          <SkeletonGrid/>
+        ) : fFiles.length > 0 ? (
           view === 'grid'
-            ? <FileGrid files={fFiles} selected={selected} onOpen={onOpenFile} onToggleSelect={toggleSelect}/>
-            : <FileList files={fFiles} selected={selected} onOpen={onOpenFile} onToggleSelect={toggleSelect} onShareFile={onShareFile} onDeleteFile={(f) => { onDeleteFile(f); }}/>
+            ? <FileGrid files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onDragSelect={setSelected}/>
+            : <FileList files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onShareFile={onShareFile} onDeleteFile={(f) => { onDeleteFile(f); }}/>
         ) : (
           <EmptyHint icon={Ic.upload(40)} title="Noch keine Dateien" desc="Zieh Dateien hierher oder klick auf Hochladen."
             actions={<Btn variant="primary" size="md" icon={Ic.upload(14)} onClick={onUpload}>Erste Datei hochladen</Btn>}/>
@@ -1237,7 +1445,7 @@ function FolderView({
   useEffect(() => { load(); setSelected(new Set()); }, [load, refreshTick]);
 
   if (loading && !data) {
-    return (<><TopBar crumbs={[{ label: 'Meine Dateien', onClick: onBack }, '…']}/><div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-3)' }}>{Ic.loader(26)}</div></>);
+    return (<><TopBar crumbs={[{ label: 'Meine Dateien', onClick: onBack }, '…']}/><div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px' }}><SkeletonGrid/></div></>);
   }
   if (!data) return null;
 
@@ -1275,7 +1483,7 @@ function FolderView({
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); const fs = Array.from(e.dataTransfer.files || []); if (fs.length) onUpload(folder.id, fs); }}
-        style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px', position: 'relative', outline: over ? '2px dashed var(--accent)' : 'none', outlineOffset: -12 }}>
+        data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px', position: 'relative', outline: over ? '2px dashed var(--accent)' : 'none', outlineOffset: -12 }}>
         <div style={{ marginBottom: 22 }}>
           <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>
             {folder.kind === 'gallery' ? '◇ Galerie' : '◇ Ordner'} · {files.length} Dateien · {humanSize((data.files || []).reduce((s, f) => s + (f.size || 0), 0))}
@@ -1294,8 +1502,8 @@ function FolderView({
 
         {files.length > 0 ? (
           view === 'grid'
-            ? <FileGrid files={files} selected={selected} onOpen={onOpenFile} onToggleSelect={toggleSelect}/>
-            : <FileList files={files} selected={selected} onOpen={onOpenFile} onToggleSelect={toggleSelect} onShareFile={onShareFile} onDeleteFile={(f) => { onDeleteFile(f); }}/>
+            ? <FileGrid files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected}/>
+            : <FileList files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onShareFile={onShareFile} onDeleteFile={(f) => { onDeleteFile(f); }}/>
         ) : (
           <EmptyHint icon={Ic.upload(40)} title="Dieser Ordner ist leer" desc="Zieh Dateien hierher oder lade welche hoch."
             actions={<Btn variant="primary" size="md" icon={Ic.upload(14)} onClick={() => onUpload(folder.id)}>Hochladen</Btn>}/>
@@ -1319,7 +1527,7 @@ function SharesView({ refreshTick, basePath, afterChange }) {
   return (
     <>
       <TopBar crumbs={['Geteilt']}/>
-      <div style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>
         <SectionHeader title="Geteilte Links" count={shares ? shares.length : null}/>
         {shares === null ? (
           <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
@@ -1365,7 +1573,7 @@ function LinksView({ refreshTick, basePath, onCreate, afterChange }) {
   return (
     <>
       <TopBar crumbs={['Upload-Links']} right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={onCreate}>Neuer Upload-Link</Btn>}/>
-      <div style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>
         <SectionHeader title="Upload-Links" count={links ? links.length : null}/>
         {links === null ? (
           <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
@@ -1414,7 +1622,7 @@ function ActivityView({ refreshTick }) {
   return (
     <>
       <TopBar crumbs={['Aktivität']}/>
-      <div style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>
         <SectionHeader title="Verlauf" count={items ? items.length : null}/>
         {items === null ? (
           <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
@@ -1441,6 +1649,45 @@ function ActivityView({ refreshTick }) {
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ───── Papierkorb / Trash view ─────────────────────────────────────────────
+function TrashView({ refreshTick, onOpenFile, afterChange }) {
+  const [files, setFiles] = useState(null);
+  const load = useCallback(() => { API.trash().then((d) => setFiles(d.files || [])).catch(() => setFiles([])); }, []);
+  useEffect(() => { load(); }, [load, refreshTick]);
+
+  const restore = async (f) => { try { await API.restoreFile(f.id); toast('Wiederhergestellt', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
+  const forever = async (f) => { if (!confirm(`"${f.name}" endgültig löschen?`)) return; try { await API.deleteForever(f.id); toast('Endgültig gelöscht', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
+  const empty = async () => { if (!confirm('Papierkorb wirklich leeren? Alle Dateien werden endgültig gelöscht.')) return; try { await API.emptyTrash(); toast('Papierkorb geleert', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
+
+  return (
+    <>
+      <TopBar crumbs={['Papierkorb']} right={files && files.length > 0 ? <Btn variant="danger" size="sm" icon={Ic.trash(13)} onClick={empty}>Papierkorb leeren</Btn> : null}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>
+        <SectionHeader title="Gelöschte Dateien" count={files ? files.length : null}/>
+        {files === null ? (
+          <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+        ) : files.length === 0 ? (
+          <EmptyHint icon={Ic.trash(40)} title="Papierkorb ist leer" desc="Gelöschte Dateien landen hier und können wiederhergestellt werden."/>
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {files.map((f) => (
+              <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <FileIcon kind={f.kind} size={16} tint={f.hue}/>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{humanSize(f.size)} · gelöscht {timeAgo(f.deleted_at)}</div>
+                </div>
+                <Btn variant="glass" size="sm" icon={Ic.rotate(13)} onClick={() => restore(f)}>Wiederherstellen</Btn>
+                <IconBtn size={32} title="Endgültig löschen" onClick={() => forever(f)}>{Ic.trash(14)}</IconBtn>
+              </div>
+            ))}
           </div>
         )}
       </div>
