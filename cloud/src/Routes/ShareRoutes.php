@@ -30,6 +30,7 @@ final class ShareRoutes
         $app->get('/api/s/{token}',          [self::class, 'show']);
         $app->get('/api/s/{token}/zip',      [self::class, 'downloadZip']);
         $app->get('/api/s/{token}/file/{id}',[self::class, 'downloadFile']);
+        $app->get('/api/s/{token}/file/{id}/thumb', [self::class, 'fileThumb']);
         $app->get('/api/s/{token}/file/{id}/comments',  [self::class, 'fileComments']);
         $app->post('/api/s/{token}/file/{id}/comments', [self::class, 'addFileComment']);
     }
@@ -47,6 +48,17 @@ final class ShareRoutes
             if ($chk->fetch()) return $share;
         }
         return null;
+    }
+
+    public static function fileThumb(Request $req, Response $res, array $args): Response
+    {
+        $share = self::shareForFile($args['token'], (int)$args['id'], $req);
+        if (!$share) return Json::err($res, 'Not found', 404);
+        $stmt = Database::pdo()->prepare('SELECT * FROM files WHERE id = ? AND deleted_at IS NULL');
+        $stmt->execute([(int)$args['id']]);
+        $f = $stmt->fetch();
+        if (!$f) return Json::err($res, 'Not found', 404);
+        return FileRoutes::serveThumb($res, $f);
     }
 
     public static function fileComments(Request $req, Response $res, array $args): Response

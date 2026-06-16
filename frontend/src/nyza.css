@@ -128,6 +128,9 @@ input, textarea {
 .nyza-toast.error { color: var(--danger); }
 .nyza-toast.success { color: var(--success); }
 
+/* Public share — tile grid (non-gallery folder view) */
+.nyza-share-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+
 /* Masonry gallery (public share gallery mode) — images in original aspect */
 .nyza-masonry { columns: 4 260px; column-gap: 14px; }
 .nyza-masonry > div { break-inside: avoid; margin: 0 0 14px; position: relative; cursor: pointer; border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--border); }
@@ -139,7 +142,7 @@ input, textarea {
 
 /* Non-blocking upload widget (Google-Drive style, bottom-right) */
 .nyza-upload-widget { position: fixed; right: 24px; bottom: 24px; width: 380px; max-width: calc(100vw - 32px); z-index: 95; animation: slideUp .25s cubic-bezier(.2,.8,.2,1); }
-@media (max-width: 760px) { .nyza-upload-widget { right: 8px; left: 8px; bottom: 92px; width: auto; } }
+@media (max-width: 760px) { .nyza-upload-widget { right: 8px; left: 8px; bottom: calc(92px + env(safe-area-inset-bottom)); width: auto; } }
 
 /* Modal backdrop */
 .nyza-modal-backdrop {
@@ -202,18 +205,19 @@ html, body, #root { max-width: 100%; overflow-x: hidden; }
 .nyza-topbar { position: relative; z-index: 50; }
 
 @media (max-width: 760px) {
-  /* TopBar wraps instead of overflowing */
+  /* TopBar wraps instead of overflowing; respect the status-bar / notch in PWA */
   .nyza-topbar {
     height: auto !important;
     flex-wrap: wrap;
     padding: 10px 16px !important;
+    padding-top: calc(10px + env(safe-area-inset-top)) !important;
     row-gap: 8px;
   }
   .nyza-search { width: 100% !important; order: 10; }
 
-  /* Content gets breathing room + clears the bottom nav; no sideways scroll */
+  /* Content gets breathing room + clears the bottom nav + home indicator */
   .nyza-mobile-content { overflow-x: hidden; }
-  .nyza-mobile-content [data-scroll] { padding: 16px 16px 120px !important; overflow-x: hidden !important; }
+  .nyza-mobile-content [data-scroll] { padding: 16px 16px calc(120px + env(safe-area-inset-bottom)) !important; overflow-x: hidden !important; }
 
   /* Stats: 4 cols → 2 */
   .nyza-stat-grid { grid-template-columns: 1fr 1fr !important; }
@@ -233,7 +237,7 @@ html, body, #root { max-width: 100%; overflow-x: hidden; }
 
   /* Selection bar: above the bottom nav, full width, wraps instead of clipping */
   .nyza-selectionbar {
-    bottom: 96px !important; left: 8px !important; right: 8px !important;
+    bottom: calc(96px + env(safe-area-inset-bottom)) !important; left: 8px !important; right: 8px !important;
     transform: none !important; width: auto !important;
     flex-wrap: wrap; justify-content: center; gap: 8px !important;
   }
@@ -253,6 +257,13 @@ html, body, #root { max-width: 100%; overflow-x: hidden; }
   /* Public gallery title smaller on phones */
   .nyza-gallery-title { font-size: 32px !important; letter-spacing: -1px !important; }
   .nyza-gallery-wrap { padding: 20px 16px 80px !important; }
+
+  /* Public share page: stack hero, shrink title, no sideways scroll */
+  .nyza-share-top { padding: 16px !important; padding-top: calc(16px + env(safe-area-inset-top)) !important; }
+  .nyza-share-hero { grid-template-columns: 1fr !important; gap: 22px !important; padding: 16px 16px 28px !important; }
+  .nyza-share-title { font-size: 34px !important; letter-spacing: -1px !important; }
+  .nyza-share-content { padding: 0 16px 90px !important; }
+  .nyza-share-grid { grid-template-columns: 1fr 1fr !important; gap: 8px; }
 
   /* Modal footers: drop the security note, let the buttons fit/wrap */
   .nyza-modal-foot { flex-wrap: wrap; padding: 14px 18px !important; }

@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API } from './api.js';
 import {
-  Ic, Glass, Btn, NyzaWordmark, FileIcon, PhotoPlaceholder,
+  Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
   humanSize, applyAccent,
 } from './system.jsx';
 import { Dropzone, UploadRow, MediaViewer, UploadReview } from './app.jsx';
@@ -30,12 +30,35 @@ export function CenteredMessage({ title, desc }) {
   );
 }
 
+// Thumbnail for the public share view: real image preview (cached GD thumb),
+// play-overlay for video, icon otherwise.
+function ShareThumb({ token, f, password }) {
+  const [ok, setOk] = useState(true);
+  if (f.kind === 'image' && ok) {
+    return <img src={API.shareThumbUrl(token, f.id, password)} alt={f.name} loading="lazy" onError={() => setOk(false)}
+      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}/>;
+  }
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+      <FileIcon kind={f.kind} size={30} tint={f.hue}/>
+      {f.kind === 'video' && (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="#fff"><path d="M3 1l9 6-9 6z"/></svg>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PublicSharePage({ token }) {
   const [state, setState] = useState({ status: 'loading' });
   const [password, setPassword] = useState('');
   const [pwInput, setPwInput] = useState('');
   const [pwBusy, setPwBusy] = useState(false);
   const [viewing, setViewing] = useState(null);
+  const [viewMode, setViewMode] = useState('grid');
 
   const load = (pw) => {
     setState({ status: 'loading' });
@@ -88,13 +111,14 @@ export function PublicSharePage({ token }) {
   const totalSize = isFolder ? data.total_size : (data.file?.size || 0);
   const galleryMode = isFolder && data.gallery;
   const images = items.filter((f) => f.kind === 'image');
+  const media = items.filter((f) => f.kind === 'image' || f.kind === 'video');
 
   // ── Gallery mode: folder name as title, masonry of images in original aspect,
   //    click → fullscreen viewer, bulk download. Perfect for Hochzeit/Geburtstag.
   if (galleryMode) {
     return (
       <div style={{ height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
-        <div style={{ padding: '24px 28px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div className="nyza-share-top" style={{ padding: '24px 28px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {data.owner?.has_logo
               ? <img src={API.logoUrl(data.owner.id)} alt={data.owner?.name} style={{ maxHeight: 36, maxWidth: 180, objectFit: 'contain' }}/>
@@ -109,7 +133,7 @@ export function PublicSharePage({ token }) {
               <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10 }}>Galerie</div>
               <h1 className="nyza-gallery-title" style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 600, letterSpacing: -1.6, margin: 0, lineHeight: 1.0, wordBreak: 'break-word' }}>{name}</h1>
               <p style={{ fontSize: 14, color: 'var(--fg-2)', marginTop: 12 }}>
-                {images.length} {images.length === 1 ? 'Bild' : 'Bilder'} · {humanSize(totalSize)}
+                {media.length} {media.length === 1 ? 'Medium' : 'Medien'} · {humanSize(totalSize)}
                 {data.expires_at && <> · bis {new Date(data.expires_at).toLocaleDateString('de-DE')}</>}
               </p>
             </div>
@@ -119,18 +143,30 @@ export function PublicSharePage({ token }) {
           </div>
 
           <div className="nyza-masonry">
-            {images.map((f) => (
+            {media.map((f) => (
               <div key={f.id} onClick={() => setViewing(f)}>
-                <img src={API.shareFileUrl(token, f.id, password)} alt={f.name} loading="lazy"/>
+                {f.kind === 'video' ? (
+                  <div style={{ position: 'relative' }}>
+                    <video src={API.shareFileUrl(token, f.id, password) + '#t=0.1'} preload="metadata" muted playsInline
+                      style={{ width: '100%', display: 'block' }}/>
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                      <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <svg width="18" height="18" viewBox="0 0 14 14" fill="#fff"><path d="M3 1l9 6-9 6z"/></svg>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <img src={API.shareFileUrl(token, f.id, password)} alt={f.name} loading="lazy"/>
+                )}
                 <div className="ov"><span>{f.name}</span></div>
               </div>
             ))}
           </div>
 
-          {/* any non-image files still listed below */}
-          {items.length > images.length && (
+          {/* any non-media files still listed below */}
+          {items.length > media.length && (
             <div style={{ marginTop: 32, display: 'grid', gap: 8 }}>
-              {items.filter((f) => f.kind !== 'image').map((f) => (
+              {items.filter((f) => f.kind !== 'image' && f.kind !== 'video').map((f) => (
                 <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
                   onClick={() => setViewing(f)}>
                   <FileIcon kind={f.kind} size={16} tint={f.hue}/>
@@ -166,7 +202,7 @@ export function PublicSharePage({ token }) {
 
   return (
     <div style={{ height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
-      <div style={{ padding: '28px 40px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div className="nyza-share-top" style={{ padding: '28px 40px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {data.owner?.has_logo ? (
             <img src={API.logoUrl(data.owner.id)} alt={data.owner?.name} style={{ maxHeight: 40, maxWidth: 200, objectFit: 'contain' }}/>
@@ -193,13 +229,13 @@ export function PublicSharePage({ token }) {
         </div>
       </div>
 
-      <div style={{ padding: '40px 40px 60px', display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 60, alignItems: 'center' }}>
-        <div>
+      <div className="nyza-share-hero" style={{ padding: '40px 40px 60px', display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 60, alignItems: 'center' }}>
+        <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ width: 24, height: 1, background: 'var(--accent)' }}/>
             Geteilte Dateien für Sie
           </div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 56, fontWeight: 600, letterSpacing: -2, margin: 0, lineHeight: 1.0 }}>{name}</h1>
+          <h1 className="nyza-share-title" style={{ fontFamily: 'var(--font-display)', fontSize: 56, fontWeight: 600, letterSpacing: -2, margin: 0, lineHeight: 1.0, wordBreak: 'break-word' }}>{name}</h1>
           <p style={{ fontSize: 16, color: 'var(--fg-2)', marginTop: 18, lineHeight: 1.55, maxWidth: 480 }}>
             {items.length} {items.length === 1 ? 'Datei' : 'Dateien'} · {humanSize(totalSize)}
             {data.expires_at && <> · läuft ab am {new Date(data.expires_at).toLocaleDateString('de-DE')}</>}
@@ -242,39 +278,69 @@ export function PublicSharePage({ token }) {
       </div>
 
       {isFolder && items.length > 0 && (
-        <div style={{ padding: '0 40px 80px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div className="nyza-share-content" style={{ padding: '0 40px 80px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, gap: 12 }}>
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0, letterSpacing: -0.3 }}>Inhalt</h2>
-            <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{items.length} Dateien</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{items.length} Dateien</span>
+              <div style={{ display: 'flex', padding: 3, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+                <IconBtn active={viewMode === 'grid'} onClick={() => setViewMode('grid')} size={30} title="Kacheln">{Ic.grid(15)}</IconBtn>
+                <IconBtn active={viewMode === 'list'} onClick={() => setViewMode('list')} size={30} title="Liste">{Ic.list(15)}</IconBtn>
+              </div>
+            </div>
           </div>
-          <div style={{ display: 'grid', gap: 8 }}>
-            {items.map((f) => {
-              const previewable = ['image', 'video', 'pdf', 'audio'].includes(f.kind) || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(f.name);
-              return (
-                <div key={f.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px',
-                  borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)',
-                  cursor: previewable ? 'pointer' : 'default',
-                  transition: 'background .15s',
-                }}
-                onMouseEnter={(e) => { if (previewable) e.currentTarget.style.background = 'var(--surface-hi)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface)'; }}
-                onClick={() => previewable && setViewing(f)}>
-                  <FileIcon kind={f.kind} size={16} tint={f.hue}/>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
-                    <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{humanSize(f.size)}</div>
+
+          {viewMode === 'grid' ? (
+            <div className="nyza-share-grid">
+              {items.map((f) => {
+                const previewable = ['image', 'video', 'pdf', 'audio'].includes(f.kind) || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(f.name);
+                return (
+                  <div key={f.id} onClick={() => previewable && setViewing(f)} style={{
+                    borderRadius: 'var(--r-md)', overflow: 'hidden', background: 'var(--surface)', border: '1px solid var(--border)',
+                    cursor: previewable ? 'pointer' : 'default',
+                  }}>
+                    <div style={{ aspectRatio: '1/1', background: 'var(--surface-hi)' }}>
+                      <ShareThumb token={token} f={f} password={password}/>
+                    </div>
+                    <div style={{ padding: '8px 10px' }}>
+                      <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
+                      <div style={{ fontSize: 10.5, color: 'var(--fg-3)' }}>{humanSize(f.size)}</div>
+                    </div>
                   </div>
-                  {data.allow_download && (
-                    <Btn variant="glass" size="sm" icon={Ic.download(13)}
-                      onClick={(e) => { e.stopPropagation(); location.href = API.shareFileUrl(token, f.id, password, true); }}>
-                      Download
-                    </Btn>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {items.map((f) => {
+                const previewable = ['image', 'video', 'pdf', 'audio'].includes(f.kind) || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(f.name);
+                return (
+                  <div key={f.id} className="nyza-listrow" style={{
+                    display: 'flex', alignItems: 'center', gap: 14, padding: '10px 14px',
+                    borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)',
+                    cursor: previewable ? 'pointer' : 'default', transition: 'background .15s',
+                  }}
+                  onMouseEnter={(e) => { if (previewable) e.currentTarget.style.background = 'var(--surface-hi)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface)'; }}
+                  onClick={() => previewable && setViewing(f)}>
+                    <div style={{ width: 44, height: 44, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: 'var(--surface-hi)' }}>
+                      <ShareThumb token={token} f={f} password={password}/>
+                    </div>
+                    <div className="nyza-listrow-main" style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{humanSize(f.size)}</div>
+                    </div>
+                    {data.allow_download && (
+                      <Btn variant="glass" size="sm" icon={Ic.download(13)}
+                        onClick={(e) => { e.stopPropagation(); location.href = API.shareFileUrl(token, f.id, password, true); }}>
+                        Download
+                      </Btn>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

@@ -204,7 +204,13 @@ final class FileRoutes
         $uid = (int)$req->getAttribute('uid');
         $f = self::fetchOne($uid, (int)$args['id']);
         if (!$f) return Json::err($res, 'Not found', 404);
+        return self::serveThumb($res, $f);
+    }
 
+    /** Serve a cached GD thumbnail for a file row (or fall back to the original).
+     *  Shared by the owner endpoint and the public share thumbnail endpoint. */
+    public static function serveThumb(Response $res, array $f): Response
+    {
         $src = Storage::abs($f['storage_path']);
         if (!is_file($src)) return Json::err($res, 'File missing on disk', 410);
 

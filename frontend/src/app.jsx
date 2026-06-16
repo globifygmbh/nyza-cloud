@@ -896,7 +896,7 @@ function MobileNav({ active, onNavigate, onUpload, onMore }) {
   ];
   return (
     <div style={{
-      position: 'fixed', left: 12, right: 12, bottom: 12, height: 64, zIndex: 80,
+      position: 'fixed', left: 12, right: 12, bottom: 'calc(12px + env(safe-area-inset-bottom))', height: 64, zIndex: 80,
       borderRadius: 32, padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-around',
       background: 'var(--surface)', border: '1px solid var(--border-hi)',
       backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)',

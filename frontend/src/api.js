@@ -198,6 +198,8 @@ export const API = {
   },
   shareZipUrl: (token, password) =>
     url('/api/s/' + token + '/zip' + (password ? '?p=' + encodeURIComponent(password) : '')),
+  shareThumbUrl: (token, fileId, password) =>
+    url('/api/s/' + token + '/file/' + fileId + '/thumb' + (password ? '?p=' + encodeURIComponent(password) : '')),
 
   // Upload links (owner)
   uploadLinks:      () => request('/api/upload-links'),
