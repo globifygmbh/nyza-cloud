@@ -917,14 +917,53 @@ final class FileRoutes
         // Force download for types that could execute script in our origin.
         if (Storage::mustDownload($mime)) $download = true;
 
-        $stream = fopen($abs, 'rb');
+        $size = (int) filesize($abs);
         $disp = ($download ? 'attachment' : 'inline') . '; filename="' . addslashes($file['name']) . '"';
-        return $res
-            ->withHeader('Content-Type', $mime)
-            ->withHeader('Content-Disposition', $disp)
-            ->withHeader('Content-Length', (string)$file['size'])
-            ->withHeader('X-Content-Type-Options', 'nosniff')
-            ->withHeader('Cache-Control', 'private, max-age=600')
-            ->withBody(new Stream($stream));
+
+        // Stream natively with HTTP Range support so video/audio can be scrubbed
+        // and Safari (which requires 206 responses) plays inline — both for the
+        // owner and on shared links. Bypasses PSR-7 for true ranged delivery.
+        while (ob_get_level() > 0) { @ob_end_clean(); }
+        $start = 0; $end = $size - 1; $partial = false;
+        $range = $_SERVER['HTTP_RANGE'] ?? '';
+        if ($range !== '' && preg_match('/bytes=(\d*)-(\d*)/', $range, $m)) {
+            if ($m[1] !== '') { $start = (int)$m[1]; }
+            if ($m[2] !== '') { $end = (int)$m[2]; }
+            if ($m[1] === '' && $m[2] !== '') { $start = max(0, $size - (int)$m[2]); $end = $size - 1; }
+            if ($start > $end || $start >= $size) {
+                header('Content-Range: bytes */' . $size);
+                http_response_code(416);
+                exit;
+            }
+            $end = min($end, $size - 1);
+            $partial = true;
+        }
+        $length = $end - $start + 1;
+
+        if (function_exists('set_time_limit')) { @set_time_limit(0); }
+        header('Content-Type: ' . $mime);
+        header('Content-Disposition: ' . $disp);
+        header('Accept-Ranges: bytes');
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: private, max-age=600');
+        if ($partial) {
+            http_response_code(206);
+            header('Content-Range: bytes ' . $start . '-' . $end . '/' . $size);
+        }
+        header('Content-Length: ' . $length);
+
+        $fp = fopen($abs, 'rb');
+        if ($fp === false) { http_response_code(500); exit; }
+        if ($start > 0) fseek($fp, $start);
+        $remaining = $length;
+        while ($remaining > 0 && !feof($fp)) {
+            $buf = fread($fp, (int) min(131072, $remaining));
+            if ($buf === false || $buf === '') break;
+            echo $buf;
+            $remaining -= strlen($buf);
+            @flush();
+        }
+        fclose($fp);
+        exit;
     }
 }
