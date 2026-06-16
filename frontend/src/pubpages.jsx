@@ -158,6 +158,17 @@ export function PublicSharePage({ token }) {
                 ) : (
                   <img src={API.shareFileUrl(token, f.id, password)} alt={f.name} loading="lazy"/>
                 )}
+                {f.label && (
+                  <div style={{ position: 'absolute', top: 8, right: 8, width: 14, height: 14, borderRadius: '50%', background: f.label === 'red' ? '#ef4444' : f.label === 'yellow' ? '#eab308' : '#22c55e', border: '2px solid rgba(255,255,255,0.8)', boxShadow: '0 1px 4px rgba(0,0,0,0.4)' }}
+                    title={f.label === 'red' ? 'Überarbeiten' : f.label === 'yellow' ? 'Auswahl' : 'Freigegeben'}/>
+                )}
+                <div style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', gap: 4, opacity: 0 }} className="gallery-label-btns">
+                  {[['red','#ef4444','Überarbeiten'],['yellow','#eab308','Auswahl'],['green','#22c55e','Freigegeben']].map(([lbl, col, name]) => (
+                    <button key={lbl} type="button" onClick={(e) => { e.stopPropagation(); API.shareSetLabel(token, f.id, f.label === lbl ? null : lbl, password).then(() => { setState((s) => ({ ...s, data: { ...s.data, files: (s.data.files || []).map((x) => x.id === f.id ? { ...x, label: x.label === lbl ? null : lbl } : x) } })); }).catch(() => {}); }}
+                      title={name}
+                      style={{ width: 22, height: 22, borderRadius: '50%', border: '2px solid ' + (f.label === lbl ? '#fff' : 'rgba(255,255,255,0.5)'), background: col, cursor: 'pointer', padding: 0 }}/>
+                  ))}
+                </div>
                 <div className="ov"><span>{f.name}</span></div>
               </div>
             ))}

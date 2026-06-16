@@ -1242,6 +1242,9 @@ function FileTile({ file, selected, selecting, onActivate, onContext, onToggleSe
             </div>
           </div>
         )}
+        {file.label && (
+          <div style={{ position: 'absolute', bottom: 8, left: 8, width: 12, height: 12, borderRadius: '50%', background: file.label === 'red' ? '#ef4444' : file.label === 'yellow' ? '#eab308' : '#22c55e', boxShadow: '0 1px 4px rgba(0,0,0,0.5)', border: '1.5px solid rgba(255,255,255,0.7)' }}/>
+        )}
         {/* selection checkbox */}
         <div onClick={(e) => { e.stopPropagation(); onToggleSelect(); }}
           style={{
@@ -1747,7 +1750,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const [withPassword, setWithPassword] = useState(false);
   const [password, setPassword] = useState('');
   const [allowDownload, setAllowDownload] = useState(true);
-  const [galleryMode, setGalleryMode] = useState(false);
+  const [galleryMode, setGalleryMode] = useState(folder?.kind === 'gallery');
   const [withExpiry, setWithExpiry] = useState(false);
   const [expiresAt, setExpiresAt] = useState(() => { const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10); });
   const [withInvite, setWithInvite] = useState(false);
@@ -2151,23 +2154,65 @@ function VersionHistoryModal({ file, onClose, onChanged }) {
   );
 }
 
-function NewFolderRow({ onCreate, onCancel }) {
+function NewFolderModal({ title = 'Neuer Ordner', onCreate, onCancel }) {
   const [name, setName] = useState('');
   const [kind, setKind] = useState('normal');
   const [tone, setTone] = useState('violet');
+  const inputRef = useRef(null);
+  useEffect(() => { setTimeout(() => inputRef.current?.focus(), 60); }, []);
+  const submit = () => { if (name.trim()) onCreate(name.trim(), kind, tone); };
   return (
-    <div style={{ marginBottom: 18, padding: 14, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px dashed var(--border-hi)', display: 'flex', alignItems: 'center', gap: 10 }}>
-      <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) onCreate(name.trim(), kind, tone); if (e.key === 'Escape') onCancel(); }}
-        placeholder="Ordnername" style={{ flex: 1, height: 36, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13.5, color: 'var(--fg)' }}/>
-      <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ height: 36, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}>
-        <option value="normal">Dateien</option><option value="gallery">Galerie</option>
-      </select>
-      <select value={tone} onChange={(e) => setTone(e.target.value)} style={{ height: 36, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}>
-        {FOLDER_COLOR_KEYS.map((k) => <option key={k} value={k}>{FOLDER_TONES[k].label}</option>)}
-      </select>
-      <Btn variant="primary" size="sm" disabled={!name.trim()} onClick={() => onCreate(name.trim(), kind, tone)}>Erstellen</Btn>
-      <Btn variant="ghost" size="sm" onClick={onCancel}>Abbrechen</Btn>
+    <div className="nyza-modal-backdrop" onClick={onCancel}>
+      <Glass style={{ width: '100%', maxWidth: 480, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '22px 24px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>{Ic.folder(18)}</div>
+            <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{title}</h2>
+            <IconBtn size={30} onClick={onCancel}>{Ic.close(16)}</IconBtn>
+          </div>
+          <input ref={inputRef} value={name} onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') onCancel(); }}
+            placeholder="Ordnername"
+            style={{ width: '100%', height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', marginBottom: 18 }}
+            onFocus={(e) => { e.target.style.borderColor = 'var(--accent)'; }} onBlur={(e) => { e.target.style.borderColor = 'var(--border)'; }}
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
+            {[
+              { k: 'normal', icon: Ic.folder(28), label: 'Dateien', desc: 'Normale Datei- und Ordnerverwaltung' },
+              { k: 'gallery', icon: Ic.fileImg(28), label: 'Galerie', desc: 'Bilder & Videos in chronologischer Ansicht mit Markierungsfunktion' },
+            ].map(({ k, icon, label, desc }) => (
+              <button key={k} type="button" onClick={() => setKind(k)} style={{
+                padding: '14px 12px', borderRadius: 'var(--r-md)', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+                border: '2px solid ' + (kind === k ? 'var(--accent)' : 'var(--border)'),
+                background: kind === k ? 'color-mix(in oklab, var(--accent) 10%, var(--surface))' : 'var(--surface-hi)',
+                boxShadow: kind === k ? '0 0 0 3px var(--accent-glow)' : 'none',
+                transition: 'all .15s',
+              }}>
+                <div style={{ color: kind === k ? 'var(--accent)' : 'var(--fg-3)', marginBottom: 8 }}>{icon}</div>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', marginBottom: 4 }}>{label}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--fg-3)', lineHeight: 1.4 }}>{desc}</div>
+              </button>
+            ))}
+          </div>
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-3)', marginBottom: 8 }}>Farbe</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {FOLDER_COLOR_KEYS.map((k) => (
+                <button key={k} type="button" onClick={() => setTone(k)} title={FOLDER_TONES[k].label} style={{
+                  width: 28, height: 28, borderRadius: '50%', cursor: 'pointer', border: 'none', padding: 0,
+                  background: folderDot(k),
+                  outline: tone === k ? '2px solid var(--fg)' : '2px solid transparent',
+                  outlineOffset: 2,
+                }}/>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="nyza-modal-foot" style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onCancel}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={!name.trim()} onClick={submit} icon={Ic.plus(15)}>Erstellen</Btn>
+        </div>
+      </Glass>
     </div>
   );
 }
@@ -2237,6 +2282,13 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   // a token bumped to force child views to reload after uploads/changes
   const [refreshTick, setRefreshTick] = useState(0);
   const refreshAll = () => { loadStats(); loadFolders(); setRefreshTick((t) => t + 1); };
+
+  const onLabelFile = async (f, label) => {
+    try {
+      await API.labelFile(f.id, label);
+      refreshAll();
+    } catch (e) { toast(e.message, 'error'); }
+  };
 
   const runUpload = async (filesArr, folderId = null) => {
     const items = filesArr.map((f) => ({
@@ -2377,6 +2429,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner löschen?', message: `„${f.name}" und alle enthaltenen Dateien werden endgültig gelöscht.`, confirmLabel: 'Ordner löschen', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onDeleteFile={async (f) => { if (!await confirmDialog({ title: 'In den Papierkorb?', message: `„${f.name}" wird in den Papierkorb verschoben. Du kannst sie dort wiederherstellen.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFile(f.id); toast('In den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             afterChange={refreshAll}
+            onLabelFile={onLabelFile}
           />
         )}
         {nav.name === 'shared' && (
@@ -2477,11 +2530,18 @@ function fileMenuItems(file, o) {
     ];
   }
   const isZip = /\.zip$/i.test(file.name);
+  const f = file;
   return [
     { label: 'Öffnen', icon: Ic.eye(15), onClick: () => o.onOpen(file) },
     { label: 'Herunterladen', icon: Ic.download(15), onClick: () => o.onDownload(file) },
     isZip && o.onUnzip && { label: 'Entpacken', icon: Ic.archive(15), onClick: () => o.onUnzip(file) },
     o.onToggleStar && { label: file.starred ? 'Aus Favoriten entfernen' : 'Zu Favoriten', icon: Ic.star(15), onClick: () => o.onToggleStar(file) },
+    { separator: true },
+    { header: 'Markieren' },
+    { label: 'Rot – Überarbeiten',  icon: <span style={{display:'inline-block',width:10,height:10,borderRadius:'50%',background:'#ef4444',marginRight:2}}/>, onClick: () => o.onLabel && o.onLabel(f, 'red') },
+    { label: 'Gelb – Auswahl',      icon: <span style={{display:'inline-block',width:10,height:10,borderRadius:'50%',background:'#eab308',marginRight:2}}/>, onClick: () => o.onLabel && o.onLabel(f, 'yellow') },
+    { label: 'Grün – Freigegeben',  icon: <span style={{display:'inline-block',width:10,height:10,borderRadius:'50%',background:'#22c55e',marginRight:2}}/>, onClick: () => o.onLabel && o.onLabel(f, 'green') },
+    ...(f.label ? [{ label: 'Markierung entfernen', icon: Ic.close(14), onClick: () => o.onLabel && o.onLabel(f, null) }] : []),
     { separator: true },
     o.onShare && { label: 'Teilen', icon: Ic.share(15), onClick: () => o.onShare(file) },
     o.onMove && { label: 'Verschieben', icon: Ic.folder(15), onClick: () => o.onMove(file) },
@@ -2626,7 +2686,7 @@ function FilesView({
         ) : (
           <>
             <SectionHeader title="Ordner" count={fFolders.length} action={<Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn>}/>
-            {creatingFolder && <NewFolderRow onCreate={(n, k, t) => { onNewFolder(n, k, t); setCreatingFolder(false); }} onCancel={() => setCreatingFolder(false)}/>}
+            {creatingFolder && <NewFolderModal onCreate={(n, k, t) => { onNewFolder(n, k, t); setCreatingFolder(false); }} onCancel={() => setCreatingFolder(false)}/>}
             {fFolders.length > 0 ? (
               <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 36 }}>
                 {fFolders.map((f) => <FolderCard key={f.id} folder={f}
@@ -2647,11 +2707,82 @@ function FilesView({
   );
 }
 
+// ───── Gallery owner view ──────────────────────────────────────────────────
+const LABEL_COLORS = { red: '#ef4444', yellow: '#eab308', green: '#22c55e' };
+const LABEL_NAMES  = { red: 'Überarbeiten', yellow: 'Auswahl', green: 'Freigegeben' };
+
+function GalleryOwnerView({ files, onOpen, onLabel }) {
+  const media = files.filter((f) => f.kind === 'image' || f.kind === 'video');
+  const others = files.filter((f) => f.kind !== 'image' && f.kind !== 'video');
+
+  // Group by month+year
+  const groups = [];
+  const seen = {};
+  for (const f of media) {
+    const d = new Date(f.created_at || Date.now());
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    if (!seen[key]) { seen[key] = true; groups.push({ label: d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }), files: [] }); }
+    groups[groups.length - 1].files.push(f);
+  }
+
+  return (
+    <div>
+      {groups.map((g) => (
+        <div key={g.label} style={{ marginBottom: 36 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span>{g.label}</span>
+            <div style={{ flex: 1, height: 1, background: 'var(--border)' }}/>
+          </div>
+          <div className="nyza-masonry">
+            {g.files.map((f) => (
+              <div key={f.id} onClick={() => onOpen(f)} style={{ cursor: 'pointer', position: 'relative' }}>
+                {f.kind === 'image'
+                  ? <img src={API.thumbUrl(f.id)} alt={f.name} loading="lazy" style={{ width: '100%', display: 'block', borderRadius: 'var(--r-md)' }}/>
+                  : <video src={`${API.fileRawUrl(f.id)}?token=${getToken()}#t=0.1`} muted preload="metadata" style={{ width: '100%', display: 'block', borderRadius: 'var(--r-md)', pointerEvents: 'none' }}/>
+                }
+                {f.kind === 'video' && (
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', borderRadius: 'var(--r-md)' }}>
+                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <svg width="12" height="12" viewBox="0 0 14 14" fill="#fff"><path d="M3 1l9 6-9 6z"/></svg>
+                    </div>
+                  </div>
+                )}
+                {f.label && (
+                  <div style={{ position: 'absolute', top: 8, right: 8, width: 14, height: 14, borderRadius: '50%', background: LABEL_COLORS[f.label], border: '2px solid rgba(255,255,255,0.8)', boxShadow: '0 1px 4px rgba(0,0,0,0.4)' }}
+                    title={LABEL_NAMES[f.label]}/>
+                )}
+                {onLabel && (
+                  <div style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', gap: 4, opacity: 0 }} className="gallery-label-btns">
+                    {Object.entries(LABEL_COLORS).map(([lbl, col]) => (
+                      <button key={lbl} type="button" onClick={(e) => { e.stopPropagation(); onLabel(f, f.label === lbl ? null : lbl); }}
+                        title={LABEL_NAMES[lbl]}
+                        style={{ width: 22, height: 22, borderRadius: '50%', border: '2px solid ' + (f.label === lbl ? '#fff' : 'rgba(255,255,255,0.5)'), background: col, cursor: 'pointer', padding: 0 }}/>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      {others.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', marginBottom: 12 }}>Andere Dateien</div>
+          <FileGrid files={others} selected={new Set()} onOpen={onOpen} onToggleSelect={() => {}} onDragSelect={() => {}} onToggleStar={() => {}} onDragFiles={() => {}} onContext={() => {}} selectMode={false}/>
+        </div>
+      )}
+      {media.length === 0 && others.length === 0 && (
+        <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--fg-3)' }}>Noch keine Dateien in dieser Galerie.</div>
+      )}
+    </div>
+  );
+}
+
 // ───── Folder detail view ──────────────────────────────────────────────────
 function FolderView({
   folderId, view, setView, sort, setSort, search, setSearch, refreshTick,
   onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onMoveFiles, onUploadLink, onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, afterChange,
-  onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onShareFolderItem, onDeleteFolder, onFolderColor,
+  onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onShareFolderItem, onDeleteFolder, onFolderColor, onLabelFile,
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2695,7 +2826,7 @@ function FolderView({
       multi, count: selected.size,
       onOpen: (x) => onOpenFile(x, files), onDownload: onDownloadFile, onUnzip,
       onToggleStar, onShare: onShareFile, onMove: (x) => onMoveFiles([x.id]),
-      onVersions, onDelete: onDeleteFile,
+      onVersions, onDelete: onDeleteFile, onLabel: onLabelFile,
       onZip: doZip, onMoveMany: () => onMoveFiles([...selected]), onDeleteMany: doBulkDelete,
     }));
   };
@@ -2743,14 +2874,16 @@ function FolderView({
         </div>
 
         <SectionHeader title="Unterordner" count={subfolders.length} action={<Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setCreatingSubfolder(true)}>Neuer Unterordner</Btn>}/>
-        {creatingSubfolder && <NewFolderRow onCreate={async (n, k, t) => { try { await API.newFolder({ name: n, kind: k, tone: t, parent_id: folderId }); toast('Unterordner erstellt', 'success'); setCreatingSubfolder(false); load(); } catch (e) { toast(e.message, 'error'); } }} onCancel={() => setCreatingSubfolder(false)}/>}
+        {creatingSubfolder && <NewFolderModal title="Neuer Unterordner" onCreate={async (n, k, t) => { try { await API.newFolder({ name: n, kind: k, tone: t, parent_id: folderId }); toast('Unterordner erstellt', 'success'); setCreatingSubfolder(false); load(); } catch (e) { toast(e.message, 'error'); } }} onCancel={() => setCreatingSubfolder(false)}/>}
         {subfolders.length > 0 && (
           <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 32 }}>
             {subfolders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)} onDropFiles={onDropFiles} onContext={folderCtx}/>)}
           </div>
         )}
 
-        {files.length > 0 ? (
+        {folder.kind === 'gallery' ? (
+          <GalleryOwnerView files={files} token={null} onOpen={(f) => onOpenFile(f, files)} onLabel={onLabelFile}/>
+        ) : files.length > 0 ? (
           view === 'grid'
             ? <FileGrid files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onDragFiles={() => {}} onContext={fileCtx} selectMode={selectMode}/>
             : <FileList files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onShareFile={onShareFile} onToggleStar={onToggleStar} onDeleteFile={(f) => { onDeleteFile(f); }} onContext={fileCtx} selectMode={selectMode}/>

@@ -1,0 +1,1 @@
+ALTER TABLE files ADD COLUMN label VARCHAR(8) NULL DEFAULT NULL COMMENT 'red|yellow|green';

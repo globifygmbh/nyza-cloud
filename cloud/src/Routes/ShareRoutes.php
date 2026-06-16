@@ -33,6 +33,7 @@ final class ShareRoutes
         $app->get('/api/s/{token}/file/{id}/thumb', [self::class, 'fileThumb']);
         $app->get('/api/s/{token}/file/{id}/comments',  [self::class, 'fileComments']);
         $app->post('/api/s/{token}/file/{id}/comments', [self::class, 'addFileComment']);
+        $app->post('/api/s/{token}/file/{id}/label', [self::class, 'setFileLabel']);
     }
 
     /** Verify a file is reachable through this share; returns the share or null. */
@@ -66,6 +67,22 @@ final class ShareRoutes
         $share = self::shareForFile($args['token'], (int)$args['id'], $req);
         if (!$share) return Json::err($res, 'Not found', 404);
         return Json::ok($res, ['comments' => FileRoutes::listComments((int)$args['id'])]);
+    }
+
+    public static function setFileLabel(Request $req, Response $res, array $args): Response
+    {
+        if (!\Nyza\RateLimiter::allowReq($req, 'share_label', 60, 300, $args['token'])) {
+            return Json::err($res, 'Zu viele Anfragen', 429, 'rate_limited');
+        }
+        $share = self::shareForFile($args['token'], (int)$args['id'], $req);
+        if (!$share) return Json::err($res, 'Not found', 404);
+        $b = (array) $req->getParsedBody();
+        $allowed = [null, 'red', 'yellow', 'green'];
+        $label = array_key_exists('label', $b) ? ($b['label'] === '' || $b['label'] === null ? null : (string)$b['label']) : null;
+        if (!in_array($label, $allowed, true)) return Json::err($res, 'Invalid label', 422);
+        Database::pdo()->prepare('UPDATE files SET label = ? WHERE id = ?')
+            ->execute([$label, (int)$args['id']]);
+        return Json::ok($res, ['ok' => true, 'label' => $label]);
     }
 
     public static function addFileComment(Request $req, Response $res, array $args): Response

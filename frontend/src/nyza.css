@@ -141,6 +141,8 @@ input, textarea {
 .nyza-masonry > div:hover .ov { opacity: 1; }
 .nyza-masonry .ov span { color: #fff; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 760px) { .nyza-masonry { columns: 2 150px; column-gap: 8px; } .nyza-masonry > div { margin-bottom: 8px; } }
+.nyza-masonry > div:hover .gallery-label-btns { opacity: 1 !important; }
+@media (hover: none) { .gallery-label-btns { opacity: 1 !important; } }
 
 /* Non-blocking upload widget (Google-Drive style, bottom-right) */
 .nyza-upload-widget { position: fixed; right: 24px; bottom: 24px; width: 380px; max-width: calc(100vw - 32px); z-index: 95; animation: slideUp .25s cubic-bezier(.2,.8,.2,1); }

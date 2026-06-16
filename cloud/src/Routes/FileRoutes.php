@@ -33,6 +33,7 @@ final class FileRoutes
             $g->get('/{id}/raw',              [self::class, 'raw']);
             $g->get('/{id}/thumb',            [self::class, 'thumb']);
             $g->post('/{id}/star',            [self::class, 'star']);
+            $g->post('/{id}/label',           [self::class, 'setLabel']);
             $g->post('/{id}/unzip',           [self::class, 'unzip']);
             $g->get('/{id}/comments',         [self::class, 'comments']);
             $g->post('/{id}/comments',        [self::class, 'addComment']);
@@ -82,6 +83,20 @@ final class FileRoutes
         $stmt = Database::pdo()->prepare('SELECT * FROM files WHERE user_id = ? AND deleted_at IS NULL AND opened_at IS NOT NULL ORDER BY opened_at DESC LIMIT 18');
         $stmt->execute([$uid]);
         return Json::ok($res, ['files' => $stmt->fetchAll()]);
+    }
+
+    public static function setLabel(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchOne($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+        $b = (array) $req->getParsedBody();
+        $allowed = [null, 'red', 'yellow', 'green'];
+        $label = array_key_exists('label', $b) ? ($b['label'] === '' || $b['label'] === null ? null : (string)$b['label']) : 'remove';
+        if (!in_array($label, $allowed, true)) return Json::err($res, 'Invalid label', 422);
+        Database::pdo()->prepare('UPDATE files SET label = ? WHERE id = ? AND user_id = ?')
+            ->execute([$label, (int)$f['id'], $uid]);
+        return Json::ok($res, ['ok' => true, 'label' => $label]);
     }
 
     public static function star(Request $req, Response $res, array $args): Response
