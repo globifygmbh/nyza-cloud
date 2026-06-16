@@ -27,9 +27,21 @@ final class FolderRoutes
     public static function list(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $parent = $req->getQueryParams()['parent_id'] ?? null;
+        $qp = $req->getQueryParams();
         $pdo = Database::pdo();
 
+        // ?all=1 → flat list of every folder (used by the move-target picker).
+        if (isset($qp['all'])) {
+            $stmt = $pdo->prepare(
+                'SELECT f.*, '
+                . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count '
+                . 'FROM folders f WHERE user_id = ? ORDER BY name'
+            );
+            $stmt->execute([$uid]);
+            return Json::ok($res, ['folders' => $stmt->fetchAll()]);
+        }
+
+        $parent = $qp['parent_id'] ?? null;
         $sql = 'SELECT f.*, '
              . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
              . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
@@ -83,17 +95,51 @@ final class FolderRoutes
         $uid = (int)$req->getAttribute('uid');
         $id = (int)$args['id'];
         $b = (array) $req->getParsedBody();
-        $stmt = Database::pdo()->prepare(
+
+        // Moving: parent_id may be set (int) or explicitly null (→ root).
+        $movingParent = array_key_exists('parent_id', $b);
+        $newParent = $movingParent ? ($b['parent_id'] !== null ? (int)$b['parent_id'] : null) : null;
+        if ($movingParent && $newParent !== null) {
+            if ($newParent === $id) return Json::err($res, 'Ordner kann nicht in sich selbst verschoben werden', 422);
+            // target must belong to the user and not be a descendant of $id
+            $own = self::fetchOne($uid, $newParent);
+            if (!$own) return Json::err($res, 'Zielordner nicht gefunden', 404);
+            if (in_array($newParent, self::descendantIds($uid, $id), true)) {
+                return Json::err($res, 'Ordner kann nicht in einen Unterordner verschoben werden', 422);
+            }
+        }
+
+        $pdo = Database::pdo();
+        $stmt = $pdo->prepare(
             'UPDATE folders SET name = COALESCE(?, name), kind = COALESCE(?, kind), tone = COALESCE(?, tone), updated_at = CURRENT_TIMESTAMP '
             . 'WHERE id = ? AND user_id = ?'
         );
-        $stmt->execute([
-            $b['name'] ?? null,
-            $b['kind'] ?? null,
-            $b['tone'] ?? null,
-            $id, $uid,
-        ]);
+        $stmt->execute([$b['name'] ?? null, $b['kind'] ?? null, $b['tone'] ?? null, $id, $uid]);
+
+        if ($movingParent) {
+            $pdo->prepare('UPDATE folders SET parent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
+                ->execute([$newParent, $id, $uid]);
+        }
         return Json::ok($res, ['folder' => self::fetchOne($uid, $id)]);
+    }
+
+    /** All descendant folder ids of $id (excluding $id), breadth-first. */
+    private static function descendantIds(int $uid, int $id): array
+    {
+        $pdo = Database::pdo();
+        $child = $pdo->prepare('SELECT id FROM folders WHERE parent_id = ? AND user_id = ?');
+        $out = [];
+        $frontier = [$id];
+        $guard = 0;
+        while ($frontier && $guard++ < 10000) {
+            $next = [];
+            foreach ($frontier as $fid) {
+                $child->execute([$fid, $uid]);
+                foreach ($child->fetchAll() as $r) { $out[] = (int)$r['id']; $next[] = (int)$r['id']; }
+            }
+            $frontier = $next;
+        }
+        return $out;
     }
 
     public static function delete(Request $req, Response $res, array $args): Response

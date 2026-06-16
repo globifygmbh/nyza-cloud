@@ -60,8 +60,22 @@ final class ShareRoutes
         $ins->execute([$uid, $folder, $file, $token, $passwordHash, $expires, $allowDownload]);
         $id = (int)Database::pdo()->lastInsertId();
 
+        // Optional: invite people by email. The frontend passes the fully-built
+        // share URL (it knows origin + base path) plus a recipient list.
+        $emails = array_values(array_filter(array_map(
+            fn($e) => filter_var(trim((string)$e), FILTER_VALIDATE_EMAIL) ?: null,
+            (array)($b['emails'] ?? [])
+        )));
+        // Frontend passes its origin+base (it can't know the token); we append.
+        $base = rtrim((string)($b['share_base'] ?? ''), '/');
+        $shareUrl = $base !== '' ? $base . '/s/' . $token : '';
+        $sent = 0;
+        if ($emails && $shareUrl) {
+            $sent = self::sendInvites($uid, $emails, $shareUrl, (string)($b['message'] ?? ''), $passwordHash !== null ? (string)($b['password'] ?? '') : null);
+        }
+
         Database::pdo()->prepare("INSERT INTO activity (user_id, kind, payload) VALUES (?, 'share_created', ?)")
-            ->execute([$uid, json_encode(['share_id' => $id, 'token' => $token])]);
+            ->execute([$uid, json_encode(['share_id' => $id, 'token' => $token, 'invited' => $sent])]);
 
         return Json::ok($res, [
             'share' => [
@@ -69,8 +83,28 @@ final class ShareRoutes
                 'folder_id' => $folder, 'file_id' => $file,
                 'expires_at' => $expires, 'allow_download' => (bool)$allowDownload,
                 'has_password' => $passwordHash !== null,
+                'invited' => $sent,
             ],
         ], 201);
+    }
+
+    private static function sendInvites(int $uid, array $emails, string $url, string $message, ?string $password): int
+    {
+        $owner = Database::pdo()->prepare('SELECT name, email FROM users WHERE id = ?');
+        $owner->execute([$uid]);
+        $o = $owner->fetch() ?: ['name' => 'Jemand', 'email' => getenv('MAIL_FROM') ?: 'no-reply@nyza.cloud'];
+        $from = getenv('MAIL_FROM') ?: 'no-reply@nyza.cloud';
+        $sent = 0;
+        foreach ($emails as $to) {
+            $body = "Hallo,\n\n{$o['name']} hat Dateien mit dir geteilt.\n\n"
+                  . ($message !== '' ? trim($message) . "\n\n" : '')
+                  . "Hier ansehen / herunterladen:\n$url\n\n"
+                  . ($password ? "Passwort: $password\n\n" : '')
+                  . "— gesendet via Nyza Cloud";
+            $headers = "From: {$o['name']} <$from>\r\nReply-To: {$o['email']}\r\nContent-Type: text/plain; charset=utf-8\r\n";
+            if (@mail($to, "{$o['name']} hat Dateien mit dir geteilt", $body, $headers)) $sent++;
+        }
+        return $sent;
     }
 
     public static function delete(Request $req, Response $res, array $args): Response

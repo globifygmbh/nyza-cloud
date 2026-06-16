@@ -124,9 +124,11 @@ export const API = {
 
   // Folders
   folders:      (parent) => request('/api/folders' + (parent ? '?parent_id=' + parent : '')),
+  allFolders:   ()       => request('/api/folders?all=1'),
   folder:       (id)     => request('/api/folders/' + id),
   newFolder:    (body)   => request('/api/folders', { method: 'POST', body }),
   renameFolder: (id, body) => request('/api/folders/' + id, { method: 'PATCH', body }),
+  moveFolder:   (id, parentId) => request('/api/folders/' + id, { method: 'PATCH', body: { parent_id: parentId } }),
   deleteFolder: (id)     => request('/api/folders/' + id, { method: 'DELETE' }),
 
   // Files
@@ -135,8 +137,12 @@ export const API = {
     upload('/api/files', file, { folder_id: folderId }, onProgress),
   deleteFile:  (id) => request('/api/files/' + id, { method: 'DELETE' }),
   fileRawUrl:  (id) => url('/api/files/' + id + '/raw'),
+  thumbUrl:    (id) => url('/api/files/' + id + '/thumb') + '?token=' + (getToken() || ''),
   createText:  (body) => request('/api/files/text', { method: 'POST', body }),
   saveContent: (id, content) => request('/api/files/' + id + '/content', { method: 'PUT', body: { content } }),
+  searchFiles: (q) => request('/api/files/search?q=' + encodeURIComponent(q)),
+  moveFile:    (id, folderId) => request('/api/files/' + id, { method: 'PATCH', body: { folder_id: folderId } }),
+  moveFiles:   (ids, folderId) => request('/api/files/move', { method: 'POST', body: { file_ids: ids, folder_id: folderId } }),
   zip: (body) => fetch(url('/api/files/zip'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },

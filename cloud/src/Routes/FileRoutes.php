@@ -19,8 +19,10 @@ final class FileRoutes
     {
         $app->group('/api/files', function (RouteCollectorProxy $g) {
             $g->get('',                       [self::class, 'list']);
+            $g->get('/search',                [self::class, 'search']);
             $g->post('',                      [self::class, 'upload']);
             $g->post('/text',                 [self::class, 'createText']);
+            $g->post('/move',                 [self::class, 'moveBulk']);
             // Resumable chunked upload for large owner files.
             $g->post('/chunk/init',           [self::class, 'chunkInit']);
             $g->post('/chunk/{sid}',          [self::class, 'chunkAppend']);
@@ -28,6 +30,8 @@ final class FileRoutes
             $g->post('/chunk/{sid}/finalize', [self::class, 'chunkFinalize']);
             $g->get('/{id}',                  [self::class, 'show']);
             $g->get('/{id}/raw',              [self::class, 'raw']);
+            $g->get('/{id}/thumb',            [self::class, 'thumb']);
+            $g->patch('/{id}',                [self::class, 'move']);
             $g->put('/{id}/content',          [self::class, 'saveContent']);
             $g->post('/{id}/restore',         [self::class, 'restore']);
             $g->delete('/{id}/permanent',     [self::class, 'permanent']);
@@ -55,6 +59,124 @@ final class FileRoutes
             $stmt->execute([$uid, $folder]);
         }
         return Json::ok($res, ['files' => $stmt->fetchAll()]);
+    }
+
+    // Server-side search across ALL of the user's live files + folders.
+    public static function search(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $q = trim((string)($req->getQueryParams()['q'] ?? ''));
+        if ($q === '') return Json::ok($res, ['files' => [], 'folders' => []]);
+        $like = '%' . str_replace(['%', '_'], ['\%', '\_'], $q) . '%';
+        $pdo = Database::pdo();
+
+        $f = $pdo->prepare("SELECT * FROM files WHERE user_id = ? AND deleted_at IS NULL AND name LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT 100");
+        $f->execute([$uid, $like]);
+        $folders = $pdo->prepare("SELECT id, name, kind, tone, parent_id FROM folders WHERE user_id = ? AND name LIKE ? ESCAPE '\\' ORDER BY name LIMIT 50");
+        $folders->execute([$uid, $like]);
+        return Json::ok($res, ['files' => $f->fetchAll(), 'folders' => $folders->fetchAll()]);
+    }
+
+    // Move a single file to another folder (or to root when folder_id is null).
+    public static function move(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchOne($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+        $b = (array) $req->getParsedBody();
+        $target = array_key_exists('folder_id', $b) && $b['folder_id'] !== null ? (int)$b['folder_id'] : null;
+        if ($target !== null && !self::folderOwned($uid, $target)) {
+            return Json::err($res, 'Zielordner nicht gefunden', 404);
+        }
+        Database::pdo()->prepare('UPDATE files SET folder_id = ? WHERE id = ? AND user_id = ?')
+            ->execute([$target, (int)$f['id'], $uid]);
+        return Json::ok($res, ['file' => self::fetchOne($uid, (int)$f['id'])]);
+    }
+
+    public static function moveBulk(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $b = (array) $req->getParsedBody();
+        $ids = array_values(array_filter(array_map('intval', (array)($b['file_ids'] ?? []))));
+        $target = array_key_exists('folder_id', $b) && $b['folder_id'] !== null ? (int)$b['folder_id'] : null;
+        if (!$ids) return Json::err($res, 'No files specified', 422);
+        if ($target !== null && !self::folderOwned($uid, $target)) {
+            return Json::err($res, 'Zielordner nicht gefunden', 404);
+        }
+        $place = implode(',', array_fill(0, count($ids), '?'));
+        Database::pdo()->prepare("UPDATE files SET folder_id = ? WHERE user_id = ? AND id IN ($place)")
+            ->execute(array_merge([$target, $uid], $ids));
+        return Json::ok($res, ['ok' => true, 'moved' => count($ids)]);
+    }
+
+    private static function folderOwned(int $uid, int $fid): bool
+    {
+        $s = Database::pdo()->prepare('SELECT 1 FROM folders WHERE id = ? AND user_id = ?');
+        $s->execute([$fid, $uid]);
+        return (bool)$s->fetch();
+    }
+
+    // On-demand image thumbnail (max 400px), cached under storage/thumbs/.
+    // Falls back to streaming the original when GD is unavailable or the file
+    // isn't a raster image — the frontend can always use this URL for images.
+    public static function thumb(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchOne($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+
+        $src = Storage::abs($f['storage_path']);
+        if (!is_file($src)) return Json::err($res, 'File missing on disk', 410);
+
+        $mime = strtolower($f['mime_type'] ?? '');
+        $canThumb = extension_loaded('gd') && in_array($mime, ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], true);
+        if (!$canThumb) {
+            return self::stream($res, $f); // graceful fallback (e.g. svg/no-GD)
+        }
+
+        $thumbDir = Storage::root() . '/thumbs';
+        if (!is_dir($thumbDir)) @mkdir($thumbDir, 0775, true);
+        $thumbPath = $thumbDir . '/' . (int)$f['id'] . '.jpg';
+
+        if (!is_file($thumbPath) || filemtime($thumbPath) < filemtime($src)) {
+            if (!self::makeThumb($src, $thumbPath, $mime, 400)) {
+                return self::stream($res, $f);
+            }
+        }
+        $stream = fopen($thumbPath, 'rb');
+        return $res
+            ->withHeader('Content-Type', 'image/jpeg')
+            ->withHeader('Content-Length', (string)filesize($thumbPath))
+            ->withHeader('Cache-Control', 'private, max-age=86400')
+            ->withHeader('X-Content-Type-Options', 'nosniff')
+            ->withBody(new Stream($stream));
+    }
+
+    private static function makeThumb(string $src, string $dst, string $mime, int $max): bool
+    {
+        try {
+            $img = match ($mime) {
+                'image/jpeg' => @imagecreatefromjpeg($src),
+                'image/png'  => @imagecreatefrompng($src),
+                'image/gif'  => @imagecreatefromgif($src),
+                'image/webp' => @imagecreatefromwebp($src),
+                default      => false,
+            };
+            if (!$img) return false;
+            $w = imagesx($img); $h = imagesy($img);
+            $scale = min(1, $max / max($w, $h));
+            $nw = max(1, (int)round($w * $scale)); $nh = max(1, (int)round($h * $scale));
+            $thumb = imagecreatetruecolor($nw, $nh);
+            // flatten transparency onto white (JPEG has no alpha)
+            $white = imagecolorallocate($thumb, 255, 255, 255);
+            imagefilledrectangle($thumb, 0, 0, $nw, $nh, $white);
+            imagecopyresampled($thumb, $img, 0, 0, 0, 0, $nw, $nh, $w, $h);
+            $ok = imagejpeg($thumb, $dst, 82);
+            imagedestroy($img); imagedestroy($thumb);
+            return $ok;
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     public static function upload(Request $req, Response $res): Response
@@ -361,6 +483,7 @@ final class FileRoutes
         Database::pdo()->prepare('UPDATE users SET storage_used = MAX(0, storage_used - ?) WHERE id = ?')
             ->execute([(int)$f['size'], $uid]);
         Storage::deleteRel($f['storage_path']);
+        @unlink(Storage::root() . '/thumbs/' . (int)$f['id'] . '.jpg');
     }
 
     private static function session(string $sid, int $uid): ?array

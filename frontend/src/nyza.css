@@ -158,6 +158,19 @@ input, textarea {
 }
 @keyframes shimmer { 100% { transform: translateX(100%); } }
 
+/* Markdown preview */
+.nyza-md { color: var(--fg); font-size: 14.5px; line-height: 1.65; }
+.nyza-md h1, .nyza-md h2, .nyza-md h3, .nyza-md h4 { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.3px; margin: 1.2em 0 0.5em; line-height: 1.2; }
+.nyza-md h1 { font-size: 1.8em; } .nyza-md h2 { font-size: 1.45em; } .nyza-md h3 { font-size: 1.2em; }
+.nyza-md p { margin: 0.7em 0; }
+.nyza-md a { color: var(--accent); }
+.nyza-md code { font-family: var(--font-mono); font-size: 0.88em; background: var(--surface-hi); padding: 2px 5px; border-radius: 5px; }
+.nyza-md pre { background: var(--surface-hi); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow: auto; }
+.nyza-md pre code { background: none; padding: 0; }
+.nyza-md ul, .nyza-md ol { margin: 0.6em 0; padding-left: 1.4em; }
+.nyza-md li { margin: 0.25em 0; }
+.nyza-md blockquote { margin: 0.8em 0; padding: 4px 14px; border-left: 3px solid var(--accent); color: var(--fg-2); }
+
 /* ───── Mobile responsive ───────────────────────────────────────────────── */
 @media (max-width: 760px) {
   /* TopBar wraps instead of overflowing */

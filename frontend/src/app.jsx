@@ -35,12 +35,56 @@ function isTextFile(f) {
   return TEXT_EXT.includes(ext);
 }
 
+// Minimal, XSS-safe markdown → HTML. Everything is HTML-escaped first, then a
+// safe tag subset is applied; links are restricted to http(s)/mailto/relative.
+function mdEscape(s) {
+  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+function mdInline(s) {
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, t, u) => {
+    const safe = /^(https?:|mailto:|\/)/i.test(u) ? u : '#';
+    return '<a href="' + safe + '" target="_blank" rel="noreferrer">' + t + '</a>';
+  });
+  return s;
+}
+function renderMarkdown(md) {
+  const lines = String(md).replace(/\r\n/g, '\n').split('\n');
+  let html = '', inCode = false, code = [], list = null, para = [];
+  const flushP = () => { if (para.length) { html += '<p>' + mdInline(mdEscape(para.join(' '))) + '</p>'; para = []; } };
+  const closeL = () => { if (list) { html += '</' + list + '>'; list = null; } };
+  for (const raw of lines) {
+    if (raw.trim().startsWith('```')) {
+      if (inCode) { html += '<pre><code>' + mdEscape(code.join('\n')) + '</code></pre>'; code = []; inCode = false; }
+      else { flushP(); closeL(); inCode = true; }
+      continue;
+    }
+    if (inCode) { code.push(raw); continue; }
+    const line = raw.trimEnd();
+    let m;
+    if (line.trim() === '') { flushP(); closeL(); continue; }
+    if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { flushP(); closeL(); const l = m[1].length; html += '<h' + l + '>' + mdInline(mdEscape(m[2])) + '</h' + l + '>'; continue; }
+    if ((m = line.match(/^\s*[-*]\s+(.*)$/))) { flushP(); if (list !== 'ul') { closeL(); html += '<ul>'; list = 'ul'; } html += '<li>' + mdInline(mdEscape(m[1])) + '</li>'; continue; }
+    if ((m = line.match(/^\s*\d+\.\s+(.*)$/))) { flushP(); if (list !== 'ol') { closeL(); html += '<ol>'; list = 'ol'; } html += '<li>' + mdInline(mdEscape(m[1])) + '</li>'; continue; }
+    if ((m = line.match(/^>\s?(.*)$/))) { flushP(); closeL(); html += '<blockquote>' + mdInline(mdEscape(m[1])) + '</blockquote>'; continue; }
+    para.push(line);
+  }
+  flushP(); closeL();
+  if (inCode) html += '<pre><code>' + mdEscape(code.join('\n')) + '</code></pre>';
+  return html;
+}
+
 // Fetches a text file and shows it in a monospace pane. Editable (owner) →
-// adds a Save button wired to onSave(content). Remount per file via key.
+// adds a Save button wired to onSave(content). Markdown files get a preview
+// toggle. Remount per file via key.
 function TextPane({ src, name, editable, onSave }) {
   const [content, setContent] = useState(null);
   const [orig, setOrig] = useState('');
   const [saving, setSaving] = useState(false);
+  const [preview, setPreview] = useState(false);
+  const isMd = /\.(md|markdown)$/i.test(name);
   useEffect(() => {
     let off = false;
     fetch(src).then((r) => r.text()).then((t) => { if (!off) { setContent(t); setOrig(t); } })
@@ -59,10 +103,19 @@ function TextPane({ src, name, editable, onSave }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
         <span style={{ color: 'var(--fg-3)' }}>{Ic.fileGen(15)}</span>
         <span style={{ flex: 1, fontSize: 12.5, fontFamily: 'var(--font-mono)', color: 'var(--fg-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}{dirty ? ' •' : ''}</span>
+        {isMd && (
+          <div style={{ display: 'flex', padding: 3, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+            <button onClick={() => setPreview(false)} style={mdTabStyle(!preview)}>Code</button>
+            <button onClick={() => setPreview(true)} style={mdTabStyle(preview)}>Vorschau</button>
+          </div>
+        )}
         {editable && <Btn variant="primary" size="sm" disabled={!dirty || saving} icon={saving ? Ic.loader(13) : Ic.check(13)} onClick={save}>{saving ? 'Speichert…' : 'Speichern'}</Btn>}
       </div>
       {content === null ? (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-3)' }}>{Ic.loader(22)}</div>
+      ) : (isMd && preview) ? (
+        <div className="nyza-md" style={{ flex: 1, overflow: 'auto', padding: '20px 26px' }}
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}/>
       ) : (
         <textarea value={content} readOnly={!editable} spellCheck={false}
           onChange={(e) => setContent(e.target.value)}
@@ -74,6 +127,14 @@ function TextPane({ src, name, editable, onSave }) {
       )}
     </Glass>
   );
+}
+function mdTabStyle(active) {
+  return {
+    height: 26, padding: '0 12px', borderRadius: 999, border: 'none', cursor: 'pointer',
+    fontFamily: 'inherit', fontSize: 12, fontWeight: 540,
+    background: active ? 'var(--accent-grad)' : 'transparent',
+    color: active ? '#fff' : 'var(--fg-2)',
+  };
 }
 
 // ───── MediaViewer — fullscreen modal for images / videos / PDFs / files ───
@@ -577,8 +638,47 @@ function SortControl({ sort, onSort }) {
   );
 }
 
+// ───── Kebab menu (reusable) ───────────────────────────────────────────────
+function KebabMenu({ items }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const off = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('pointerdown', off);
+    return () => document.removeEventListener('pointerdown', off);
+  }, [open]);
+  return (
+    <div ref={ref} style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+      <span onClick={() => setOpen((o) => !o)} title="Mehr" style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex' }}>{Ic.more(16)}</span>
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 40, minWidth: 180,
+          background: 'var(--surface)', backdropFilter: 'blur(30px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+          border: '1px solid var(--border-hi)', borderRadius: 'var(--r-md)',
+          boxShadow: '0 1px 0 var(--inner-hi) inset, 0 16px 40px rgba(0,0,0,0.35)', padding: 6,
+        }}>
+          {items.map((it, i) => (
+            <button key={i} onClick={() => { setOpen(false); it.onClick(); }} style={{
+              display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '9px 10px',
+              borderRadius: 'var(--r-sm)', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 13, textAlign: 'left', background: 'transparent',
+              color: it.danger ? 'var(--danger)' : 'var(--fg)',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hi)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+              <span style={{ color: it.danger ? 'var(--danger)' : 'var(--fg-3)', display: 'inline-flex' }}>{it.icon}</span>{it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ───── Folder card ─────────────────────────────────────────────────────────
-function FolderCard({ folder, onClick, onShare, onDelete }) {
+function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove }) {
   const tones = ({ violet: [280, 250], aurora: [168, 200], sunset: [30, 360], mono: [240, 260] })[folder.tone] || [280, 250];
   return (
     <div onClick={onClick} style={{
@@ -612,10 +712,14 @@ function FolderCard({ folder, onClick, onShare, onDelete }) {
       <div style={{ padding: '14px 16px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
           <div style={{ flex: 1, fontSize: 14, fontWeight: 540, lineHeight: 1.3, letterSpacing: -0.1 }}>{folder.name}</div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {onShare && <span onClick={(e) => { e.stopPropagation(); onShare(); }} title="Teilen" style={{ color: 'var(--fg-3)', cursor: 'pointer' }}>{Ic.share(15)}</span>}
-            {onDelete && <span onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Löschen" style={{ color: 'var(--fg-3)', cursor: 'pointer' }}>{Ic.trash(15)}</span>}
-          </div>
+          {(onShare || onDelete || onRename || onMove) && (
+            <KebabMenu items={[
+              ...(onRename ? [{ label: 'Umbenennen', icon: Ic.fileGen(15), onClick: onRename }] : []),
+              ...(onMove ? [{ label: 'Verschieben', icon: Ic.folder(15), onClick: onMove }] : []),
+              ...(onShare ? [{ label: 'Teilen', icon: Ic.share(15), onClick: onShare }] : []),
+              ...(onDelete ? [{ label: 'Löschen', icon: Ic.trash(15), onClick: onDelete, danger: true }] : []),
+            ]}/>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5, color: 'var(--fg-3)' }}>
           <span>{folder.item_count || 0} Dateien</span>
@@ -645,7 +749,7 @@ function FileTile({ file, selected, selecting, onOpen, onToggleSelect }) {
     onClick={() => (selecting ? onToggleSelect() : onOpen())}>
       <div style={{ aspectRatio: '4/3', position: 'relative', background: 'var(--surface-hi)' }}>
         {isImage ? (
-          <img src={fileSrc(file.id)} alt={file.name} loading="lazy"
+          <img src={API.thumbUrl(file.id)} alt={file.name} loading="lazy"
             onError={() => setImgOk(false)}
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}/>
         ) : (
@@ -829,7 +933,7 @@ function FileList({ files, selected, onOpen, onToggleSelect, onShareFile, onDele
 }
 
 // ───── Selection action bar ────────────────────────────────────────────────
-function SelectionBar({ count, onZip, onDelete, onClear, busy }) {
+function SelectionBar({ count, onZip, onMove, onDelete, onClear, busy }) {
   return (
     <div className="nyza-selectionbar" style={{
       position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', zIndex: 90,
@@ -841,7 +945,8 @@ function SelectionBar({ count, onZip, onDelete, onClear, busy }) {
     }}>
       <span style={{ fontSize: 13, fontWeight: 540 }}>{count} ausgewählt</span>
       <div style={{ width: 1, height: 22, background: 'var(--border)' }}/>
-      <Btn variant="glass" size="sm" icon={busy ? Ic.loader(13) : Ic.download(13)} disabled={busy} onClick={onZip}>ZIP herunterladen</Btn>
+      <Btn variant="glass" size="sm" icon={busy ? Ic.loader(13) : Ic.download(13)} disabled={busy} onClick={onZip}>ZIP</Btn>
+      {onMove && <Btn variant="glass" size="sm" icon={Ic.folder(13)} onClick={onMove}>Verschieben</Btn>}
       <Btn variant="glass" size="sm" icon={Ic.trash(13)} onClick={onDelete}>Löschen</Btn>
       <IconBtn size={30} title="Auswahl aufheben" onClick={onClear}>{Ic.close(15)}</IconBtn>
     </div>
@@ -978,6 +1083,9 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const [allowDownload, setAllowDownload] = useState(true);
   const [withExpiry, setWithExpiry] = useState(false);
   const [expiresAt, setExpiresAt] = useState(() => { const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10); });
+  const [withInvite, setWithInvite] = useState(false);
+  const [emails, setEmails] = useState('');
+  const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState(null);
 
@@ -987,8 +1095,17 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
       const body = { folder_id: folder?.id, file_id: file?.id, allow_download: allowDownload };
       if (withPassword && password) body.password = password;
       if (withExpiry && expiresAt) body.expires_at = expiresAt + ' 23:59:59';
+      if (withInvite) {
+        const list = emails.split(/[\s,;]+/).map((e) => e.trim()).filter(Boolean);
+        if (list.length) {
+          body.emails = list;
+          body.message = message;
+          body.share_base = location.origin + (basePath || '');
+        }
+      }
       const data = await API.newShare(body);
       setCreated(data.share);
+      if (data.share?.invited) toast(data.share.invited + ' Einladung(en) gesendet', 'success');
       onCreated && onCreated();
     } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
   };
@@ -1023,6 +1140,15 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
               {withPassword && <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Passwort eingeben" style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', marginTop: 8 }}/>}
               <ShareToggleRow icon={Ic.clock} title="Ablaufdatum" desc={withExpiry ? expiresAt : 'Nie'} on={withExpiry} onToggle={() => setWithExpiry(!withExpiry)}/>
               {withExpiry && <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', marginTop: 8, fontFamily: 'inherit' }}/>}
+              <ShareToggleRow icon={Ic.users} title="Per E-Mail einladen" desc={withInvite ? 'Empfänger bekommen den Link' : 'Nur Link erstellen'} on={withInvite} onToggle={() => setWithInvite(!withInvite)}/>
+              {withInvite && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                  <input value={emails} onChange={(e) => setEmails(e.target.value)} placeholder="E-Mails, durch Komma getrennt"
+                    style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}/>
+                  <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Nachricht (optional)"
+                    style={{ width: '100%', minHeight: 56, padding: '10px 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg-2)', resize: 'vertical' }}/>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1165,6 +1291,115 @@ export function UploadLinkModal({ folders, defaultFolderId, onClose, onCreated, 
   );
 }
 
+// ───── Rename folder modal ─────────────────────────────────────────────────
+export function RenameFolderModal({ folder, onClose, onSaved }) {
+  const [name, setName] = useState(folder.name);
+  const [kind, setKind] = useState(folder.kind || 'normal');
+  const [tone, setTone] = useState(folder.tone || 'violet');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    try { await API.renameFolder(folder.id, { name: name.trim(), kind, tone }); toast('Gespeichert', 'success'); onSaved && onSaved(); onClose(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 440, borderRadius: 'var(--r-xl)', padding: 28 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px var(--accent-glow)' }}>{Ic.folder(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0, letterSpacing: -0.3 }}>Ordner bearbeiten</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()}
+            style={{ height: 42, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)' }}/>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <select value={kind} onChange={(e) => setKind(e.target.value)} style={{ flex: 1, height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', color: 'var(--fg)' }}>
+              <option value="normal">Dateien</option><option value="gallery">Galerie</option>
+            </select>
+            <select value={tone} onChange={(e) => setTone(e.target.value)} style={{ flex: 1, height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', color: 'var(--fg)' }}>
+              <option value="violet">Violet</option><option value="aurora">Aurora</option><option value="sunset">Sunset</option><option value="mono">Mono</option>
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+            <Btn variant="primary" disabled={busy || !name.trim()} onClick={save} icon={busy ? Ic.loader(15) : null}>Speichern</Btn>
+          </div>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+// ───── Move modal (folder picker) ───────────────────────────────────────────
+// `excludeId` removes a folder + its descendants from the targets (moving a
+// folder into its own subtree is invalid). `allowRoot` adds a top-level target.
+export function MoveModal({ title = 'Verschieben nach', allFolders, excludeId, allowRoot = true, onMove, onClose }) {
+  const [busy, setBusy] = useState(false);
+
+  // depth + descendant exclusion from the flat list.
+  const byParent = {};
+  allFolders.forEach((f) => { (byParent[f.parent_id || 0] ||= []).push(f); });
+  const excluded = new Set();
+  if (excludeId) {
+    const walk = (id) => { excluded.add(id); (byParent[id] || []).forEach((c) => walk(c.id)); };
+    walk(excludeId);
+  }
+  const rows = [];
+  const visit = (parentId, depth) => {
+    (byParent[parentId] || []).forEach((f) => {
+      if (excluded.has(f.id)) return;
+      rows.push({ f, depth });
+      visit(f.id, depth + 1);
+    });
+  };
+  visit(0, 0);
+
+  const pick = async (target) => {
+    setBusy(true);
+    try { await onMove(target); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 480, borderRadius: 'var(--r-xl)', padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.folder(17)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>{title}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ overflowY: 'auto', padding: 8 }}>
+          {allowRoot && (
+            <button disabled={busy} onClick={() => pick(null)} style={moveRowStyle(0)}>
+              <span style={{ color: 'var(--fg-3)' }}>{Ic.home(15)}</span>Hauptebene (kein Ordner)
+            </button>
+          )}
+          {rows.map(({ f, depth }) => (
+            <button key={f.id} disabled={busy} onClick={() => pick(f.id)} style={moveRowStyle(depth)}>
+              <span style={{ color: 'var(--accent)' }}>{f.kind === 'gallery' ? Ic.fileImg(15) : Ic.folder(15)}</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+              <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>{f.item_count || 0}</span>
+            </button>
+          ))}
+          {rows.length === 0 && !allowRoot && (
+            <div style={{ padding: 20, textAlign: 'center', color: 'var(--fg-3)', fontSize: 13 }}>Keine möglichen Zielordner.</div>
+          )}
+        </div>
+      </Glass>
+    </div>
+  );
+}
+function moveRowStyle(depth) {
+  return {
+    display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+    padding: '10px 12px', paddingLeft: 12 + depth * 18,
+    borderRadius: 'var(--r-sm)', border: 'none', cursor: 'pointer',
+    fontFamily: 'inherit', fontSize: 13.5, textAlign: 'left',
+    background: 'transparent', color: 'var(--fg)',
+  };
+}
+
 // ───── small shared bits ───────────────────────────────────────────────────
 function greeting() {
   const h = new Date().getHours();
@@ -1245,6 +1480,9 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
   const [showUploadLinkModal, setShowUploadLinkModal] = useState(false);
   const [uploadLinkFolder, setUploadLinkFolder] = useState(null);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [renameFolderTarget, setRenameFolderTarget] = useState(null);
+  const [moveTarget, setMoveTarget] = useState(null); // { kind:'folder'|'files', folder?, ids? }
+  const [allFolders, setAllFolders] = useState([]);
   const [viewing, setViewing] = useState(null); // { items, index }
   const openViewer = (f, list) => {
     const items = (list && list.length) ? list : [f];
@@ -1288,6 +1526,20 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
 
   const triggerUpload = (folderId = null) => { uploadTargetFolder.current = folderId; uploadInputRef.current?.click(); };
 
+  const openMove = async (target) => {
+    try { const d = await API.allFolders(); setAllFolders(d.folders || []); } catch { setAllFolders([]); }
+    setMoveTarget(target);
+  };
+  const doMove = async (destFolderId) => {
+    try {
+      if (moveTarget.kind === 'folder') await API.moveFolder(moveTarget.folder.id, destFolderId);
+      else await API.moveFiles(moveTarget.ids, destFolderId);
+      toast('Verschoben', 'success');
+      setMoveTarget(null);
+      refreshAll();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
   const newText = async (folderId = null) => {
     try {
       const d = await API.createText({ folder_id: folderId, name: 'Neue Notiz.txt', content: '' });
@@ -1316,6 +1568,9 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
             refreshTick={refreshTick}
             onOpenFolder={(f) => setNav({ name: 'folder', id: f.id })}
             onShareFolder={(f) => setShareTarget({ folder: f })}
+            onRenameFolder={(f) => setRenameFolderTarget(f)}
+            onMoveFolder={(f) => openMove({ kind: 'folder', folder: f })}
+            onMoveFiles={(ids) => openMove({ kind: 'files', ids })}
             onDeleteFolder={async (f) => { if (!confirm(`Ordner "${f.name}" und alle Inhalte löschen?`)) return; try { await API.deleteFolder(f.id); toast('Ordner gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onNewFolder={async (name, kind, tone) => { try { await API.newFolder({ name, kind, tone }); toast('Ordner erstellt', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onUpload={() => triggerUpload(null)}
@@ -1335,6 +1590,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
             onUpload={(fid) => triggerUpload(fid)}
             onNewText={(fid) => newText(fid)}
             onShareFolder={(f) => setShareTarget({ folder: f })}
+            onMoveFiles={(ids) => openMove({ kind: 'files', ids })}
             onUploadLink={(f) => { setUploadLinkFolder(f.id); setShowUploadLinkModal(true); }}
             onOpenFile={openViewer}
             onShareFile={(f) => setShareTarget({ file: f })}
@@ -1370,6 +1626,16 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
         <UploadProgress items={uploads} onClose={() => { setShowUploadProgress(false); setUploads([]); }}/>
       )}
       {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)}/>}
+      {renameFolderTarget && (
+        <RenameFolderModal folder={renameFolderTarget} onClose={() => setRenameFolderTarget(null)} onSaved={refreshAll}/>
+      )}
+      {moveTarget && (
+        <MoveModal
+          title={moveTarget.kind === 'folder' ? 'Ordner verschieben nach' : 'Dateien verschieben nach'}
+          allFolders={allFolders}
+          excludeId={moveTarget.kind === 'folder' ? moveTarget.folder.id : null}
+          onMove={doMove} onClose={() => setMoveTarget(null)}/>
+      )}
       {viewing && (
         <MediaViewer items={viewing.items} startIndex={viewing.index}
           srcFor={(f) => fileSrc(f.id)} downloadFor={(f) => fileDownload(f.id)}
@@ -1401,19 +1667,30 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
 // ───── Files (home) view ───────────────────────────────────────────────────
 function FilesView({
   user, stats, folders, view, setView, sort, setSort, search, setSearch, refreshTick,
-  onOpenFolder, onShareFolder, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
+  onOpenFolder, onShareFolder, onRenameFolder, onMoveFolder, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
   onOpenFile, onShareFile, onDeleteFile,
 }) {
   const [files, setFiles] = useState(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [zipBusy, setZipBusy] = useState(false);
+  const [results, setResults] = useState(null); // server search results when searching
 
   useEffect(() => { API.files().then((d) => setFiles(d.files || [])).catch(() => setFiles([])); }, [refreshTick]);
 
-  const q = search.toLowerCase();
-  const fFolders = folders.filter((f) => !q || f.name.toLowerCase().includes(q));
-  const fFiles = files === null ? [] : sortFiles(files.filter((f) => !q || f.name.toLowerCase().includes(q)), sort);
+  // Server-side search across ALL files/folders (debounced).
+  const searching = search.trim().length >= 2;
+  useEffect(() => {
+    if (!searching) { setResults(null); return; }
+    let off = false;
+    const t = setTimeout(() => {
+      API.searchFiles(search.trim()).then((d) => { if (!off) setResults({ files: d.files || [], folders: d.folders || [] }); }).catch(() => { if (!off) setResults({ files: [], folders: [] }); });
+    }, 250);
+    return () => { off = true; clearTimeout(t); };
+  }, [search, searching, refreshTick]);
+
+  const fFolders = folders;
+  const fFiles = files === null ? [] : sortFiles(files, sort);
 
   const toggleSelect = (id) => {
     if (id === '__all__') {
@@ -1465,31 +1742,56 @@ function FilesView({
           ))}
         </div>
 
-        <SectionHeader title="Ordner" count={fFolders.length} action={<Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn>}/>
-        {creatingFolder && <NewFolderRow onCreate={(n, k, t) => { onNewFolder(n, k, t); setCreatingFolder(false); }} onCancel={() => setCreatingFolder(false)}/>}
-        {fFolders.length > 0 ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 36 }}>
-            {fFolders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)} onShare={() => onShareFolder(f)} onDelete={() => onDeleteFolder(f)}/>)}
-          </div>
-        ) : !creatingFolder && (
-          <EmptyHint icon={Ic.folder(40)} title="Noch keine Ordner" desc="Lege einen Ordner an oder lade direkt Dateien hoch."
-            actions={<><Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn><Btn variant="glass" size="md" icon={Ic.upload(14)} onClick={onUpload}>Hochladen</Btn></>}/>
-        )}
-
-        <SectionHeader title="Letzte Dateien" count={files === null ? null : fFiles.length}/>
-        {files === null ? (
-          <SkeletonGrid/>
-        ) : fFiles.length > 0 ? (
-          view === 'grid'
-            ? <FileGrid files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onDragSelect={setSelected}/>
-            : <FileList files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onShareFile={onShareFile} onDeleteFile={(f) => { onDeleteFile(f); }}/>
+        {searching ? (
+          <>
+            <SectionHeader title={'Suchergebnisse für „' + search.trim() + '"'} count={results ? (results.files.length + results.folders.length) : null}/>
+            {results === null ? <SkeletonGrid count={5}/> : (results.files.length + results.folders.length) === 0 ? (
+              <EmptyHint icon={Ic.search(40)} title="Nichts gefunden" desc={'Keine Dateien oder Ordner zu „' + search.trim() + '".'}/>
+            ) : (
+              <>
+                {results.folders.length > 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 28 }}>
+                    {results.folders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)}/>)}
+                  </div>
+                )}
+                {results.files.length > 0 && (
+                  <FileGrid files={results.files} selected={selected} onOpen={(f) => onOpenFile(f, results.files)} onToggleSelect={toggleSelect} onDragSelect={setSelected}/>
+                )}
+              </>
+            )}
+          </>
         ) : (
-          <EmptyHint icon={Ic.upload(40)} title="Noch keine Dateien" desc="Zieh Dateien hierher oder klick auf Hochladen."
-            actions={<Btn variant="primary" size="md" icon={Ic.upload(14)} onClick={onUpload}>Erste Datei hochladen</Btn>}/>
+          <>
+            <SectionHeader title="Ordner" count={fFolders.length} action={<Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn>}/>
+            {creatingFolder && <NewFolderRow onCreate={(n, k, t) => { onNewFolder(n, k, t); setCreatingFolder(false); }} onCancel={() => setCreatingFolder(false)}/>}
+            {fFolders.length > 0 ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 36 }}>
+                {fFolders.map((f) => <FolderCard key={f.id} folder={f}
+                  onClick={() => onOpenFolder(f)} onShare={() => onShareFolder(f)}
+                  onRename={() => onRenameFolder(f)} onMove={() => onMoveFolder(f)}
+                  onDelete={() => onDeleteFolder(f)}/>)}
+              </div>
+            ) : !creatingFolder && (
+              <EmptyHint icon={Ic.folder(40)} title="Noch keine Ordner" desc="Lege einen Ordner an oder lade direkt Dateien hoch."
+                actions={<><Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn><Btn variant="glass" size="md" icon={Ic.upload(14)} onClick={onUpload}>Hochladen</Btn></>}/>
+            )}
+
+            <SectionHeader title="Letzte Dateien" count={files === null ? null : fFiles.length}/>
+            {files === null ? (
+              <SkeletonGrid/>
+            ) : fFiles.length > 0 ? (
+              view === 'grid'
+                ? <FileGrid files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onDragSelect={setSelected}/>
+                : <FileList files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onShareFile={onShareFile} onDeleteFile={(f) => { onDeleteFile(f); }}/>
+            ) : (
+              <EmptyHint icon={Ic.upload(40)} title="Noch keine Dateien" desc="Zieh Dateien hierher oder klick auf Hochladen."
+                actions={<Btn variant="primary" size="md" icon={Ic.upload(14)} onClick={onUpload}>Erste Datei hochladen</Btn>}/>
+            )}
+          </>
         )}
       </div>
 
-      {selected.size > 0 && <SelectionBar count={selected.size} busy={zipBusy} onZip={doZip} onDelete={doBulkDelete} onClear={clearSel}/>}
+      {selected.size > 0 && <SelectionBar count={selected.size} busy={zipBusy} onZip={doZip} onMove={() => onMoveFiles([...selected])} onDelete={doBulkDelete} onClear={clearSel}/>}
     </>
   );
 }
@@ -1497,7 +1799,7 @@ function FilesView({
 // ───── Folder detail view ──────────────────────────────────────────────────
 function FolderView({
   folderId, view, setView, sort, setSort, search, setSearch, refreshTick,
-  onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onUploadLink, onOpenFile, onShareFile, onDeleteFile, afterChange,
+  onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onMoveFiles, onUploadLink, onOpenFile, onShareFile, onDeleteFile, afterChange,
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1578,7 +1880,7 @@ function FolderView({
         )}
       </div>
 
-      {selected.size > 0 && <SelectionBar count={selected.size} busy={zipBusy} onZip={doZip} onDelete={doBulkDelete} onClear={clearSel}/>}
+      {selected.size > 0 && <SelectionBar count={selected.size} busy={zipBusy} onZip={doZip} onMove={() => onMoveFiles([...selected])} onDelete={doBulkDelete} onClear={clearSel}/>}
     </>
   );
 }
