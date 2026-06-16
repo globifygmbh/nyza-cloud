@@ -54,6 +54,8 @@
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
+/* Fill iOS PWA safe-area / rubber-band zones with the app background */
+html { background: var(--bg); }
 body {
   margin: 0;
   background: var(--bg);

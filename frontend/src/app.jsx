@@ -766,6 +766,16 @@ export function ProfileModal({ user, onClose, onSaved }) {
           </div>
 
           <div>
+            <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 10 }}>Ansicht</div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+              <input type="checkbox" defaultChecked={localStorage.getItem('nyza.showRecent') !== '0'}
+                onChange={(e) => { localStorage.setItem('nyza.showRecent', e.target.checked ? '1' : '0'); window.dispatchEvent(new Event('nyza.prefchange')); }}
+                style={{ width: 16, height: 16, accentColor: 'var(--accent)', cursor: 'pointer' }}/>
+              <span style={{ fontSize: 14, color: 'var(--fg-2)' }}>„Zuletzt geöffnet" auf der Startseite anzeigen</span>
+            </label>
+          </div>
+
+          <div>
             <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 8 }}>Logo (für Share- & Upload-Seiten)</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
               <div style={{ width: 64, height: 64, borderRadius: 'var(--r-md)', background: 'var(--surface-hi)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -1216,6 +1226,10 @@ function FileTile({ file, selected, selecting, onActivate, onContext, onToggleSe
           <img src={API.thumbUrl(file.id)} alt={file.name} loading="lazy"
             onError={() => setImgOk(false)}
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}/>
+        ) : file.kind === 'video' ? (
+          <video src={`${API.fileRawUrl(file.id)}?token=${getToken()}#t=0.1`}
+            muted preload="metadata"
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }}/>
         ) : (
           <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <FileIcon kind={file.kind} size={32} tint={file.hue}/>
@@ -2496,18 +2510,21 @@ function FilesView({
   onOpenFolder, onShareFolder, onRenameFolder, onMoveFolder, onFolderColor, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
   onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, onUnzip, onVersions, onDownloadFile,
 }) {
-  const [files, setFiles] = useState(null);
   const [recent, setRecent] = useState([]);
   const [creatingFolder, setCreatingFolder] = useState(false);
-  const [selected, setSelected] = useState(new Set());
-  const [selectMode, setSelectMode] = useState(false);
-  const [zipBusy, setZipBusy] = useState(false);
   const [results, setResults] = useState(null); // server search results when searching
+  const [showRecentPref, setShowRecentPref] = useState(() => localStorage.getItem('nyza.showRecent') !== '0');
 
   useEffect(() => {
-    API.files().then((d) => setFiles(d.files || [])).catch(() => setFiles([]));
     API.recentFiles().then((d) => setRecent(d.files || [])).catch(() => setRecent([]));
   }, [refreshTick]);
+
+  // Listen for preference changes from ProfileModal
+  useEffect(() => {
+    const handler = () => setShowRecentPref(localStorage.getItem('nyza.showRecent') !== '0');
+    window.addEventListener('nyza.prefchange', handler);
+    return () => window.removeEventListener('nyza.prefchange', handler);
+  }, []);
 
   // Server-side search across ALL files/folders (debounced).
   const searching = search.trim().length >= 2;
@@ -2521,34 +2538,7 @@ function FilesView({
   }, [search, searching, refreshTick]);
 
   const fFolders = folders;
-  const fFiles = files === null ? [] : sortFiles(files, sort);
 
-  const toggleSelect = (id) => {
-    if (id === '__all__') {
-      setSelected((s) => s.size === fFiles.length ? new Set() : new Set(fFiles.map((f) => f.id)));
-      return;
-    }
-    setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  };
-  const clearSel = () => { setSelected(new Set()); setSelectMode(false); };
-  const doZip = () => downloadZip([...selected], setZipBusy, clearSel);
-  const doBulkDelete = async () => {
-    if (!await confirmDialog({ title: 'In den Papierkorb?', message: `${selected.size} ${selected.size === 1 ? 'Datei wird' : 'Dateien werden'} in den Papierkorb verschoben.`, confirmLabel: 'In Papierkorb', danger: true })) return;
-    for (const id of selected) { try { await API.deleteFile(id); } catch {} }
-    toast('In den Papierkorb', 'success'); clearSel();
-    API.files().then((d) => setFiles(d.files || []));
-  };
-  const fileCtx = (f, e, selectThis) => {
-    const multi = selected.has(f.id) && selected.size > 1;
-    if (!multi) selectThis && selectThis();
-    openContextMenu(e.clientX, e.clientY, fileMenuItems(f, {
-      multi, count: selected.size,
-      onOpen: (x) => onOpenFile(x, fFiles), onDownload: onDownloadFile, onUnzip,
-      onToggleStar, onShare: onShareFile, onMove: (x) => onMoveFiles([x.id]),
-      onVersions, onDelete: onDeleteFile,
-      onZip: doZip, onMoveMany: () => onMoveFiles([...selected]), onDeleteMany: doBulkDelete,
-    }));
-  };
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
     onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolder, onColor: onFolderColor, onDelete: onDeleteFolder,
   }));
@@ -2595,7 +2585,7 @@ function FilesView({
           <StorageBreakdown stats={stats}/>
         )}
 
-        {!searching && recent.length > 0 && (
+        {!searching && showRecentPref && recent.length > 0 && (
           <>
             <SectionHeader title="Zuletzt geöffnet"/>
             <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8, marginBottom: 28 }}>
@@ -2604,6 +2594,8 @@ function FilesView({
                   <div style={{ width: 130, height: 96, borderRadius: 'var(--r-sm)', overflow: 'hidden', background: 'var(--surface-hi)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {f.kind === 'image'
                       ? <img src={API.thumbUrl(f.id)} alt={f.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+                      : f.kind === 'video'
+                      ? <video src={`${API.fileRawUrl(f.id)}?token=${getToken()}#t=0.1`} muted preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }}/>
                       : <FileIcon kind={f.kind} size={26} tint={f.hue}/>}
                   </div>
                   <div style={{ fontSize: 11.5, fontWeight: 500, marginTop: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
@@ -2648,22 +2640,9 @@ function FilesView({
                 actions={<><Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn><Btn variant="glass" size="md" icon={Ic.upload(14)} onClick={onUpload}>Hochladen</Btn></>}/>
             )}
 
-            <SectionHeader title="Letzte Dateien" count={files === null ? null : fFiles.length}/>
-            {files === null ? (
-              <SkeletonGrid/>
-            ) : fFiles.length > 0 ? (
-              view === 'grid'
-                ? <FileGrid files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onDragFiles={() => {}} onContext={fileCtx} selectMode={selectMode}/>
-                : <FileList files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onShareFile={onShareFile} onToggleStar={onToggleStar} onDeleteFile={(f) => { onDeleteFile(f); }} onContext={fileCtx} selectMode={selectMode}/>
-            ) : (
-              <EmptyHint icon={Ic.upload(40)} title="Noch keine Dateien" desc="Zieh Dateien hierher oder klick auf Hochladen."
-                actions={<Btn variant="primary" size="md" icon={Ic.upload(14)} onClick={onUpload}>Erste Datei hochladen</Btn>}/>
-            )}
           </>
         )}
       </div>
-
-      {selected.size > 0 && <SelectionBar count={selected.size} busy={zipBusy} onZip={doZip} onMove={() => onMoveFiles([...selected])} onDelete={doBulkDelete} onClear={clearSel}/>}
     </>
   );
 }
@@ -2680,6 +2659,7 @@ function FolderView({
   const [selectMode, setSelectMode] = useState(false);
   const [zipBusy, setZipBusy] = useState(false);
   const [over, setOver] = useState(false);
+  const [creatingSubfolder, setCreatingSubfolder] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -2726,6 +2706,7 @@ function FolderView({
     if (e.target.closest('[data-fid]')) return;
     e.preventDefault();
     openContextMenu(e.clientX, e.clientY, [
+      { label: 'Neuer Unterordner', icon: Ic.folder(15), onClick: () => setCreatingSubfolder(true) },
       { label: 'Notiz erstellen', icon: Ic.fileGen(15), onClick: () => onNewText(folder.id) },
       { label: 'Hochladen', icon: Ic.upload(15), onClick: () => onUpload(folder.id) },
       { separator: true },
@@ -2761,13 +2742,12 @@ function FolderView({
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 32, fontWeight: 600, letterSpacing: -0.8, margin: 0 }}>{folder.name}</h1>
         </div>
 
+        <SectionHeader title="Unterordner" count={subfolders.length} action={<Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setCreatingSubfolder(true)}>Neuer Unterordner</Btn>}/>
+        {creatingSubfolder && <NewFolderRow onCreate={async (n, k, t) => { try { await API.newFolder({ name: n, kind: k, tone: t, parent_id: folderId }); toast('Unterordner erstellt', 'success'); setCreatingSubfolder(false); load(); } catch (e) { toast(e.message, 'error'); } }} onCancel={() => setCreatingSubfolder(false)}/>}
         {subfolders.length > 0 && (
-          <>
-            <SectionHeader title="Unterordner" count={subfolders.length}/>
-            <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 32 }}>
-              {subfolders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)} onDropFiles={onDropFiles} onContext={folderCtx}/>)}
-            </div>
-          </>
+          <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 32 }}>
+            {subfolders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)} onDropFiles={onDropFiles} onContext={folderCtx}/>)}
+          </div>
         )}
 
         {files.length > 0 ? (
