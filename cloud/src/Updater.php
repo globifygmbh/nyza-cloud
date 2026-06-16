@@ -18,9 +18,11 @@ final class Updater
 {
     private const REPO_ZIP = 'https://github.com/globifygmbh/nyza-cloud/archive/refs/heads/main.zip';
     private const REMOTE_VERSION = 'https://raw.githubusercontent.com/globifygmbh/nyza-cloud/main/cloud/VERSION';
+    // Commit-based detection (cache-free, unlike the raw VERSION file).
+    private const REMOTE_COMMIT = 'https://api.github.com/repos/globifygmbh/nyza-cloud/commits/main';
     private const ZIP_SUBPATH = 'cloud/'; // folder inside the repo that maps to this install
     /** Never overwrite these (user data / local config). */
-    private const PRESERVE = ['config.php', 'storage', '.htaccess'];
+    private const PRESERVE = ['config.php', 'storage', '.htaccess', '.nyza_rev'];
 
     private string $cloudDir;
 
@@ -78,8 +80,25 @@ final class Updater
 
     private function remoteVersion(): ?string
     {
-        $v = $this->fetch(self::REMOTE_VERSION);
+        $v = $this->fetch(self::REMOTE_VERSION . '?_=' . time());
         return $v !== null ? trim($v) : null;
+    }
+
+    /** Locally recorded commit sha of the last applied update (or null). */
+    private function localRev(): ?string
+    {
+        $f = $this->cloudDir . '/.nyza_rev';
+        return is_file($f) ? trim((string)file_get_contents($f)) : null;
+    }
+
+    /** Latest commit sha on main via the GitHub API (cache-free). */
+    private function remoteRev(): ?string
+    {
+        $json = $this->fetch(self::REMOTE_COMMIT . '?_=' . time());
+        if ($json === null) return null;
+        $data = json_decode($json, true);
+        $sha = is_array($data) ? ($data['sha'] ?? null) : null;
+        return is_string($sha) && $sha !== '' ? substr($sha, 0, 40) : null;
     }
 
     // ───── update run ────────────────────────────────────────────────────────
@@ -136,6 +155,10 @@ final class Updater
         } catch (\Throwable $e) {
             $add('Migration-Hinweis: ' . $e->getMessage() . ' — ggf. /cloud/?setup=1 öffnen.', false);
         }
+
+        // 6) Record the applied commit so the next check is accurate.
+        $rev = $this->remoteRev();
+        if ($rev) { @file_put_contents($this->cloudDir . '/.nyza_rev', $rev); }
 
         $this->cleanup($tmp);
         $this->renderResult($ok, $log);
@@ -210,17 +233,24 @@ final class Updater
     {
         $local = $this->localVersion();
         $remote = $this->remoteVersion();
-        $upToDate = $remote !== null && version_compare($remote, $local, '<=');
+        // Primary signal: commit sha (cache-free). Falls back to version compare.
+        $localRev = $this->localRev();
+        $remoteRev = $this->remoteRev();
+        if ($remoteRev !== null && $localRev !== null) {
+            $upToDate = ($remoteRev === $localRev);
+        } else {
+            $upToDate = $remote !== null && version_compare($remote, $local, '<=');
+        }
         $tok = htmlspecialchars($this->token());
-        $this->page('Update', function () use ($local, $remote, $upToDate, $tok) {
+        $this->page('Update', function () use ($local, $remote, $upToDate, $remoteRev, $tok) {
             echo '<h1>Nyza Cloud · Update</h1>';
             echo '<p class="lede">Aktualisiert die Installation direkt aus dem GitHub-Repository. <code>config.php</code> und deine Dateien in <code>storage/</code> bleiben erhalten.</p>';
             echo '<ul class="checks">';
             echo '<li class="info"><span class="icon">●</span><div><b>Installierte Version</b><div class="muted">' . htmlspecialchars($local) . '</div></div></li>';
-            echo '<li class="' . ($remote === null ? 'info' : ($upToDate ? 'ok' : 'fail')) . '"><span class="icon">' . ($remote === null ? '?' : ($upToDate ? '✓' : '↑')) . '</span><div><b>Neueste Version</b><div class="muted">' . htmlspecialchars($remote ?? 'unbekannt (GitHub nicht erreichbar)') . '</div></div></li>';
+            echo '<li class="' . ($remote === null ? 'info' : ($upToDate ? 'ok' : 'fail')) . '"><span class="icon">' . ($remote === null ? '?' : ($upToDate ? '✓' : '↑')) . '</span><div><b>Neueste Version</b><div class="muted">' . htmlspecialchars($remote ?? 'unbekannt (GitHub nicht erreichbar)') . ($remoteRev ? ' · ' . substr($remoteRev, 0, 7) : '') . '</div></div></li>';
             echo '</ul>';
             if ($upToDate) {
-                echo '<div class="ok-box">Du bist bereits auf dem neuesten Stand. Ein erneutes Update schadet aber nicht.</div>';
+                echo '<div class="ok-box">Du bist bereits auf dem neuesten Stand. Ein erneutes Update schadet aber nicht — einfach trotzdem auf „Jetzt aktualisieren".</div>';
             }
             echo '<div class="warn">Vor dem ersten Update empfohlen: kurzes Backup von Datenbank und <code>storage/</code>.</div>';
             echo '<form method="post" class="actions" style="margin-top:24px">';
