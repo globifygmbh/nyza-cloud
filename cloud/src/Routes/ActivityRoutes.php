@@ -60,6 +60,14 @@ final class ActivityRoutes
         $u = $pdo->prepare('SELECT storage_quota, storage_used FROM users WHERE id = ?');
         $u->execute([$uid]);
 
+        // Storage breakdown by file kind (image/video/pdf/doc).
+        $bk = $pdo->prepare('SELECT kind, COUNT(*) AS c, COALESCE(SUM(size),0) AS s FROM files WHERE user_id = ? AND deleted_at IS NULL GROUP BY kind');
+        $bk->execute([$uid]);
+        $byKind = [];
+        foreach ($bk->fetchAll() as $row) {
+            $byKind[$row['kind']] = ['count' => (int)$row['c'], 'size' => (int)$row['s']];
+        }
+
         return Json::ok($res, [
             'files' => (int)$f['c'],
             'storage_used' => (int)$f['s'],
@@ -69,6 +77,7 @@ final class ActivityRoutes
             'week_uploads' => (int)$week->fetch()['c'],
             'trash' => (int)$trash->fetch()['c'],
             'quota' => (int)$u->fetch()['storage_quota'],
+            'by_kind' => $byKind,
         ]);
     }
 }

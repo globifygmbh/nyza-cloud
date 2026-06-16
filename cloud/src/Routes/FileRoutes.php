@@ -20,6 +20,7 @@ final class FileRoutes
         $app->group('/api/files', function (RouteCollectorProxy $g) {
             $g->get('',                       [self::class, 'list']);
             $g->get('/search',                [self::class, 'search']);
+            $g->get('/recent',                [self::class, 'recent']);
             $g->post('',                      [self::class, 'upload']);
             $g->post('/text',                 [self::class, 'createText']);
             $g->post('/move',                 [self::class, 'moveBulk']);
@@ -31,6 +32,7 @@ final class FileRoutes
             $g->get('/{id}',                  [self::class, 'show']);
             $g->get('/{id}/raw',              [self::class, 'raw']);
             $g->get('/{id}/thumb',            [self::class, 'thumb']);
+            $g->post('/{id}/star',            [self::class, 'star']);
             $g->patch('/{id}',                [self::class, 'move']);
             $g->put('/{id}/content',          [self::class, 'saveContent']);
             $g->get('/{id}/versions',         [self::class, 'versions']);
@@ -53,8 +55,12 @@ final class FileRoutes
         $folder = isset($q['folder_id']) ? (int)$q['folder_id'] : null;
         $limit = min(200, max(1, (int)($q['limit'] ?? 50)));
 
+        $starred = isset($q['starred']);
         $pdo = Database::pdo();
-        if ($folder === null) {
+        if ($starred) {
+            $stmt = $pdo->prepare("SELECT * FROM files WHERE user_id = ? AND deleted_at IS NULL AND starred = 1 ORDER BY created_at DESC LIMIT $limit");
+            $stmt->execute([$uid]);
+        } elseif ($folder === null) {
             $stmt = $pdo->prepare("SELECT * FROM files WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $limit");
             $stmt->execute([$uid]);
         } else {
@@ -62,6 +68,25 @@ final class FileRoutes
             $stmt->execute([$uid, $folder]);
         }
         return Json::ok($res, ['files' => $stmt->fetchAll()]);
+    }
+
+    // Recently OPENED files (opened_at bumped on raw view/download).
+    public static function recent(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $stmt = Database::pdo()->prepare('SELECT * FROM files WHERE user_id = ? AND deleted_at IS NULL AND opened_at IS NOT NULL ORDER BY opened_at DESC LIMIT 18');
+        $stmt->execute([$uid]);
+        return Json::ok($res, ['files' => $stmt->fetchAll()]);
+    }
+
+    public static function star(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $b = (array) $req->getParsedBody();
+        $on = !empty($b['starred']) ? 1 : 0;
+        Database::pdo()->prepare('UPDATE files SET starred = ? WHERE id = ? AND user_id = ?')
+            ->execute([$on, (int)$args['id'], $uid]);
+        return Json::ok($res, ['ok' => true, 'starred' => (bool)$on]);
     }
 
     // Server-side search across ALL of the user's live files + folders.
@@ -425,6 +450,8 @@ final class FileRoutes
         $uid = (int)$req->getAttribute('uid');
         $f = self::fetchOne($uid, (int)$args['id']);
         if (!$f) return Json::err($res, 'Not found', 404);
+        // Mark as recently opened (best-effort, ignore failures).
+        try { Database::pdo()->prepare('UPDATE files SET opened_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')->execute([(int)$f['id'], $uid]); } catch (\Throwable $e) {}
         return self::stream($res, $f, isset($req->getQueryParams()['dl']));
     }
 

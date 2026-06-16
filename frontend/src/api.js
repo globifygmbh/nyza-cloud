@@ -137,6 +137,9 @@ export const API = {
 
   // Files
   files:       (folder) => request('/api/files' + (folder ? '?folder_id=' + folder : '')),
+  starredFiles:() => request('/api/files?starred=1'),
+  recentFiles: () => request('/api/files/recent'),
+  starFile:    (id, starred) => request('/api/files/' + id + '/star', { method: 'POST', body: { starred } }),
   uploadFile:  (file, folderId, onProgress) =>
     upload('/api/files', file, { folder_id: folderId }, onProgress),
   deleteFile:  (id) => request('/api/files/' + id, { method: 'DELETE' }),

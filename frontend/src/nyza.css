@@ -158,6 +158,9 @@ input, textarea {
 }
 @keyframes shimmer { 100% { transform: translateX(100%); } }
 
+/* File tile star — hidden until hover (unless already starred, set inline) */
+.nyza-tile:hover .file-star { opacity: 1 !important; }
+
 /* Markdown preview */
 .nyza-md { color: var(--fg); font-size: 14.5px; line-height: 1.65; }
 .nyza-md h1, .nyza-md h2, .nyza-md h3, .nyza-md h4 { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.3px; margin: 1.2em 0 0.5em; line-height: 1.2; }

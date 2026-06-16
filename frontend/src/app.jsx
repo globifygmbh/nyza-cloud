@@ -521,6 +521,7 @@ function FieldInput({ label, value, onChange, type = 'text', placeholder }) {
 function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, onUpload, onChangePassword, onProfile }) {
   const items = [
     { id: 'files',    label: 'Meine Dateien', icon: Ic.home,   count: stats?.files },
+    { id: 'favorites',label: 'Favoriten',     icon: Ic.star },
     { id: 'shared',   label: 'Geteilt',       icon: Ic.share,  count: stats?.shares },
     { id: 'links',    label: 'Upload-Links',  icon: Ic.link,   count: stats?.upload_links, badge: 'NEU' },
     { id: 'activity', label: 'Aktivität',     icon: Ic.clock },
@@ -805,18 +806,26 @@ function KebabMenu({ items }) {
 }
 
 // ───── Folder card ─────────────────────────────────────────────────────────
-function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove }) {
+function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDropFiles }) {
   const tones = ({ violet: [280, 250], aurora: [168, 200], sunset: [30, 360], mono: [240, 260] })[folder.tone] || [280, 250];
+  const [dropOver, setDropOver] = useState(false);
   return (
     <div onClick={onClick} style={{
-      borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)',
+      borderRadius: 'var(--r-lg)', background: 'var(--surface)',
+      border: '1px solid ' + (dropOver ? 'var(--accent)' : 'var(--border)'),
       backdropFilter: 'blur(20px) saturate(160%)', WebkitBackdropFilter: 'blur(20px) saturate(160%)',
       overflow: 'hidden', cursor: 'pointer',
-      transition: 'transform .25s cubic-bezier(.2,.8,.2,1), box-shadow .25s',
-      boxShadow: '0 1px 0 var(--inner-hi) inset, 0 8px 24px -12px rgba(0,0,0,0.25)',
+      transition: 'transform .25s cubic-bezier(.2,.8,.2,1), box-shadow .25s, border-color .15s',
+      boxShadow: dropOver ? '0 0 0 3px var(--accent-glow)' : '0 1px 0 var(--inner-hi) inset, 0 8px 24px -12px rgba(0,0,0,0.25)',
     }}
-    onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 1px 0 var(--inner-hi) inset, 0 24px 48px -16px rgba(0,0,0,0.4), 0 0 0 1px var(--border-hi)'; }}
-    onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 1px 0 var(--inner-hi) inset, 0 8px 24px -12px rgba(0,0,0,0.25)'; }}>
+    onDragOver={onDropFiles ? (e) => { if (e.dataTransfer.types.includes('application/x-nyza-files')) { e.preventDefault(); setDropOver(true); } } : undefined}
+    onDragLeave={onDropFiles ? () => setDropOver(false) : undefined}
+    onDrop={onDropFiles ? (e) => {
+      e.preventDefault(); setDropOver(false);
+      try { const ids = JSON.parse(e.dataTransfer.getData('application/x-nyza-files') || '[]'); if (ids.length) onDropFiles(folder.id, ids); } catch {}
+    } : undefined}
+    onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
+    onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}>
       <div style={{ height: 132, position: 'relative', overflow: 'hidden' }}>
         <div style={{
           position: 'absolute', inset: 0,
@@ -861,12 +870,13 @@ function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove }) {
 }
 
 // ───── File tile (grid) with real thumbnail + selection ────────────────────
-function FileTile({ file, selected, selecting, onOpen, onToggleSelect }) {
+function FileTile({ file, selected, selecting, onOpen, onToggleSelect, onToggleStar }) {
   const [imgOk, setImgOk] = useState(true);
   const isImage = file.kind === 'image' && imgOk;
   const isNew = !!file.uploader_name;
+  const starred = !!file.starred;
   return (
-    <div style={{
+    <div className="nyza-tile" style={{
       borderRadius: 'var(--r-md)', background: 'var(--surface)',
       border: '1px solid ' + (selected ? 'var(--accent)' : 'var(--border)'),
       overflow: 'hidden', cursor: 'pointer', position: 'relative',
@@ -911,6 +921,18 @@ function FileTile({ file, selected, selecting, onOpen, onToggleSelect }) {
             textTransform: 'uppercase', boxShadow: '0 2px 8px var(--accent-glow)',
           }}>Neu</div>
         )}
+        {onToggleStar && !isNew && (
+          <div className="file-star" onClick={(e) => { e.stopPropagation(); onToggleStar(); }}
+            title={starred ? 'Favorit entfernen' : 'Zu Favoriten'}
+            style={{
+              position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 999,
+              display: 'flex', opacity: starred ? 1 : 0, alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)',
+              color: starred ? 'oklch(0.82 0.16 85)' : '#fff', cursor: 'pointer',
+            }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill={starred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"><path d="m12 3 2.7 6.1 6.6.6-5 4.4 1.5 6.5L12 17.3 6.2 20.6l1.5-6.5-5-4.4 6.6-.6L12 3z"/></svg>
+          </div>
+        )}
       </div>
       <div style={{ padding: '10px 12px' }}>
         <div style={{ fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</div>
@@ -929,7 +951,7 @@ function FileTile({ file, selected, selecting, onOpen, onToggleSelect }) {
 }
 
 // ───── File grid + list (reusable) ─────────────────────────────────────────
-function FileGrid({ files, selected, onOpen, onToggleSelect, onDragSelect }) {
+function FileGrid({ files, selected, onOpen, onToggleSelect, onDragSelect, onToggleStar, onDragFiles }) {
   const selecting = selected.size > 0;
   const wrapRef = useRef(null);
   const [rect, setRect] = useState(null); // rubber-band {l,t,w,h} in container coords
@@ -969,10 +991,20 @@ function FileGrid({ files, selected, onOpen, onToggleSelect, onDragSelect }) {
     <div ref={wrapRef} onPointerDown={onPointerDown} style={{ position: 'relative' }}>
       <div className="file-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
         {files.map((f) => (
-          <div data-fid={f.id} key={f.id}>
+          <div data-fid={f.id} key={f.id}
+            draggable={!!onDragFiles}
+            onDragStart={(e) => {
+              if (!onDragFiles) return;
+              // drag the whole selection if this file is part of it, else just this one
+              const ids = selected.has(f.id) && selected.size > 1 ? [...selected] : [f.id];
+              e.dataTransfer.setData('application/x-nyza-files', JSON.stringify(ids));
+              e.dataTransfer.effectAllowed = 'move';
+              onDragFiles(ids);
+            }}>
             <FileTile file={f}
               selected={selected.has(f.id)} selecting={selecting}
-              onOpen={() => onOpen(f)} onToggleSelect={() => onToggleSelect(f.id)}/>
+              onOpen={() => onOpen(f)} onToggleSelect={() => onToggleSelect(f.id)}
+              onToggleStar={onToggleStar ? () => onToggleStar(f) : null}/>
           </div>
         ))}
       </div>
@@ -984,6 +1016,65 @@ function FileGrid({ files, selected, onOpen, onToggleSelect, onDragSelect }) {
         }}/>
       )}
     </div>
+  );
+}
+
+const KIND_META = {
+  image: { label: 'Bilder', color: 'oklch(0.70 0.17 280)' },
+  video: { label: 'Videos', color: 'oklch(0.72 0.16 30)' },
+  pdf:   { label: 'PDFs',   color: 'oklch(0.70 0.17 25)' },
+  doc:   { label: 'Dokumente', color: 'oklch(0.72 0.14 220)' },
+};
+function StorageBreakdown({ stats }) {
+  const total = stats.storage_used || 1;
+  const kinds = Object.keys(KIND_META).filter((k) => stats.by_kind[k]?.size > 0);
+  if (kinds.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 28, padding: '16px 18px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+        <span style={{ fontSize: 13, fontWeight: 540 }}>Speicher-Aufschlüsselung</span>
+        <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{humanSize(stats.storage_used)} belegt</span>
+      </div>
+      <div style={{ display: 'flex', height: 12, borderRadius: 6, overflow: 'hidden', background: 'var(--surface-hi)' }}>
+        {kinds.map((k) => (
+          <div key={k} title={KIND_META[k].label} style={{ width: (stats.by_kind[k].size / total * 100) + '%', background: KIND_META[k].color }}/>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 12 }}>
+        {kinds.map((k) => (
+          <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--fg-2)' }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: KIND_META[k].color }}/>
+            {KIND_META[k].label}
+            <span style={{ color: 'var(--fg-3)' }}>{humanSize(stats.by_kind[k].size)} · {stats.by_kind[k].count}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// A standalone file list view (Favoriten) — fetches via `fetcher`, supports
+// open + star, no folder chrome.
+function SimpleFileView({ title, fetcher, refreshTick, onOpenFile, onToggleStar, emptyIcon, emptyTitle, emptyDesc }) {
+  const [files, setFiles] = useState(null);
+  const [selected, setSelected] = useState(new Set());
+  const load = useCallback(() => { fetcher().then((d) => setFiles(d.files || [])).catch(() => setFiles([])); }, [fetcher]);
+  useEffect(() => { load(); }, [refreshTick]);
+  const toggleSelect = (id) => {
+    if (id === '__all__') { setSelected((s) => s.size === (files?.length || 0) ? new Set() : new Set((files || []).map((f) => f.id))); return; }
+    setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  };
+  const star = async (f) => { await onToggleStar(f); load(); };
+  return (
+    <>
+      <TopBar crumbs={[title]}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px' }}>
+        <SectionHeader title={title} count={files === null ? null : files.length}/>
+        {files === null ? <SkeletonGrid count={6}/>
+          : files.length === 0 ? <EmptyHint icon={emptyIcon} title={emptyTitle} desc={emptyDesc}/>
+          : <FileGrid files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={star} onDragFiles={() => {}}/>}
+      </div>
+    </>
   );
 }
 
@@ -1003,7 +1094,7 @@ function SkeletonGrid({ count = 10 }) {
   );
 }
 
-function FileList({ files, selected, onOpen, onToggleSelect, onShareFile, onDeleteFile }) {
+function FileList({ files, selected, onOpen, onToggleSelect, onShareFile, onDeleteFile, onToggleStar }) {
   const allSel = files.length > 0 && files.every((f) => selected.has(f.id));
   return (
     <div style={{ borderRadius: 'var(--r-md)', overflow: 'hidden', background: 'var(--surface)', border: '1px solid var(--border)' }}>
@@ -1048,6 +1139,7 @@ function FileList({ files, selected, onOpen, onToggleSelect, onShareFile, onDele
             <span style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>{humanSize(r.size)}</span>
             <span style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>{timeAgo(r.created_at)}</span>
             <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+              {onToggleStar && <IconBtn size={28} title={r.starred ? 'Favorit entfernen' : 'Zu Favoriten'} onClick={() => onToggleStar(r)} style={{ color: r.starred ? 'oklch(0.82 0.16 85)' : undefined }}>{Ic.star(14)}</IconBtn>}
               <IconBtn size={28} title="Vorschau" onClick={() => onOpen(r)}>{Ic.eye(14)}</IconBtn>
               <IconBtn size={28} title="Teilen" onClick={() => onShareFile(r)}>{Ic.share(13)}</IconBtn>
               <IconBtn size={28} title="Löschen" onClick={() => onDeleteFile(r)}>{Ic.trash(13)}</IconBtn>
@@ -1676,6 +1768,15 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
     } catch (e) { toast(e.message, 'error'); }
   };
 
+  const toggleStar = async (f) => {
+    try { await API.starFile(f.id, !f.starred); refreshAll(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const dropToFolder = async (folderId, ids) => {
+    try { await API.moveFiles(ids, folderId); toast(ids.length + ' verschoben', 'success'); refreshAll(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+
   const activeNav = nav.name === 'folder' ? 'files' : nav.name;
 
   return (
@@ -1707,8 +1808,16 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onUploadLink={() => { setUploadLinkFolder(null); setShowUploadLinkModal(true); }}
             onOpenFile={openViewer}
             onShareFile={(f) => setShareTarget({ file: f })}
+            onToggleStar={toggleStar}
+            onDropFiles={dropToFolder}
             onDeleteFile={async (f) => { try { await API.deleteFile(f.id); toast('Gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
           />
+        )}
+        {nav.name === 'favorites' && (
+          <SimpleFileView title="Favoriten" emptyIcon={Ic.star(40)} emptyTitle="Keine Favoriten"
+            emptyDesc="Markiere Dateien mit dem Stern, dann erscheinen sie hier."
+            fetcher={() => API.starredFiles()} refreshTick={refreshTick}
+            onOpenFile={openViewer} onToggleStar={toggleStar}/>
         )}
         {nav.name === 'folder' && (
           <FolderView
@@ -1723,6 +1832,8 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onUploadLink={(f) => { setUploadLinkFolder(f.id); setShowUploadLinkModal(true); }}
             onOpenFile={openViewer}
             onShareFile={(f) => setShareTarget({ file: f })}
+            onToggleStar={toggleStar}
+            onDropFiles={dropToFolder}
             onDeleteFile={async (f) => { try { await API.deleteFile(f.id); toast('Gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             afterChange={refreshAll}
           />
@@ -1799,15 +1910,19 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
 function FilesView({
   user, stats, folders, view, setView, sort, setSort, search, setSearch, refreshTick,
   onOpenFolder, onShareFolder, onRenameFolder, onMoveFolder, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
-  onOpenFile, onShareFile, onDeleteFile,
+  onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles,
 }) {
   const [files, setFiles] = useState(null);
+  const [recent, setRecent] = useState([]);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [zipBusy, setZipBusy] = useState(false);
   const [results, setResults] = useState(null); // server search results when searching
 
-  useEffect(() => { API.files().then((d) => setFiles(d.files || [])).catch(() => setFiles([])); }, [refreshTick]);
+  useEffect(() => {
+    API.files().then((d) => setFiles(d.files || [])).catch(() => setFiles([]));
+    API.recentFiles().then((d) => setRecent(d.files || [])).catch(() => setRecent([]));
+  }, [refreshTick]);
 
   // Server-side search across ALL files/folders (debounced).
   const searching = search.trim().length >= 2;
@@ -1873,6 +1988,28 @@ function FilesView({
           ))}
         </div>
 
+        {!searching && stats?.by_kind && (stats.storage_used > 0) && (
+          <StorageBreakdown stats={stats}/>
+        )}
+
+        {!searching && recent.length > 0 && (
+          <>
+            <SectionHeader title="Zuletzt geöffnet"/>
+            <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8, marginBottom: 28 }}>
+              {recent.map((f) => (
+                <div key={f.id} onClick={() => onOpenFile(f, recent)} style={{ flexShrink: 0, width: 130, cursor: 'pointer' }}>
+                  <div style={{ width: 130, height: 96, borderRadius: 'var(--r-sm)', overflow: 'hidden', background: 'var(--surface-hi)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {f.kind === 'image'
+                      ? <img src={API.thumbUrl(f.id)} alt={f.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+                      : <FileIcon kind={f.kind} size={26} tint={f.hue}/>}
+                  </div>
+                  <div style={{ fontSize: 11.5, fontWeight: 500, marginTop: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
         {searching ? (
           <>
             <SectionHeader title={'Suchergebnisse für „' + search.trim() + '"'} count={results ? (results.files.length + results.folders.length) : null}/>
@@ -1900,6 +2037,7 @@ function FilesView({
                 {fFolders.map((f) => <FolderCard key={f.id} folder={f}
                   onClick={() => onOpenFolder(f)} onShare={() => onShareFolder(f)}
                   onRename={() => onRenameFolder(f)} onMove={() => onMoveFolder(f)}
+                  onDropFiles={onDropFiles}
                   onDelete={() => onDeleteFolder(f)}/>)}
               </div>
             ) : !creatingFolder && (
@@ -1912,8 +2050,8 @@ function FilesView({
               <SkeletonGrid/>
             ) : fFiles.length > 0 ? (
               view === 'grid'
-                ? <FileGrid files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onDragSelect={setSelected}/>
-                : <FileList files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onShareFile={onShareFile} onDeleteFile={(f) => { onDeleteFile(f); }}/>
+                ? <FileGrid files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onDragFiles={() => {}}/>
+                : <FileList files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onShareFile={onShareFile} onToggleStar={onToggleStar} onDeleteFile={(f) => { onDeleteFile(f); }}/>
             ) : (
               <EmptyHint icon={Ic.upload(40)} title="Noch keine Dateien" desc="Zieh Dateien hierher oder klick auf Hochladen."
                 actions={<Btn variant="primary" size="md" icon={Ic.upload(14)} onClick={onUpload}>Erste Datei hochladen</Btn>}/>
@@ -1930,7 +2068,7 @@ function FilesView({
 // ───── Folder detail view ──────────────────────────────────────────────────
 function FolderView({
   folderId, view, setView, sort, setSort, search, setSearch, refreshTick,
-  onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onMoveFiles, onUploadLink, onOpenFile, onShareFile, onDeleteFile, afterChange,
+  onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onMoveFiles, onUploadLink, onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, afterChange,
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1996,15 +2134,15 @@ function FolderView({
           <>
             <SectionHeader title="Unterordner" count={subfolders.length}/>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 32 }}>
-              {subfolders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)}/>)}
+              {subfolders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)} onDropFiles={onDropFiles}/>)}
             </div>
           </>
         )}
 
         {files.length > 0 ? (
           view === 'grid'
-            ? <FileGrid files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected}/>
-            : <FileList files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onShareFile={onShareFile} onDeleteFile={(f) => { onDeleteFile(f); }}/>
+            ? <FileGrid files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onDragFiles={() => {}}/>
+            : <FileList files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onShareFile={onShareFile} onToggleStar={onToggleStar} onDeleteFile={(f) => { onDeleteFile(f); }}/>
         ) : (
           <EmptyHint icon={Ic.upload(40)} title="Dieser Ordner ist leer" desc="Zieh Dateien hierher oder lade welche hoch."
             actions={<Btn variant="primary" size="md" icon={Ic.upload(14)} onClick={() => onUpload(folder.id)}>Hochladen</Btn>}/>
