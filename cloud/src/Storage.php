@@ -79,6 +79,7 @@ final class Storage
     {
         if (str_starts_with($mime, 'image/')) return 'image';
         if (str_starts_with($mime, 'video/')) return 'video';
+        if (str_starts_with($mime, 'audio/')) return 'audio';
         if ($mime === 'application/pdf') return 'pdf';
         return 'doc';
     }

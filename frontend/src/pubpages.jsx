@@ -172,7 +172,7 @@ export function PublicSharePage({ token }) {
           </div>
           <div style={{ display: 'grid', gap: 8 }}>
             {items.map((f) => {
-              const previewable = f.kind === 'image' || f.kind === 'video' || f.kind === 'pdf';
+              const previewable = ['image', 'video', 'pdf', 'audio'].includes(f.kind) || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(f.name);
               return (
                 <div key={f.id} style={{
                   display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px',
@@ -202,7 +202,7 @@ export function PublicSharePage({ token }) {
       )}
 
       {viewing && (() => {
-        const gal = items.filter((f) => ['image', 'video', 'pdf'].includes(f.kind));
+        const gal = items.filter((f) => ['image', 'video', 'pdf', 'audio'].includes(f.kind) || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(f.name));
         const list = gal.length ? gal : [viewing];
         return (
           <MediaViewer
@@ -300,7 +300,7 @@ export function PublicUploadPage({ token }) {
     setReview(null);
     const items = files.map((f) => ({
       name: f.name, size: f.size, status: 'queued', pct: 0,
-      kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type === 'application/pdf' ? 'pdf' : 'doc',
+      kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type === 'application/pdf' ? 'pdf' : 'doc',
     }));
     setUploads(items);
     let allOk = true;

@@ -215,6 +215,9 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
   }, [onClose, go]);
 
   const kind = cur.kind || 'doc';
+  // Recognise audio by kind OR extension, so files uploaded before the audio
+  // kind existed (stored as 'doc') still get a player.
+  const isAudio = kind === 'audio' || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(cur.name || '');
   const stop = (e) => e.stopPropagation();
   const onTouchStart = (e) => { touch.current = e.touches[0].clientX; };
   const onTouchEnd = (e) => {
@@ -285,11 +288,22 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
             boxShadow: '0 30px 80px rgba(0,0,0,0.6)',
           }}/>
         )}
+        {isAudio && kind !== 'video' && (
+          <Glass onClick={stop} style={{ width: '100%', maxWidth: 460, padding: '34px 36px', borderRadius: 'var(--r-xl)', textAlign: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
+              <div style={{ width: 96, height: 96, borderRadius: 'var(--r-lg)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 12px 40px -8px var(--accent-glow)' }}>{Ic.fileAudio(44)}</div>
+            </div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, marginBottom: 16, wordBreak: 'break-word' }}>{cur.name}</div>
+            <audio key={cur.id} controls autoPlay src={curSrc} style={{ width: '100%' }}>
+              Dein Browser unterstützt das Format nicht.
+            </audio>
+          </Glass>
+        )}
         {textual && (
           <TextPane key={cur.id} fileId={cur.id} src={curSrc} name={cur.name}
             editable={!!onSaveText} onSave={(content) => onSaveText(cur, content)}/>
         )}
-        {!textual && kind !== 'video' && kind !== 'image' && kind !== 'pdf' && (
+        {!textual && !isAudio && kind !== 'video' && kind !== 'image' && kind !== 'pdf' && (
           <Glass style={{ padding: '40px 48px', borderRadius: 'var(--r-xl)', textAlign: 'center' }}>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
               <FileIcon kind={kind} size={42} tint={cur.hue || 280}/>
@@ -1334,6 +1348,7 @@ const KIND_META = {
   image: { label: 'Bilder', color: 'oklch(0.70 0.17 280)' },
   video: { label: 'Videos', color: 'oklch(0.72 0.16 30)' },
   pdf:   { label: 'PDFs',   color: 'oklch(0.70 0.17 25)' },
+  audio: { label: 'Audio',  color: 'oklch(0.74 0.16 145)' },
   doc:   { label: 'Dokumente', color: 'oklch(0.72 0.14 220)' },
 };
 function StorageBreakdown({ stats }) {
@@ -2154,7 +2169,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const runUpload = async (filesArr, folderId = null) => {
     const items = filesArr.map((f) => ({
       name: f.name, size: f.size, status: 'queued', pct: 0,
-      kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type === 'application/pdf' ? 'pdf' : 'doc',
+      kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type === 'application/pdf' ? 'pdf' : 'doc',
     }));
     setUploads(items);
     setShowUploadProgress(true);
