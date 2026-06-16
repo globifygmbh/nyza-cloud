@@ -96,17 +96,13 @@ export function ContextMenuHost() {
     if (!menu) return;
     const close = () => setMenu(null);
     const onKey = (e) => { if (e.key === 'Escape') close(); };
-    // Defer so the opening click/contextmenu doesn't immediately close it.
-    const t = setTimeout(() => {
-      window.addEventListener('pointerdown', close);
-      window.addEventListener('resize', close);
-      window.addEventListener('blur', close);
-      document.addEventListener('scroll', close, true);
-      window.addEventListener('keydown', onKey);
-    }, 0);
+    // A full-screen backdrop handles outside taps (and blocks click-through to
+    // the content behind). Only need resize/scroll/Esc here.
+    window.addEventListener('resize', close);
+    window.addEventListener('blur', close);
+    document.addEventListener('scroll', close, true);
+    window.addEventListener('keydown', onKey);
     return () => {
-      clearTimeout(t);
-      window.removeEventListener('pointerdown', close);
       window.removeEventListener('resize', close);
       window.removeEventListener('blur', close);
       document.removeEventListener('scroll', close, true);
@@ -129,6 +125,10 @@ export function ContextMenuHost() {
 
   if (!menu) return null;
   return (
+    <>
+    <div onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); setMenu(null); }}
+      onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}
+      style={{ position: 'fixed', inset: 0, zIndex: 315 }}/>
     <div ref={ref} className="nyza-ctxmenu" style={{
       position: 'fixed', left: menu.x, top: menu.y, zIndex: 320, minWidth: 200, maxWidth: 280,
       background: 'var(--surface)', backdropFilter: 'blur(30px) saturate(180%)',
@@ -178,5 +178,6 @@ export function ContextMenuHost() {
         );
       })}
     </div>
+    </>
   );
 }

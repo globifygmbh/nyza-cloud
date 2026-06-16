@@ -959,7 +959,10 @@ function TopBar({ crumbs = ['Meine Dateien'], view, onView, onSearch, search, so
       borderBottom: '1px solid var(--border)', flexShrink: 0,
       background: 'var(--surface-2)', backdropFilter: 'blur(20px)',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, minWidth: 0 }}>
+      <div className="nyza-brand-m" style={{ display: 'none', alignItems: 'center', minWidth: 0 }}>
+        <NyzaWordmark size={15}/>
+      </div>
+      <div className={'nyza-crumbs' + (crumbs.length <= 1 ? ' nyza-crumbs-single' : '')} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, minWidth: 0 }}>
         {crumbs.map((c, i) => {
           const isLast = i === crumbs.length - 1;
           const label = typeof c === 'string' ? c : c.label;
@@ -1146,7 +1149,7 @@ function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDr
     } : undefined}
     onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
     onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}>
-      <div style={{ height: 132, position: 'relative', overflow: 'hidden' }}>
+      <div className="nyza-folder-head" style={{ height: 132, position: 'relative', overflow: 'hidden' }}>
         <div style={{
           position: 'absolute', inset: 0,
           background: `linear-gradient(135deg, oklch(0.4 ${0.12 * cc} ${tones[0]} / 0.5), oklch(0.3 ${0.08 * cc} ${tones[1]} / 0.7))`,
@@ -2557,18 +2560,10 @@ function FilesView({
       <TopBar crumbs={['Meine Dateien']} view={view} onView={setView} search={search} onSearch={setSearch} sort={sort} onSort={setSort}
         selectMode={selectMode} onSelectMode={(v) => { setSelectMode(v); if (!v) setSelected(new Set()); }}/>
       <div data-scroll onContextMenu={bgCtx} style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 24, marginBottom: 28 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, color: 'var(--fg-3)', marginBottom: 6 }}>{greeting()}, {user?.name}</div>
-            <h1 className="nyza-hero-title" style={{ fontFamily: 'var(--font-display)', fontSize: 38, fontWeight: 600, letterSpacing: -1.2, margin: 0, lineHeight: 1.05 }}>
-              Deine Dateien.<span style={{ color: 'var(--fg-3)' }}> Schön sortiert.</span>
-            </h1>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Btn variant="glass" size="md" icon={Ic.fileGen(15)} onClick={onNewText}>Notiz</Btn>
-            <Btn variant="glass" size="md" icon={Ic.link(15)} onClick={onUploadLink}>Upload-Link</Btn>
-            <Btn variant="primary" size="md" icon={Ic.upload(15)} onClick={onUpload}>Hochladen</Btn>
-          </div>
+        <div className="nyza-hero-actions" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', marginBottom: 24 }}>
+          <Btn variant="glass" size="md" icon={Ic.fileGen(15)} onClick={onNewText}>Notiz</Btn>
+          <Btn variant="glass" size="md" icon={Ic.link(15)} onClick={onUploadLink}>Upload-Link</Btn>
+          <Btn variant="primary" size="md" icon={Ic.upload(15)} onClick={onUpload}>Hochladen</Btn>
         </div>
 
         <div className="nyza-stat-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 32 }}>
@@ -2617,7 +2612,7 @@ function FilesView({
             ) : (
               <>
                 {results.folders.length > 0 && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 28 }}>
+                  <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 28 }}>
                     {results.folders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)}/>)}
                   </div>
                 )}
@@ -2632,7 +2627,7 @@ function FilesView({
             <SectionHeader title="Ordner" count={fFolders.length} action={<Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn>}/>
             {creatingFolder && <NewFolderRow onCreate={(n, k, t) => { onNewFolder(n, k, t); setCreatingFolder(false); }} onCancel={() => setCreatingFolder(false)}/>}
             {fFolders.length > 0 ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 36 }}>
+              <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 36 }}>
                 {fFolders.map((f) => <FolderCard key={f.id} folder={f}
                   onClick={() => onOpenFolder(f)} onShare={() => onShareFolder(f)}
                   onRename={() => onRenameFolder(f)} onMove={() => onMoveFolder(f)}
@@ -2760,7 +2755,7 @@ function FolderView({
         {subfolders.length > 0 && (
           <>
             <SectionHeader title="Unterordner" count={subfolders.length}/>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 32 }}>
+            <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 32 }}>
               {subfolders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)} onDropFiles={onDropFiles} onContext={folderCtx}/>)}
             </div>
           </>
@@ -2802,9 +2797,9 @@ function SharesView({ refreshTick, basePath, afterChange }) {
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
             {shares.map((s) => (
-              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <div key={s.id} className="nyza-listrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
                 <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'color-mix(in oklab, var(--accent) 16%, transparent)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{s.folder_id ? Ic.folder(18) : Ic.fileGen(18)}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="nyza-listrow-main" style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>/s/{s.token}</div>
                   <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     <span>{s.folder_id ? 'Ordner' : 'Datei'}</span>
@@ -2849,9 +2844,9 @@ function LinksView({ refreshTick, basePath, onCreate, afterChange }) {
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
             {links.map((l) => (
-              <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <div key={l.id} className="nyza-listrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
                 <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 4px 12px -4px var(--accent-glow)' }}>{Ic.inbox(18)}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="nyza-listrow-main" style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 540, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.title}</div>
                   <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     <span>→ {l.folder_name || 'Ordner'}</span>

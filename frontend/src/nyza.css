@@ -181,6 +181,9 @@ input, textarea {
 .nyza-md blockquote { margin: 0.8em 0; padding: 4px 14px; border-left: 3px solid var(--accent); color: var(--fg-2); }
 
 /* ───── Mobile responsive ───────────────────────────────────────────────── */
+/* Never allow sideways scrolling of the whole app */
+html, body, #root { max-width: 100%; overflow-x: hidden; }
+
 @media (max-width: 760px) {
   /* TopBar wraps instead of overflowing */
   .nyza-topbar {
@@ -191,18 +194,42 @@ input, textarea {
   }
   .nyza-search { width: 100% !important; order: 10; }
 
-  /* Content gets breathing room + clears the bottom nav */
-  .nyza-mobile-content [data-scroll] { padding: 16px 16px 110px !important; }
+  /* Content gets breathing room + clears the bottom nav; no sideways scroll */
+  .nyza-mobile-content { overflow-x: hidden; }
+  .nyza-mobile-content [data-scroll] { padding: 16px 16px 120px !important; overflow-x: hidden !important; }
 
   /* Stats: 4 cols → 2 */
   .nyza-stat-grid { grid-template-columns: 1fr 1fr !important; }
 
-  /* Hero title smaller */
+  /* Hero: stack title + actions, let buttons wrap (no cut-off "Hochladen") */
+  .nyza-hero { flex-direction: column; align-items: stretch !important; gap: 14px !important; }
   .nyza-hero-title { font-size: 28px !important; }
+  .nyza-hero-actions { flex-wrap: wrap; }
+  .nyza-hero-actions > * { flex: 1 1 auto; }
 
-  /* Folders: single/again-auto already responsive; tighten file tiles */
+  /* Folders: exactly 2 per row, shorter cards */
+  .nyza-folder-grid { grid-template-columns: 1fr 1fr !important; gap: 10px !important; }
+  .nyza-folder-head { height: 92px !important; }
+
+  /* File tiles a touch smaller */
   .file-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important; }
 
-  /* Selection bar sits above the bottom nav */
-  .nyza-selectionbar { bottom: 92px !important; }
+  /* Selection bar: above the bottom nav, full width, wraps instead of clipping */
+  .nyza-selectionbar {
+    bottom: 96px !important; left: 8px !important; right: 8px !important;
+    transform: none !important; width: auto !important;
+    flex-wrap: wrap; justify-content: center; gap: 8px !important;
+  }
+
+  /* Mobile header: show the nyza·cloud brand, hide the redundant top-level crumb
+     (the bottom nav already labels the section). Folder breadcrumbs still show. */
+  .nyza-brand-m { display: flex !important; }
+  .nyza-crumbs-single { display: none !important; }
+
+  /* List rows (Geteilt / Upload-Links): wrap instead of scrolling sideways.
+     Hide the leading icon on mobile so the text gets a full line and the action
+     buttons wrap neatly underneath. */
+  .nyza-listrow { flex-wrap: wrap; gap: 10px !important; }
+  .nyza-listrow > div:first-child { display: none; }
+  .nyza-listrow > .nyza-listrow-main { flex-basis: 100%; min-width: 0; }
 }
