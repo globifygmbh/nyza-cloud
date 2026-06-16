@@ -1644,32 +1644,38 @@ export function UploadReview({ files: initial, title = 'Diese Dateien hochladen?
   );
 }
 
+// Non-blocking, minimizable upload widget — bottom-right on desktop (Google-
+// Drive style), above the bottom nav on mobile. The actual upload runs in the
+// Dashboard, so you can switch views / navigate freely while it continues.
 export function UploadProgress({ items, onClose }) {
+  const [min, setMin] = useState(false);
   const total = items.reduce((s, x) => s + x.size, 0);
   const done = items.reduce((s, x) => s + (x.status === 'done' ? x.size : x.size * (x.pct || 0)), 0);
   const allDone = items.every((x) => x.status === 'done' || x.status === 'error');
+  const errors = items.filter((x) => x.status === 'error').length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const doneCount = items.filter((x) => x.status === 'done').length;
   return (
-    <div className="nyza-modal-backdrop" onClick={allDone ? onClose : null}>
-      <Glass style={{ width: '100%', maxWidth: 560, borderRadius: 'var(--r-xl)', padding: 28 }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 24, marginBottom: 24 }}>
-          <CircularProgress pct={pct} size={104}/>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 4 }}>
-              {allDone ? 'Fertig' : 'Wird hochgeladen…'}
+    <div className="nyza-upload-widget">
+      <Glass style={{ borderRadius: 'var(--r-lg)', overflow: 'hidden' }}>
+        <div onClick={() => setMin((m) => !m)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', cursor: 'pointer' }}>
+          <CircularProgress pct={pct} size={42} thick={5}/>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: -0.1 }}>
+              {allDone ? (errors ? 'Upload fertig · ' + errors + ' Fehler' : 'Upload fertig') : 'Wird hochgeladen…'}
             </div>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, letterSpacing: -0.6 }}>
-              {items.filter((x) => x.status === 'done').length} von {items.length} Dateien
+            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {doneCount} von {items.length} · {humanSize(done)} / {humanSize(total)}
             </div>
-            <div style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: 4 }}>{humanSize(done)} / {humanSize(total)}</div>
           </div>
+          <IconBtn size={30} title={min ? 'Aufklappen' : 'Minimieren'} onClick={(e) => { e.stopPropagation(); setMin((m) => !m); }}>
+            {min ? Ic.chevronU(15) : Ic.chevronD(15)}
+          </IconBtn>
+          {allDone && <IconBtn size={30} title="Schließen" onClick={(e) => { e.stopPropagation(); onClose(); }}>{Ic.close(15)}</IconBtn>}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
-          {items.map((f, i) => <UploadRow key={i} file={f}/>)}
-        </div>
-        {allDone && (
-          <div style={{ marginTop: 22, paddingTop: 18, borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
-            <Btn variant="primary" size="md" onClick={onClose}>Schließen</Btn>
+        {!min && (
+          <div style={{ borderTop: '1px solid var(--border)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 300, overflowY: 'auto' }}>
+            {items.map((f, i) => <UploadRow key={i} file={f}/>)}
           </div>
         )}
       </Glass>
@@ -1945,8 +1951,8 @@ export function UploadLinkModal({ folders, defaultFolderId, onClose, onCreated, 
               </div>
               <ShareToggleRow icon={Ic.users} title="Name des Uploaders abfragen" desc={reqName ? 'Pflichtfeld' : 'Optional'} on={reqName} onToggle={() => setReqName(!reqName)}/>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 28px', borderTop: '1px solid var(--border)', background: 'var(--surface-hi)' }}>
-              <span style={{ fontSize: 12, color: 'var(--fg-3)', flex: 1 }}>Sicherer Upload · 256-bit Verschlüsselung</span>
+            <div className="nyza-modal-foot" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 28px', borderTop: '1px solid var(--border)', background: 'var(--surface-hi)' }}>
+              <span className="foot-note" style={{ fontSize: 12, color: 'var(--fg-3)', flex: 1 }}>Sicherer Upload · 256-bit Verschlüsselung</span>
               <Btn variant="ghost" size="md" onClick={onClose}>Abbrechen</Btn>
               <Btn variant="primary" size="md" disabled={busy} onClick={create} icon={busy ? Ic.loader(15) : Ic.link(15)}>{busy ? 'Erstelle…' : 'Link erstellen'}</Btn>
             </div>
@@ -2945,9 +2951,9 @@ function TrashView({ refreshTick, onOpenFile, afterChange }) {
         ) : (
           <div style={{ display: 'grid', gap: 8 }}>
             {files.map((f) => (
-              <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <div key={f.id} className="nyza-listrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
                 <FileIcon kind={f.kind} size={16} tint={f.hue}/>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="nyza-listrow-main" style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
                   <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{humanSize(f.size)} · gelöscht {timeAgo(f.deleted_at)}</div>
                 </div>

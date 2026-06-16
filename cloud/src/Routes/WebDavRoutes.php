@@ -404,9 +404,17 @@ final class WebDavRoutes
             $pdo->prepare("DELETE FROM files WHERE id IN ($fp)")->execute($ids);
         }
         $pdo->prepare("DELETE FROM folders WHERE user_id = ? AND id IN ($place)")->execute(array_merge([$uid], $all));
-        if ($freed > 0) {
-            $pdo->prepare('UPDATE users SET storage_used = MAX(0, storage_used - ?) WHERE id = ?')->execute([$freed, $uid]);
-        }
+        if ($freed > 0) self::adjustStorage($uid, -$freed);
+    }
+
+    /** Floor-at-0 storage adjustment (computed in PHP; avoids UNSIGNED underflow). */
+    private static function adjustStorage(int $uid, int $delta): void
+    {
+        $pdo = Database::pdo();
+        $row = $pdo->prepare('SELECT storage_used FROM users WHERE id = ?');
+        $row->execute([$uid]);
+        $cur = (int)($row->fetch()['storage_used'] ?? 0);
+        $pdo->prepare('UPDATE users SET storage_used = ? WHERE id = ?')->execute([max(0, $cur + $delta), $uid]);
     }
 
     // ───── MOVE / COPY ───────────────────────────────────────────────────────
@@ -445,8 +453,7 @@ final class WebDavRoutes
                     $abs = Storage::abs($f['storage_path']);
                     FileRoutes::ingestPath($uid, $destParent, $newName, $abs, $f['mime_type']);
                     $pdo->prepare('DELETE FROM files WHERE id = ? AND user_id = ?')->execute([(int)$f['id'], $uid]);
-                    $pdo->prepare('UPDATE users SET storage_used = MAX(0, storage_used - ?) WHERE id = ?')
-                        ->execute([(int)$f['size'], $uid]);
+                    self::adjustStorage($uid, -(int)$f['size']);
                     return $res->withStatus(204);
                 }
                 $pdo->prepare('UPDATE files SET folder_id = ?, name = ? WHERE id = ? AND user_id = ?')

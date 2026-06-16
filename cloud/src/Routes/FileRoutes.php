@@ -350,7 +350,7 @@ final class FileRoutes
         }
         $pdo = Database::pdo();
         $pdo->prepare('UPDATE files SET size = ? WHERE id = ? AND user_id = ?')->execute([$newSize, (int)$f['id'], $uid]);
-        $pdo->prepare('UPDATE users SET storage_used = MAX(0, storage_used + ?) WHERE id = ?')->execute([$delta, $uid]);
+        self::adjustStorage($uid, $delta);
         return Json::ok($res, ['file' => self::fetchOne($uid, (int)$f['id'])]);
     }
 
@@ -503,7 +503,7 @@ final class FileRoutes
             return Json::err($res, 'Wiederherstellen fehlgeschlagen', 500);
         }
         $pdo->prepare('UPDATE files SET size = ? WHERE id = ? AND user_id = ?')->execute([$newSize, (int)$f['id'], $uid]);
-        $pdo->prepare('UPDATE users SET storage_used = MAX(0, storage_used + ?) WHERE id = ?')->execute([$delta, $uid]);
+        self::adjustStorage($uid, $delta);
         return Json::ok($res, ['file' => self::fetchOne($uid, (int)$f['id'])]);
     }
 
@@ -815,15 +815,34 @@ final class FileRoutes
     private static function hardDelete(int $uid, array $f): void
     {
         // Remove any on-disk version blobs first (DB rows cascade via FK).
-        $vs = Database::pdo()->prepare('SELECT storage_path FROM file_versions WHERE file_id = ? AND storage_path IS NOT NULL');
-        $vs->execute([(int)$f['id']]);
-        foreach ($vs->fetchAll() as $v) { Storage::deleteRel($v['storage_path']); }
+        // Best-effort: never let blob cleanup block the actual deletion.
+        try {
+            $vs = Database::pdo()->prepare('SELECT storage_path FROM file_versions WHERE file_id = ? AND storage_path IS NOT NULL');
+            $vs->execute([(int)$f['id']]);
+            foreach ($vs->fetchAll() as $v) { Storage::deleteRel($v['storage_path']); }
+        } catch (\Throwable $e) {}
 
         Database::pdo()->prepare('DELETE FROM files WHERE id = ? AND user_id = ?')->execute([(int)$f['id'], $uid]);
-        Database::pdo()->prepare('UPDATE users SET storage_used = MAX(0, storage_used - ?) WHERE id = ?')
-            ->execute([(int)$f['size'], $uid]);
+        self::adjustStorage($uid, -(int)$f['size']);
         Storage::deleteRel($f['storage_path']);
         @unlink(Storage::root() . '/thumbs/' . (int)$f['id'] . '.jpg');
+    }
+
+    /**
+     * Apply a (signed) delta to the user's storage_used, floored at 0. Computed
+     * in PHP because `storage_used` is an UNSIGNED column — doing `used - n` in
+     * SQL underflows and throws "BIGINT UNSIGNED out of range" when n > used
+     * (e.g. after quota drift), which previously 500'd a delete *after* the row
+     * was already gone. Portable across MySQL + SQLite.
+     */
+    private static function adjustStorage(int $uid, int $delta): void
+    {
+        $pdo = Database::pdo();
+        $row = $pdo->prepare('SELECT storage_used FROM users WHERE id = ?');
+        $row->execute([$uid]);
+        $cur = (int)($row->fetch()['storage_used'] ?? 0);
+        $new = max(0, $cur + $delta);
+        $pdo->prepare('UPDATE users SET storage_used = ? WHERE id = ?')->execute([$new, $uid]);
     }
 
     /**
@@ -884,7 +903,7 @@ final class FileRoutes
         $kind = Storage::kindFromMime($mime);
         $pdo->prepare('UPDATE files SET storage_path = ?, mime_type = ?, size = ?, kind = ? WHERE id = ? AND user_id = ?')
             ->execute([$newRel, $mime, $newSize, $kind, (int)$existing['id'], $uid]);
-        $pdo->prepare('UPDATE users SET storage_used = MAX(0, storage_used + ?) WHERE id = ?')->execute([$delta, $uid]);
+        self::adjustStorage($uid, $delta);
         if ($oldRel !== '' && $oldRel !== $newRel) Storage::deleteRel($oldRel);
         @unlink(Storage::root() . '/thumbs/' . (int)$existing['id'] . '.jpg');
         $pdo->prepare("INSERT INTO activity (user_id, kind, payload) VALUES (?, 'file_versioned', ?)")

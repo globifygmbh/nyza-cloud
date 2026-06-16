@@ -137,6 +137,10 @@ input, textarea {
 .nyza-masonry .ov span { color: #fff; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 760px) { .nyza-masonry { columns: 2 150px; column-gap: 8px; } .nyza-masonry > div { margin-bottom: 8px; } }
 
+/* Non-blocking upload widget (Google-Drive style, bottom-right) */
+.nyza-upload-widget { position: fixed; right: 24px; bottom: 24px; width: 380px; max-width: calc(100vw - 32px); z-index: 95; animation: slideUp .25s cubic-bezier(.2,.8,.2,1); }
+@media (max-width: 760px) { .nyza-upload-widget { right: 8px; left: 8px; bottom: 92px; width: auto; } }
+
 /* Modal backdrop */
 .nyza-modal-backdrop {
   position: fixed; inset: 0; z-index: 100;
@@ -193,6 +197,10 @@ input, textarea {
 /* Never allow sideways scrolling of the whole app */
 html, body, #root { max-width: 100%; overflow-x: hidden; }
 
+/* Keep the top bar (and its sort dropdown) above the scrolling content below,
+   otherwise the dropdown hides behind the page's action buttons. */
+.nyza-topbar { position: relative; z-index: 50; }
+
 @media (max-width: 760px) {
   /* TopBar wraps instead of overflowing */
   .nyza-topbar {
@@ -245,4 +253,9 @@ html, body, #root { max-width: 100%; overflow-x: hidden; }
   /* Public gallery title smaller on phones */
   .nyza-gallery-title { font-size: 32px !important; letter-spacing: -1px !important; }
   .nyza-gallery-wrap { padding: 20px 16px 80px !important; }
+
+  /* Modal footers: drop the security note, let the buttons fit/wrap */
+  .nyza-modal-foot { flex-wrap: wrap; padding: 14px 18px !important; }
+  .nyza-modal-foot .foot-note { display: none; }
+  .nyza-modal-foot > button { flex: 1 1 auto; }
 }
