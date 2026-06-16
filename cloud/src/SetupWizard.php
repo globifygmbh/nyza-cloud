@@ -28,6 +28,17 @@ final class SetupWizard
 
     public function handle(): void
     {
+        // ── Security gate ───────────────────────────────────────────────────
+        // Once the app is fully provisioned (config.php + an admin user), the
+        // wizard becomes a sensitive surface (DB reset, config rewrite, admin
+        // creation). Lock it behind a valid admin token so an unauthenticated
+        // visitor can't wipe data or hijack the install. During initial setup
+        // (no config / no admin yet) it stays open so it can be completed.
+        if (is_file($this->cloudDir . '/config.php') && $this->isProvisioned() && !$this->isAuthedAdmin()) {
+            $this->renderLocked();
+            return;
+        }
+
         $step = $_GET['step'] ?? 'checks';
         $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 
@@ -52,6 +63,61 @@ final class SetupWizard
             case 'checks':
             default:        $this->renderChecks(); break;
         }
+    }
+
+    /** True if config.php loads, the DB connects, and at least one user exists. */
+    private function isProvisioned(): bool
+    {
+        try {
+            Config::load($this->cloudDir . '/config.php');
+            $n = (int) (Database::pdo()->query('SELECT COUNT(*) AS c FROM users')->fetch()['c'] ?? 0);
+            return $n > 0;
+        } catch (\Throwable $e) {
+            // DB unreachable / not migrated yet → not provisioned (lets the
+            // admin fix the config step). No user data exists to protect here.
+            return false;
+        }
+    }
+
+    /** Reads a JWT from Authorization header or ?token=/POST token. */
+    private function bearer(): ?string
+    {
+        $h = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        if (!$h && function_exists('getallheaders')) {
+            foreach (getallheaders() as $k => $v) { if (strtolower($k) === 'authorization') { $h = $v; break; } }
+        }
+        if (is_string($h) && preg_match('/^Bearer\s+(.+)$/i', $h, $m)) return $m[1];
+        $t = $_GET['token'] ?? $_POST['token'] ?? null;
+        return is_string($t) && $t !== '' ? $t : null;
+    }
+
+    private function isAuthedAdmin(): bool
+    {
+        $tok = $this->bearer();
+        if (!$tok) return false;
+        $p = Auth::decode($tok);
+        if (!$p || empty($p['sub'])) return false;
+        try {
+            $s = Database::pdo()->prepare('SELECT 1 FROM users WHERE id = ?');
+            $s->execute([(int)$p['sub']]);
+            return (bool) $s->fetch();
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    private function renderLocked(): void
+    {
+        http_response_code(403);
+        $this->page('Gesperrt', function () {
+            echo '<h1>Setup gesperrt</h1>';
+            echo '<p class="lede">Diese Installation ist bereits eingerichtet. Der Setup-Wizard ist aus Sicherheitsgründen gesperrt und nur als angemeldeter Admin erreichbar.</p>';
+            echo '<div class="warn">Zum Entsperren musst du in der App eingeloggt sein. Klicke unten — dein Login-Token wird dann mitgegeben.</div>';
+            echo '<div class="actions" style="margin-top:20px"><a id="unlock" class="btn btn-primary" href="#">Als Admin entsperren</a> <a class="btn" href="./">Zur App</a></div>';
+            echo "<script>(function(){var t=null;try{t=localStorage.getItem('nyza.token');}catch(e){}"
+               . "var u=document.getElementById('unlock');var base=location.pathname.replace(/setup\\.php$/,'');"
+               . "if(t){u.href=base+'?setup=1&token='+encodeURIComponent(t);}else{u.textContent='Bitte zuerst in der App einloggen';u.href='./';}})();</script>";
+        });
     }
 
     // ───── Step 1: System checks ─────────────────────────────────────────
@@ -384,6 +450,14 @@ final class SetupWizard
         } catch (\Throwable $e) {
             $this->renderAdminForm('Datenbank-Fehler: ' . $e->getMessage(), $email);
             return;
+        }
+
+        // Defense in depth: the wizard only ever creates the FIRST admin. If one
+        // already exists, refuse (the handle() gate already blocks unauth access,
+        // but never create a second account from here).
+        if ((int)($pdo->query('SELECT COUNT(*) AS c FROM users')->fetch()['c'] ?? 0) > 0) {
+            header('Location: ?step=finish');
+            exit;
         }
 
         // Random initial password: 16 chars, alphanumeric + a few symbols.
