@@ -183,7 +183,7 @@ function mdTabStyle(active) {
 // Gallery-capable: pass items[] + startIndex + srcFor()/downloadFor() to enable
 // ←/→ keys, on-screen arrows and touch-swipe between files. Single-file mode
 // (file + src + downloadHref) still works.
-export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onSaveText, onClose }) {
+export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onSaveText, comments, onClose }) {
   const gallery = Array.isArray(items) && items.length > 0;
   const [idx, setIdx] = useState(startIndex);
   const cur = gallery ? items[idx] : file;
@@ -191,6 +191,7 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
   const curDl = gallery ? (downloadFor ? downloadFor(cur) : null) : downloadHref;
   const touch = useRef(null);
   const textual = isTextFile(cur);
+  const [showComments, setShowComments] = useState(false);
 
   const go = useCallback((d) => {
     if (!gallery) return;
@@ -240,6 +241,9 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
             {humanSize(cur.size)}{cur.mime_type ? ' · ' + cur.mime_type : ''}{gallery && items.length > 1 ? ' · ' + (idx + 1) + ' / ' + items.length : ''}
           </div>
         </div>
+        {comments && (
+          <Btn variant={showComments ? 'primary' : 'glass'} size="sm" icon={Ic.comment(14)} onClick={() => setShowComments((s) => !s)}>Kommentare</Btn>
+        )}
         {curDl && (
           <a href={curDl} download={cur.name} style={{ display: 'inline-flex', textDecoration: 'none' }}>
             <Btn variant="glass" size="sm" icon={Ic.download(14)}>Download</Btn>
@@ -306,6 +310,74 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
           <button onClick={() => go(1)} title="Weiter (→)" style={navArrow('right')}>{Ic.chevronR(22)}</button>
         )}
       </div>
+
+      {comments && showComments && (
+        <CommentsPanel key={cur.id} file={cur} cfg={comments} onClose={() => setShowComments(false)}/>
+      )}
+    </div>
+  );
+}
+
+// Comments drawer (right side) used inside the MediaViewer. cfg provides
+// load/add (+ optional remove), askName (guest) and a default name.
+function CommentsPanel({ file, cfg, onClose }) {
+  const [items, setItems] = useState(null);
+  const [body, setBody] = useState('');
+  const [name, setName] = useState(cfg.defaultName || '');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let off = false;
+    cfg.load(file).then((c) => { if (!off) setItems(c || []); }).catch(() => { if (!off) setItems([]); });
+    return () => { off = true; };
+  }, [file.id]);
+  const send = async (e) => {
+    e.preventDefault();
+    if (!body.trim()) return;
+    if (cfg.askName && !name.trim()) { toast('Bitte Namen eingeben', 'error'); return; }
+    setBusy(true);
+    try { const c = await cfg.add(file, { body: body.trim(), author_name: name.trim() }); setItems(c || []); setBody(''); }
+    catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+  };
+  const remove = async (cid) => {
+    try { const c = await cfg.remove(file, cid); setItems(c || []); } catch (e) { toast(e.message, 'error'); }
+  };
+  return (
+    <div onClick={(e) => e.stopPropagation()} className="nyza-comments" style={{
+      position: 'absolute', top: 60, right: 0, bottom: 0, width: 340, maxWidth: '90vw', zIndex: 5,
+      background: 'var(--surface)', borderLeft: '1px solid var(--border-hi)',
+      backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+      display: 'flex', flexDirection: 'column', animation: 'slideUp 0.2s ease',
+    }}>
+      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ color: 'var(--accent)' }}>{Ic.comment(16)}</span>
+        <span style={{ flex: 1, fontWeight: 600, fontSize: 14, color: 'var(--fg)' }}>Kommentare{items ? ' · ' + items.length : ''}</span>
+        <IconBtn size={28} onClick={onClose}>{Ic.close(15)}</IconBtn>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {items === null ? <div style={{ color: 'var(--fg-3)' }}>{Ic.loader(18)}</div>
+          : items.length === 0 ? <div style={{ fontSize: 13, color: 'var(--fg-3)', textAlign: 'center', padding: 20 }}>Noch keine Kommentare.</div>
+          : items.map((c) => (
+            <div key={c.id} style={{ background: 'var(--surface-hi)', borderRadius: 'var(--r-sm)', padding: '10px 12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: c.source === 'owner' ? 'var(--accent)' : 'var(--fg)' }}>{c.author_name}</span>
+                {c.source === 'owner' && <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: 'var(--accent-grad)', color: '#fff' }}>OWNER</span>}
+                <span style={{ flex: 1 }}/>
+                <span style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>{timeAgo(c.created_at)}</span>
+                {cfg.remove && <span onClick={() => remove(c.id)} style={{ cursor: 'pointer', color: 'var(--fg-4)' }} title="Löschen">{Ic.trash(12)}</span>}
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.body}</div>
+            </div>
+          ))}
+      </div>
+      <form onSubmit={send} style={{ padding: 12, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {cfg.askName && (
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Dein Name"
+            style={{ height: 36, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}/>
+        )}
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Kommentar schreiben…" rows={2}
+          style={{ padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', resize: 'vertical', fontFamily: 'inherit' }}/>
+        <Btn variant="primary" size="sm" full type="submit" disabled={busy || !body.trim()} icon={busy ? Ic.loader(13) : Ic.comment(13)}>Senden</Btn>
+      </form>
     </div>
   );
 }
@@ -1396,6 +1468,59 @@ export function Dropzone({ onFiles, label = 'Dateien hierher ziehen', sub = 'ode
 }
 
 // ───── Upload progress ─────────────────────────────────────────────────────
+// Pre-upload review: thumbnails of selected files, remove individual ones,
+// total size, then confirm. Used by owner upload + public client upload.
+export function UploadReview({ files: initial, title = 'Diese Dateien hochladen?', confirmLabel = 'Hochladen', maxFileSize, onConfirm, onCancel }) {
+  const [list, setList] = useState(() => initial.map((f, i) => ({
+    key: i + '·' + f.name + '·' + f.size, file: f,
+    url: f.type.startsWith('image/') ? URL.createObjectURL(f) : null,
+    kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type === 'application/pdf' ? 'pdf' : 'doc',
+  })));
+  useEffect(() => () => { list.forEach((x) => x.url && URL.revokeObjectURL(x.url)); }, []);
+  const remove = (key) => setList((l) => l.filter((x) => x.key !== key));
+  const total = list.reduce((s, x) => s + x.file.size, 0);
+  const oversize = maxFileSize ? list.filter((x) => x.file.size > maxFileSize) : [];
+
+  return (
+    <div className="nyza-modal-backdrop" onClick={onCancel}>
+      <Glass style={{ width: '100%', maxWidth: 560, borderRadius: 'var(--r-xl)', overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '85vh' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.upload(18)}</div>
+          <div style={{ flex: 1 }}>
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>{title}</h2>
+            <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>{list.length} {list.length === 1 ? 'Datei' : 'Dateien'} · {humanSize(total)}</div>
+          </div>
+          <IconBtn size={32} onClick={onCancel}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {list.map((x) => {
+            const big = maxFileSize && x.file.size > maxFileSize;
+            return (
+              <div key={x.key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid ' + (big ? 'color-mix(in oklab, var(--danger) 40%, transparent)' : 'var(--border)') }}>
+                <div style={{ width: 44, height: 44, borderRadius: 8, overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
+                  {x.url ? <img src={x.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/> : <FileIcon kind={x.kind} size={18}/>}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{x.file.name}</div>
+                  <div style={{ fontSize: 11.5, color: big ? 'var(--danger)' : 'var(--fg-3)' }}>{humanSize(x.file.size)}{big ? ' · zu groß' : ''}</div>
+                </div>
+                <IconBtn size={30} title="Entfernen" onClick={() => remove(x.key)}>{Ic.close(15)}</IconBtn>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          {oversize.length > 0 && <span style={{ fontSize: 12, color: 'var(--danger)', flex: 1 }}>{oversize.length} Datei(en) über dem Limit ({humanSize(maxFileSize)})</span>}
+          <span style={{ flex: oversize.length ? 0 : 1 }}/>
+          <Btn variant="ghost" onClick={onCancel}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={list.length === 0 || oversize.length > 0} icon={Ic.upload(15)}
+            onClick={() => onConfirm(list.map((x) => x.file))}>{confirmLabel} ({list.length})</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
 export function UploadProgress({ items, onClose }) {
   const total = items.reduce((s, x) => s + x.size, 0);
   const done = items.reduce((s, x) => s + (x.status === 'done' ? x.size : x.size * (x.pct || 0)), 0);
@@ -1890,6 +2015,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   };
   const [uploads, setUploads] = useState([]);
   const [showUploadProgress, setShowUploadProgress] = useState(false);
+  const [reviewFiles, setReviewFiles] = useState(null);
   const [showMore, setShowMore] = useState(false);
   const isMobile = useIsMobile();
 
@@ -2064,6 +2190,12 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         <MediaViewer items={viewing.items} startIndex={viewing.index}
           srcFor={(f) => fileSrc(f.id)} downloadFor={(f) => fileDownload(f.id)}
           onSaveText={async (f, content) => { await API.saveContent(f.id, content); refreshAll(); }}
+          comments={{
+            load: (f) => API.fileComments(f.id).then((d) => d.comments || []),
+            add: (f, { body }) => API.addFileComment(f.id, body).then((d) => d.comments || []),
+            remove: async (f, cid) => { await API.delFileComment(f.id, cid); return (await API.fileComments(f.id)).comments || []; },
+            askName: false, defaultName: user?.name || '',
+          }}
           onClose={() => setViewing(null)}/>
       )}
 
@@ -2080,9 +2212,15 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           onClose={() => setShowMore(false)}/>
       )}
 
+      {reviewFiles && (
+        <UploadReview files={reviewFiles}
+          onConfirm={(files) => { const fid = uploadTargetFolder.current; setReviewFiles(null); runUpload(files, fid); }}
+          onCancel={() => setReviewFiles(null)}/>
+      )}
+
       <input ref={uploadInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => {
         const filesArr = Array.from(e.target.files || []);
-        if (filesArr.length) runUpload(filesArr, uploadTargetFolder.current);
+        if (filesArr.length) setReviewFiles(filesArr);
         e.target.value = '';
       }}/>
     </div>

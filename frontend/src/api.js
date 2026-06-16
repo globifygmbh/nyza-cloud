@@ -158,6 +158,11 @@ export const API = {
   searchFiles: (q) => request('/api/files/search?q=' + encodeURIComponent(q)),
   moveFile:    (id, folderId) => request('/api/files/' + id, { method: 'PATCH', body: { folder_id: folderId } }),
   moveFiles:   (ids, folderId) => request('/api/files/move', { method: 'POST', body: { file_ids: ids, folder_id: folderId } }),
+  fileComments:    (id) => request('/api/files/' + id + '/comments'),
+  addFileComment:  (id, body) => request('/api/files/' + id + '/comments', { method: 'POST', body: { body } }),
+  delFileComment:  (id, cid) => request('/api/files/' + id + '/comments/' + cid, { method: 'DELETE' }),
+  shareComments:   (token, fileId, password) => request('/api/s/' + token + '/file/' + fileId + '/comments' + (password ? '?p=' + encodeURIComponent(password) : ''), { skipAuth: true }),
+  addShareComment: (token, fileId, body) => request('/api/s/' + token + '/file/' + fileId + '/comments', { method: 'POST', body, skipAuth: true }),
   zip: (body) => fetch(url('/api/files/zip'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },

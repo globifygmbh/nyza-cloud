@@ -7,7 +7,7 @@ import {
   Ic, Glass, Btn, NyzaWordmark, FileIcon, PhotoPlaceholder,
   humanSize, applyAccent,
 } from './system.jsx';
-import { Dropzone, UploadRow, MediaViewer } from './app.jsx';
+import { Dropzone, UploadRow, MediaViewer, UploadReview } from './app.jsx';
 import { uploadClient } from './uploads.js';
 import { toast } from './toast.jsx';
 
@@ -210,6 +210,11 @@ export function PublicSharePage({ token }) {
             startIndex={Math.max(0, list.findIndex((x) => x.id === viewing.id))}
             srcFor={(f) => API.shareFileUrl(token, f.id, password)}
             downloadFor={(f) => data.allow_download ? API.shareFileUrl(token, f.id, password, true) : null}
+            comments={{
+              load: (f) => API.shareComments(token, f.id, password).then((d) => d.comments || []),
+              add: (f, { body, author_name }) => API.addShareComment(token, f.id, { body, author_name, password }).then((d) => d.comments || []),
+              askName: true,
+            }}
             onClose={() => setViewing(null)}
           />
         );
@@ -225,6 +230,7 @@ export function PublicUploadPage({ token }) {
   const [uploaderName, setUploaderName] = useState('');
   const [uploads, setUploads] = useState([]);
   const [done, setDone] = useState(false);
+  const [review, setReview] = useState(null);
   const cameraRef = useRef(null);
 
   const load = () => {
@@ -281,11 +287,17 @@ export function PublicUploadPage({ token }) {
     );
   }
 
-  const onFiles = async (files) => {
+  // Pick → review → confirm → upload.
+  const onFiles = (files) => {
     if (link.requires_uploader_name && !uploaderName.trim()) {
-      toast('Bitte Namen eingeben', 'error');
+      toast('Bitte zuerst deinen Namen eingeben', 'error');
       return;
     }
+    setReview(files);
+  };
+
+  const doUpload = async (files) => {
+    setReview(null);
     const items = files.map((f) => ({
       name: f.name, size: f.size, status: 'queued', pct: 0,
       kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type === 'application/pdf' ? 'pdf' : 'doc',
@@ -383,6 +395,11 @@ export function PublicUploadPage({ token }) {
           )}
         </div>
       </div>
+
+      {review && (
+        <UploadReview files={review} maxFileSize={link.max_file_size || undefined}
+          onConfirm={doUpload} onCancel={() => setReview(null)}/>
+      )}
     </div>
   );
 }

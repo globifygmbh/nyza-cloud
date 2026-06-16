@@ -33,6 +33,9 @@ final class FileRoutes
             $g->get('/{id}/raw',              [self::class, 'raw']);
             $g->get('/{id}/thumb',            [self::class, 'thumb']);
             $g->post('/{id}/star',            [self::class, 'star']);
+            $g->get('/{id}/comments',         [self::class, 'comments']);
+            $g->post('/{id}/comments',        [self::class, 'addComment']);
+            $g->delete('/{id}/comments/{cid}',[self::class, 'deleteComment']);
             $g->patch('/{id}',                [self::class, 'move']);
             $g->put('/{id}/content',          [self::class, 'saveContent']);
             $g->get('/{id}/versions',         [self::class, 'versions']);
@@ -87,6 +90,53 @@ final class FileRoutes
         Database::pdo()->prepare('UPDATE files SET starred = ? WHERE id = ? AND user_id = ?')
             ->execute([$on, (int)$args['id'], $uid]);
         return Json::ok($res, ['ok' => true, 'starred' => (bool)$on]);
+    }
+
+    // ───── Comments (owner side) ─────────────────────────────────────────────
+    /** Shared list shape used by both owner and public endpoints. */
+    public static function listComments(int $fileId): array
+    {
+        $stmt = Database::pdo()->prepare('SELECT id, user_id, author_name, body, source, created_at FROM comments WHERE file_id = ? ORDER BY id ASC');
+        $stmt->execute([$fileId]);
+        return array_map(static function (array $c): array {
+            return [
+                'id' => (int)$c['id'], 'author_name' => $c['author_name'], 'body' => $c['body'],
+                'source' => $c['source'], 'created_at' => $c['created_at'],
+            ];
+        }, $stmt->fetchAll());
+    }
+
+    public static function comments(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        if (!self::fetchOne($uid, (int)$args['id'])) return Json::err($res, 'Not found', 404);
+        return Json::ok($res, ['comments' => self::listComments((int)$args['id'])]);
+    }
+
+    public static function addComment(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchOne($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+        $b = (array) $req->getParsedBody();
+        $body = trim((string)($b['body'] ?? ''));
+        if ($body === '') return Json::err($res, 'Kommentar leer', 422);
+        $body = mb_substr($body, 0, 5000);
+        $name = Database::pdo()->query("SELECT name FROM users WHERE id = $uid")->fetch()['name'] ?? 'Owner';
+        Database::pdo()->prepare("INSERT INTO comments (file_id, user_id, author_name, body, source) VALUES (?, ?, ?, ?, 'owner')")
+            ->execute([(int)$f['id'], $uid, $name, $body]);
+        return Json::ok($res, ['comments' => self::listComments((int)$f['id'])], 201);
+    }
+
+    public static function deleteComment(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchOne($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+        // Owner may delete ANY comment on their own file (incl. guest feedback).
+        Database::pdo()->prepare('DELETE FROM comments WHERE id = ? AND file_id = ?')
+            ->execute([(int)$args['cid'], (int)$f['id']]);
+        return Json::ok($res, ['ok' => true]);
     }
 
     // Server-side search across ALL of the user's live files + folders.

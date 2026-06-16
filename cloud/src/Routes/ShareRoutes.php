@@ -30,6 +30,57 @@ final class ShareRoutes
         $app->get('/api/s/{token}',          [self::class, 'show']);
         $app->get('/api/s/{token}/zip',      [self::class, 'downloadZip']);
         $app->get('/api/s/{token}/file/{id}',[self::class, 'downloadFile']);
+        $app->get('/api/s/{token}/file/{id}/comments',  [self::class, 'fileComments']);
+        $app->post('/api/s/{token}/file/{id}/comments', [self::class, 'addFileComment']);
+    }
+
+    /** Verify a file is reachable through this share; returns the share or null. */
+    private static function shareForFile(string $token, int $fileId, Request $req): ?array
+    {
+        $share = self::loadByToken($token);
+        if (!$share) return null;
+        if (self::gate($share, $req)) return null;
+        if ($share['file_id'] && (int)$share['file_id'] === $fileId) return $share;
+        if ($share['folder_id']) {
+            $chk = Database::pdo()->prepare('SELECT 1 FROM files WHERE id = ? AND folder_id = ? AND deleted_at IS NULL');
+            $chk->execute([$fileId, (int)$share['folder_id']]);
+            if ($chk->fetch()) return $share;
+        }
+        return null;
+    }
+
+    public static function fileComments(Request $req, Response $res, array $args): Response
+    {
+        $share = self::shareForFile($args['token'], (int)$args['id'], $req);
+        if (!$share) return Json::err($res, 'Not found', 404);
+        return Json::ok($res, ['comments' => FileRoutes::listComments((int)$args['id'])]);
+    }
+
+    public static function addFileComment(Request $req, Response $res, array $args): Response
+    {
+        if (!\Nyza\RateLimiter::allowReq($req, 'comment', 20, 600, $args['token'])) {
+            return Json::err($res, 'Zu viele Kommentare — bitte später', 429, 'rate_limited');
+        }
+        $share = self::shareForFile($args['token'], (int)$args['id'], $req);
+        if (!$share) return Json::err($res, 'Not found', 404);
+        $b = (array) $req->getParsedBody();
+        $name = trim((string)($b['author_name'] ?? '')) ?: 'Gast';
+        $body = trim((string)($b['body'] ?? ''));
+        if ($body === '') return Json::err($res, 'Kommentar leer', 422);
+        $name = mb_substr($name, 0, 120);
+        $body = mb_substr($body, 0, 5000);
+        Database::pdo()->prepare("INSERT INTO comments (file_id, user_id, author_name, body, source) VALUES (?, NULL, ?, ?, 'guest')")
+            ->execute([(int)$args['id'], $name, $body]);
+        // notify owner by mail (best-effort)
+        try {
+            $o = Database::pdo()->prepare('SELECT u.email, u.name, f.name AS fname FROM files f JOIN users u ON u.id = f.user_id WHERE f.id = ?');
+            $o->execute([(int)$args['id']]);
+            if ($row = $o->fetch()) {
+                \Nyza\Mailer::send($row['email'], 'Neues Feedback: ' . $row['fname'],
+                    "$name hat die Datei \"{$row['fname']}\" kommentiert:\n\n$body\n\n— Nyza Cloud");
+            }
+        } catch (\Throwable $e) {}
+        return Json::ok($res, ['comments' => FileRoutes::listComments((int)$args['id'])], 201);
     }
 
     public static function list(Request $req, Response $res): Response
