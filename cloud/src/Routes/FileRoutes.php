@@ -33,6 +33,7 @@ final class FileRoutes
             $g->get('/{id}/raw',              [self::class, 'raw']);
             $g->get('/{id}/thumb',            [self::class, 'thumb']);
             $g->post('/{id}/star',            [self::class, 'star']);
+            $g->post('/{id}/pin',             [self::class, 'pinFile']);
             $g->post('/{id}/label',           [self::class, 'setLabel']);
             $g->post('/{id}/unzip',           [self::class, 'unzip']);
             $g->get('/{id}/comments',         [self::class, 'comments']);
@@ -64,13 +65,13 @@ final class FileRoutes
         $starred = isset($q['starred']);
         $pdo = Database::pdo();
         if ($starred) {
-            $stmt = $pdo->prepare("SELECT * FROM files WHERE user_id = ? AND deleted_at IS NULL AND starred = 1 ORDER BY created_at DESC LIMIT $limit");
+            $stmt = $pdo->prepare("SELECT * FROM files WHERE user_id = ? AND deleted_at IS NULL AND starred = 1 ORDER BY pinned DESC, created_at DESC LIMIT $limit");
             $stmt->execute([$uid]);
         } elseif ($folder === null) {
-            $stmt = $pdo->prepare("SELECT * FROM files WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $limit");
+            $stmt = $pdo->prepare("SELECT * FROM files WHERE user_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, created_at DESC LIMIT $limit");
             $stmt->execute([$uid]);
         } else {
-            $stmt = $pdo->prepare("SELECT * FROM files WHERE user_id = ? AND folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $limit");
+            $stmt = $pdo->prepare("SELECT * FROM files WHERE user_id = ? AND folder_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, created_at DESC LIMIT $limit");
             $stmt->execute([$uid, $folder]);
         }
         return Json::ok($res, ['files' => $stmt->fetchAll()]);
@@ -107,6 +108,17 @@ final class FileRoutes
         Database::pdo()->prepare('UPDATE files SET starred = ? WHERE id = ? AND user_id = ?')
             ->execute([$on, (int)$args['id'], $uid]);
         return Json::ok($res, ['ok' => true, 'starred' => (bool)$on]);
+    }
+
+    public static function pinFile(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchOne($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+        $newPin = $f['pinned'] ? 0 : 1;
+        Database::pdo()->prepare('UPDATE files SET pinned = ? WHERE id = ? AND user_id = ?')
+            ->execute([$newPin, (int)$f['id'], $uid]);
+        return Json::ok($res, ['ok' => true, 'pinned' => (bool)$newPin]);
     }
 
     // ───── Comments (owner side) ─────────────────────────────────────────────

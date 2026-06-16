@@ -23,6 +23,7 @@ final class FolderRoutes
             $g->post('',          [self::class, 'create']);
             $g->get('/{id}',      [self::class, 'show']);
             $g->patch('/{id}',    [self::class, 'rename']);
+            $g->post('/{id}/pin', [self::class, 'pin']);
             $g->delete('/{id}',   [self::class, 'delete']);
         })->add(new AuthMiddleware());
     }
@@ -50,7 +51,7 @@ final class FolderRoutes
              . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
              . 'FROM folders f WHERE user_id = ? '
              . ($parent === null ? 'AND parent_id IS NULL ' : 'AND parent_id = ? ')
-             . 'ORDER BY updated_at DESC';
+             . 'ORDER BY pinned DESC, updated_at DESC';
         $stmt = $pdo->prepare($sql);
         $stmt->execute($parent === null ? [$uid] : [$uid, (int)$parent]);
         return Json::ok($res, ['folders' => $stmt->fetchAll()]);
@@ -187,6 +188,20 @@ final class FolderRoutes
             \Nyza\Storage::deleteRel($p);
         }
         return Json::ok($res, ['ok' => true]);
+    }
+
+    public static function pin(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        $stmt = Database::pdo()->prepare('SELECT pinned FROM folders WHERE id = ? AND user_id = ?');
+        $stmt->execute([$id, $uid]);
+        $row = $stmt->fetch();
+        if (!$row) return Json::err($res, 'Not found', 404);
+        $newPin = $row['pinned'] ? 0 : 1;
+        Database::pdo()->prepare('UPDATE folders SET pinned = ? WHERE id = ? AND user_id = ?')
+            ->execute([$newPin, $id, $uid]);
+        return Json::ok($res, ['ok' => true, 'pinned' => (bool)$newPin]);
     }
 
     public static function fetchOne(int $uid, int $id): ?array

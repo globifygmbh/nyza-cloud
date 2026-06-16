@@ -145,6 +145,8 @@ export const API = {
   starredFiles:() => request('/api/files?starred=1'),
   recentFiles: () => request('/api/files/recent'),
   starFile:    (id, starred) => request('/api/files/' + id + '/star', { method: 'POST', body: { starred } }),
+  pinFile:     (id) => request('/api/files/' + id + '/pin', { method: 'POST', body: {} }),
+  pinFolder:   (id) => request('/api/folders/' + id + '/pin', { method: 'POST', body: {} }),
   labelFile:   (id, label) => request('/api/files/' + id + '/label', { method: 'POST', body: { label: label ?? null } }),
   shareSetLabel: (token, fileId, label, password) => request('/api/s/' + token + '/file/' + fileId + '/label' + (password ? '?p=' + encodeURIComponent(password) : ''), { method: 'POST', body: { label: label ?? null }, skipAuth: true }),
   uploadFile:  (file, folderId, onProgress) =>

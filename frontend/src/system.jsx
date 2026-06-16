@@ -45,6 +45,8 @@ export const Ic = {
   loader:    (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="nyza-spin"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>,
   checkSquare:(s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>,
   archive:   (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/></svg>,
+  pin:       (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="currentColor"><path d="M16 3a1 1 0 0 1 .7.3l4 4a1 1 0 0 1-.24 1.58L16 11.4V19a1 1 0 0 1-1.7.71L10 15.41l-5.29 5.3a1 1 0 0 1-1.42-1.42L8.59 14l-4.3-4.3A1 1 0 0 1 5 8h7.59l2.52-4.35A1 1 0 0 1 16 3z"/></svg>,
+  folderUp:  (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14l3-3 3 3"/></svg>,
 };
 
 export function Glass({ children, style = {}, intensity = 1, hi = true, ...rest }) {

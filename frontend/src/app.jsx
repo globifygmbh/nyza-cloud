@@ -1258,6 +1258,10 @@ function FileTile({ file, selected, selecting, onActivate, onContext, onToggleSe
           className="file-checkbox">
           {selected && Ic.check(13)}
         </div>
+        {file.pinned && !selected && (
+          <div style={{ position: 'absolute', top: 8, left: 8, color: 'var(--accent)', background: 'rgba(0,0,0,0.45)', borderRadius: 999, width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}
+            title="Angepinnt">{Ic.pin(11)}</div>
+        )}
         {isNew && !selected && (
           <div style={{
             position: 'absolute', top: 8, right: 8, padding: '2px 7px', borderRadius: 999,
@@ -2536,6 +2540,7 @@ function fileMenuItems(file, o) {
     { label: 'Herunterladen', icon: Ic.download(15), onClick: () => o.onDownload(file) },
     isZip && o.onUnzip && { label: 'Entpacken', icon: Ic.archive(15), onClick: () => o.onUnzip(file) },
     o.onToggleStar && { label: file.starred ? 'Aus Favoriten entfernen' : 'Zu Favoriten', icon: Ic.star(15), onClick: () => o.onToggleStar(file) },
+    o.onPin && { label: file.pinned ? 'Lösen' : 'Anpinnen', icon: Ic.pin(15), onClick: () => o.onPin(file) },
     { separator: true },
     { header: 'Markieren' },
     { label: 'Rot – Überarbeiten',  icon: <span style={{display:'inline-block',width:10,height:10,borderRadius:'50%',background:'#ef4444',marginRight:2}}/>, onClick: () => o.onLabel && o.onLabel(f, 'red') },
@@ -2553,6 +2558,7 @@ function fileMenuItems(file, o) {
 function folderMenuItems(folder, o) {
   return [
     { label: 'Öffnen', icon: Ic.folder(15), onClick: () => o.onOpen(folder) },
+    o.onPin && { label: folder.pinned ? 'Lösen' : 'Anpinnen', icon: Ic.pin(15), onClick: () => o.onPin(folder) },
     o.onRename && { label: 'Umbenennen', icon: Ic.fileGen(15), onClick: () => o.onRename(folder) },
     o.onMove && { label: 'Verschieben', icon: Ic.folder(15), onClick: () => o.onMove(folder) },
     o.onShare && { label: 'Teilen', icon: Ic.share(15), onClick: () => o.onShare(folder) },
