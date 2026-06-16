@@ -47,6 +47,13 @@ final class Config
 
         putenv('ALLOW_ORIGIN=' . ($cfg['allow_origin'] ?? '*'));
         putenv('MAIL_FROM=' . ($cfg['mail_from'] ?? 'no-reply@nyza.cloud'));
+        putenv('MAIL_FROM_NAME=' . ($cfg['mail_from_name'] ?? 'Nyza Cloud'));
+        $smtp = $cfg['smtp'] ?? [];
+        putenv('SMTP_HOST=' . ($smtp['host'] ?? ''));
+        putenv('SMTP_PORT=' . ($smtp['port'] ?? 587));
+        putenv('SMTP_USER=' . ($smtp['user'] ?? ''));
+        putenv('SMTP_PASS=' . ($smtp['pass'] ?? ''));
+        putenv('SMTP_SECURE=' . ($smtp['secure'] ?? 'tls'));
         putenv('APP_DEBUG=' . (!empty($cfg['debug']) ? '1' : ''));
     }
 

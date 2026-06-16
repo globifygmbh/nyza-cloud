@@ -353,9 +353,6 @@ final class UploadLinkRoutes
 
     private static function notifyOwner(int $userId, string $linkTitle, string $fileName, int $size, ?string $uploader): void
     {
-        $host = getenv('SMTP_HOST');
-        if (!$host) return; // not configured — silently skip
-
         $stmt = Database::pdo()->prepare('SELECT email, name FROM users WHERE id = ?');
         $stmt->execute([$userId]);
         $u = $stmt->fetch();
@@ -366,8 +363,6 @@ final class UploadLinkRoutes
               . "  Größe: " . Storage::humanSize($size) . "\n"
               . ($uploader ? "  Von: $uploader\n" : '')
               . "\n— Nyza Cloud";
-        $headers = "From: " . (getenv('MAIL_FROM') ?: 'no-reply@nyza.cloud') . "\r\n"
-                 . "Content-Type: text/plain; charset=utf-8\r\n";
-        @mail($u['email'], 'Neue Datei: ' . $linkTitle, $body, $headers);
+        \Nyza\Mailer::send($u['email'], 'Neue Datei: ' . $linkTitle, $body);
     }
 }

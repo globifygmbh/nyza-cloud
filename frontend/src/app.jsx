@@ -79,18 +79,32 @@ function renderMarkdown(md) {
 // Fetches a text file and shows it in a monospace pane. Editable (owner) →
 // adds a Save button wired to onSave(content). Markdown files get a preview
 // toggle. Remount per file via key.
-function TextPane({ src, name, editable, onSave }) {
+function TextPane({ fileId, src, name, editable, onSave }) {
   const [content, setContent] = useState(null);
   const [orig, setOrig] = useState('');
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(false);
+  const [hist, setHist] = useState(null); // null=closed, []|[...] = open list
+  const [histBusy, setHistBusy] = useState(false);
   const isMd = /\.(md|markdown)$/i.test(name);
+  const loadContent = () => fetch(src).then((r) => r.text()).then((t) => { setContent(t); setOrig(t); }).catch(() => { setContent(''); setOrig(''); });
   useEffect(() => {
     let off = false;
     fetch(src).then((r) => r.text()).then((t) => { if (!off) { setContent(t); setOrig(t); } })
       .catch(() => { if (!off) { setContent(''); setOrig(''); } });
     return () => { off = true; };
   }, [src]);
+  const openHist = async () => {
+    setHist([]); setHistBusy(true);
+    try { const d = await API.versions(fileId); setHist(d.versions || []); }
+    catch (e) { toast(e.message, 'error'); setHist(null); }
+    finally { setHistBusy(false); }
+  };
+  const restore = async (vid) => {
+    if (!confirm('Diese Version wiederherstellen? Die aktuelle wird im Verlauf gesichert.')) return;
+    try { await API.restoreVersion(fileId, vid); await loadContent(); setHist(null); toast('Version wiederhergestellt', 'success'); }
+    catch (e) { toast(e.message, 'error'); }
+  };
   const dirty = content !== null && content !== orig;
   const save = async () => {
     setSaving(true);
@@ -109,6 +123,7 @@ function TextPane({ src, name, editable, onSave }) {
             <button onClick={() => setPreview(true)} style={mdTabStyle(preview)}>Vorschau</button>
           </div>
         )}
+        {editable && <Btn variant="glass" size="sm" icon={Ic.clock(13)} onClick={openHist}>Verlauf</Btn>}
         {editable && <Btn variant="primary" size="sm" disabled={!dirty || saving} icon={saving ? Ic.loader(13) : Ic.check(13)} onClick={save}>{saving ? 'Speichert…' : 'Speichern'}</Btn>}
       </div>
       {content === null ? (
@@ -124,6 +139,32 @@ function TextPane({ src, name, editable, onSave }) {
             background: 'transparent', color: 'var(--fg)', fontFamily: 'var(--font-mono)',
             fontSize: 13, lineHeight: 1.6, tabSize: 2,
           }}/>
+      )}
+      {hist !== null && (
+        <div className="nyza-modal-backdrop" onClick={() => setHist(null)} style={{ zIndex: 210 }}>
+          <Glass style={{ width: '100%', maxWidth: 440, borderRadius: 'var(--r-xl)', overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '70vh' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ color: 'var(--accent)' }}>{Ic.clock(18)}</span>
+              <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Versionsverlauf</h2>
+              <IconBtn size={30} onClick={() => setHist(null)}>{Ic.close(16)}</IconBtn>
+            </div>
+            <div style={{ overflowY: 'auto', padding: 10 }}>
+              {histBusy ? (
+                <div style={{ padding: 20, textAlign: 'center', color: 'var(--fg-3)' }}>{Ic.loader(20)}</div>
+              ) : hist.length === 0 ? (
+                <div style={{ padding: 24, textAlign: 'center', color: 'var(--fg-3)', fontSize: 13 }}>Noch keine früheren Versionen.<br/>Sie entstehen automatisch beim Speichern.</div>
+              ) : hist.map((v, i) => (
+                <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', marginBottom: 6 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{i === 0 ? 'Letzte Version' : 'Version'} · {humanSize(v.size)}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{timeAgo(v.created_at)}</div>
+                  </div>
+                  <Btn variant="glass" size="sm" icon={Ic.rotate(13)} onClick={() => restore(v.id)}>Wiederherstellen</Btn>
+                </div>
+              ))}
+            </div>
+          </Glass>
+        </div>
       )}
     </Glass>
   );
@@ -239,7 +280,7 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
           }}/>
         )}
         {textual && (
-          <TextPane key={cur.id} src={curSrc} name={cur.name}
+          <TextPane key={cur.id} fileId={cur.id} src={curSrc} name={cur.name}
             editable={!!onSaveText} onSave={(content) => onSaveText(cur, content)}/>
         )}
         {!textual && kind !== 'video' && kind !== 'image' && kind !== 'pdf' && (

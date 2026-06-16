@@ -101,8 +101,7 @@ final class ShareRoutes
                   . "Hier ansehen / herunterladen:\n$url\n\n"
                   . ($password ? "Passwort: $password\n\n" : '')
                   . "— gesendet via Nyza Cloud";
-            $headers = "From: {$o['name']} <$from>\r\nReply-To: {$o['email']}\r\nContent-Type: text/plain; charset=utf-8\r\n";
-            if (@mail($to, "{$o['name']} hat Dateien mit dir geteilt", $body, $headers)) $sent++;
+            if (\Nyza\Mailer::send($to, "{$o['name']} hat Dateien mit dir geteilt", $body, $o['email'], $o['name'])) $sent++;
         }
         return $sent;
     }

@@ -54,11 +54,18 @@ return [
     // z.B. 'https://nyza.example.com'.
     'allow_origin' => '*',
 
-    // ───── E-Mail (für Upload-Notifications) ─────────────────────────────────
-    // Optional — leer lassen wenn keine Mails verschickt werden sollen.
-    // Es wird PHPs eingebautes mail() benutzt; bei vielen Mails einen echten
-    // Mailer (PHPMailer/Symfony Mailer + SMTP) einsetzen.
-    'mail_from' => 'no-reply@nyza.cloud',
+    // ───── E-Mail ─────────────────────────────────────────────────────────────
+    // Absender. Wenn 'smtp.host' gesetzt ist, wird via SMTP gesendet
+    // (zuverlässig, empfohlen). Sonst Fallback auf PHPs mail().
+    'mail_from'      => 'no-reply@nyza-studio.at',
+    'mail_from_name' => 'Nyza Cloud',
+    'smtp' => [
+        'host'   => '',          // z.B. 'smtp.gmail.com' oder 'mail.nyza-studio.at' — leer = mail()
+        'port'   => 587,         // 587 (TLS) oder 465 (SSL)
+        'user'   => '',          // SMTP-Benutzer (oft die volle E-Mail)
+        'pass'   => '',          // SMTP-Passwort / App-Passwort
+        'secure' => 'tls',       // 'tls' | 'ssl' | 'none'
+    ],
 
     // ───── Misc ──────────────────────────────────────────────────────────────
     'debug' => false,   // true = ausführliche Fehlermeldungen (NIE in Production)

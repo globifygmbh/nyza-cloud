@@ -33,6 +33,9 @@ final class FileRoutes
             $g->get('/{id}/thumb',            [self::class, 'thumb']);
             $g->patch('/{id}',                [self::class, 'move']);
             $g->put('/{id}/content',          [self::class, 'saveContent']);
+            $g->get('/{id}/versions',         [self::class, 'versions']);
+            $g->get('/{id}/versions/{vid}',   [self::class, 'versionContent']);
+            $g->post('/{id}/versions/{vid}/restore', [self::class, 'restoreVersion']);
             $g->post('/{id}/restore',         [self::class, 'restore']);
             $g->delete('/{id}/permanent',     [self::class, 'permanent']);
             $g->delete('/{id}',               [self::class, 'delete']);
@@ -254,10 +257,80 @@ final class FileRoutes
             return Json::err($res, 'Storage quota exceeded', 413, 'quota_exceeded');
         }
 
+        // Snapshot the PREVIOUS content into history before overwriting.
+        self::snapshot($uid, $f);
+
         if (file_put_contents(Storage::abs($f['storage_path']), $content) === false) {
             return Json::err($res, 'Speichern fehlgeschlagen', 500);
         }
         $pdo = Database::pdo();
+        $pdo->prepare('UPDATE files SET size = ? WHERE id = ? AND user_id = ?')->execute([$newSize, (int)$f['id'], $uid]);
+        $pdo->prepare('UPDATE users SET storage_used = MAX(0, storage_used + ?) WHERE id = ?')->execute([$delta, $uid]);
+        return Json::ok($res, ['file' => self::fetchOne($uid, (int)$f['id'])]);
+    }
+
+    // Save the current on-disk content as a history entry; keep the last 50.
+    private static function snapshot(int $uid, array $f): void
+    {
+        $abs = Storage::abs($f['storage_path']);
+        if (!is_file($abs)) return;
+        $cur = (string) file_get_contents($abs);
+        $pdo = Database::pdo();
+        $ins = $pdo->prepare('INSERT INTO file_versions (file_id, user_id, content, size) VALUES (?, ?, ?, ?)');
+        $ins->bindValue(1, (int)$f['id'], \PDO::PARAM_INT);
+        $ins->bindValue(2, $uid, \PDO::PARAM_INT);
+        $ins->bindValue(3, $cur, \PDO::PARAM_LOB);
+        $ins->bindValue(4, strlen($cur), \PDO::PARAM_INT);
+        $ins->execute();
+        // prune: keep newest 50
+        $pdo->prepare(
+            'DELETE FROM file_versions WHERE file_id = ? AND id NOT IN '
+            . '(SELECT id FROM (SELECT id FROM file_versions WHERE file_id = ? ORDER BY id DESC LIMIT 50) t)'
+        )->execute([(int)$f['id'], (int)$f['id']]);
+    }
+
+    public static function versions(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchOne($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+        $stmt = Database::pdo()->prepare('SELECT id, size, created_at FROM file_versions WHERE file_id = ? AND user_id = ? ORDER BY id DESC');
+        $stmt->execute([(int)$f['id'], $uid]);
+        return Json::ok($res, ['versions' => $stmt->fetchAll(), 'current' => ['size' => (int)$f['size']]]);
+    }
+
+    public static function versionContent(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $stmt = Database::pdo()->prepare('SELECT content FROM file_versions WHERE id = ? AND file_id = ? AND user_id = ?');
+        $stmt->execute([(int)$args['vid'], (int)$args['id'], $uid]);
+        $row = $stmt->fetch();
+        if (!$row) return Json::err($res, 'Not found', 404);
+        return Json::ok($res, ['content' => (string)$row['content']]);
+    }
+
+    public static function restoreVersion(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchOne($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+        $pdo = Database::pdo();
+        $stmt = $pdo->prepare('SELECT content FROM file_versions WHERE id = ? AND file_id = ? AND user_id = ?');
+        $stmt->execute([(int)$args['vid'], (int)$f['id'], $uid]);
+        $row = $stmt->fetch();
+        if (!$row) return Json::err($res, 'Version not found', 404);
+
+        $content = (string) $row['content'];
+        $newSize = strlen($content);
+        $delta = $newSize - (int)$f['size'];
+        if ($delta > 0 && !self::quotaOk($uid, $delta)) {
+            return Json::err($res, 'Storage quota exceeded', 413, 'quota_exceeded');
+        }
+        // snapshot current, then overwrite with the chosen version
+        self::snapshot($uid, $f);
+        if (file_put_contents(Storage::abs($f['storage_path']), $content) === false) {
+            return Json::err($res, 'Wiederherstellen fehlgeschlagen', 500);
+        }
         $pdo->prepare('UPDATE files SET size = ? WHERE id = ? AND user_id = ?')->execute([$newSize, (int)$f['id'], $uid]);
         $pdo->prepare('UPDATE users SET storage_used = MAX(0, storage_used + ?) WHERE id = ?')->execute([$delta, $uid]);
         return Json::ok($res, ['file' => self::fetchOne($uid, (int)$f['id'])]);
