@@ -573,15 +573,28 @@ export function ChangePasswordModal({ onClose }) {
 }
 
 // ───── Profile & branding modal ─────────────────────────────────────────────
+const GB = 1024 * 1024 * 1024;
 export function ProfileModal({ user, onClose, onSaved }) {
   const [name, setName] = useState(user.name || '');
   const [email, setEmail] = useState(user.email || '');
   const [accent, setAccent] = useState(user.accent || 'violet');
+  const [quotaGb, setQuotaGb] = useState(Math.round((user.storage_quota || 200 * GB) / GB));
+  const [usedGb, setUsedGb] = useState((user.storage_used || 0) / GB);
   const [logoFile, setLogoFile] = useState(null);
   const [logoPreview, setLogoPreview] = useState(user.has_logo ? API.logoUrl(user.id) + '?v=' + Date.now() : null);
   const [removeLogo, setRemoveLogo] = useState(false);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
+
+  // Pull fresh values on open (login payload may lack quota/email until /me).
+  useEffect(() => {
+    API.me().then((d) => {
+      const u = d.user;
+      setName(u.name || ''); setEmail(u.email || ''); setAccent(u.accent || 'violet');
+      setQuotaGb(Math.round((u.storage_quota || 200 * GB) / GB));
+      setUsedGb((u.storage_used || 0) / GB);
+    }).catch(() => {});
+  }, []);
 
   // live-preview accent while picking
   useEffect(() => { applyAccent(accent); }, [accent]);
@@ -592,7 +605,7 @@ export function ProfileModal({ user, onClose, onSaved }) {
   const save = async () => {
     setBusy(true);
     try {
-      await API.updateProfile({ name: name.trim(), email: email.trim(), accent });
+      await API.updateProfile({ name: name.trim(), email: email.trim(), accent, storage_quota: Math.max(1, Number(quotaGb) || 1) * GB });
       if (logoFile) await API.uploadLogo(logoFile);
       else if (removeLogo) await API.deleteLogo();
       const me = await API.me();
@@ -614,6 +627,19 @@ export function ProfileModal({ user, onClose, onSaved }) {
         <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}>
           <FieldInput label="Anzeigename" value={name} onChange={setName}/>
           <FieldInput label="E-Mail" type="email" value={email} onChange={setEmail}/>
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+              <label style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Speicher-Kontingent</label>
+              <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>· aktuell {humanSize(usedGb * GB)} belegt</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input type="number" min={1} value={quotaGb} onChange={(e) => setQuotaGb(e.target.value)}
+                style={{ width: 120, height: 42, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)' }}/>
+              <span style={{ fontSize: 14, color: 'var(--fg-2)' }}>GB</span>
+              <span style={{ fontSize: 11.5, color: 'var(--fg-4)', marginLeft: 6 }}>begrenzt nur die Anzeige — echter Platz = Server-Festplatte</span>
+            </div>
+          </div>
 
           <div>
             <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 8 }}>Akzentfarbe</div>

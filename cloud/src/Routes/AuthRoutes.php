@@ -198,16 +198,26 @@ final class AuthRoutes
         if (isset($b['accent'])) {
             $accent = preg_replace('/[^a-z0-9]/', '', strtolower((string)$b['accent'])) ?: null;
         }
-        $pdo->prepare('UPDATE users SET name = COALESCE(?, name), email = COALESCE(?, email), accent = COALESCE(?, accent) WHERE id = ?')
+        // Storage quota (bytes). Self-hosted single-user → admin sets their own;
+        // floored at 1 GB and at the bytes already in use.
+        $quota = null;
+        if (isset($b['storage_quota'])) {
+            $quota = max(1024 * 1024 * 1024, (int)$b['storage_quota']);
+            $used = (int)($pdo->query("SELECT storage_used FROM users WHERE id = $uid")->fetch()['storage_used'] ?? 0);
+            if ($quota < $used) $quota = $used;
+        }
+        $pdo->prepare('UPDATE users SET name = COALESCE(?, name), email = COALESCE(?, email), accent = COALESCE(?, accent), storage_quota = COALESCE(?, storage_quota) WHERE id = ?')
             ->execute([
                 isset($b['name']) ? trim((string)$b['name']) : null,
                 isset($b['email']) ? trim((string)$b['email']) : null,
                 $accent,
+                $quota,
                 $uid,
             ]);
-        $stmt = $pdo->prepare('SELECT id, email, name, accent, logo_path FROM users WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT id, email, name, accent, logo_path, storage_quota, storage_used FROM users WHERE id = ?');
         $stmt->execute([$uid]);
-        return Json::ok($res, ['user' => self::publicUser($stmt->fetch())]);
+        $row = $stmt->fetch();
+        return Json::ok($res, ['user' => self::publicUser($row) + ['storage_quota' => (int)$row['storage_quota'], 'storage_used' => (int)$row['storage_used']]]);
     }
 
     public static function uploadLogo(Request $req, Response $res): Response
