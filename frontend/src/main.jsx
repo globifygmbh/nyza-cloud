@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 import './nyza.css';
 
 import { API, BASE, getToken, setToken } from './api.js';
-import { NyzaAmbient } from './system.jsx';
+import { NyzaAmbient, applyAccent } from './system.jsx';
 import { AuthScreen, Dashboard } from './app.jsx';
 import { PublicSharePage, PublicUploadPage, CenteredLoader } from './pubpages.jsx';
 import { ToastHost } from './toast.jsx';
@@ -52,6 +52,9 @@ function Root() {
       .finally(() => setAuthChecked(true));
   }, [route.kind]);
 
+  // Apply the owner's accent preset once we know the user.
+  useEffect(() => { if (user?.accent) applyAccent(user.accent); }, [user?.accent]);
+
   const toggleTheme = useCallback(() => setTheme((t) => t === 'dark' ? 'light' : 'dark'), []);
 
   if (!authChecked) return <><NyzaAmbient/><CenteredLoader/></>;
@@ -70,7 +73,7 @@ function Root() {
   return (
     <>
       <NyzaAmbient/>
-      <Dashboard user={user} theme={theme} onTheme={toggleTheme} basePath={BASE}/>
+      <Dashboard user={user} onUserChange={setUser} theme={theme} onTheme={toggleTheme} basePath={BASE}/>
       <ToastHost/>
     </>
   );

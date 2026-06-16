@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { API, getToken, setToken } from './api.js';
 import {
   Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
-  Toggle, CircularProgress, humanSize, timeAgo,
+  Toggle, CircularProgress, humanSize, timeAgo, ACCENTS, applyAccent,
 } from './system.jsx';
 import { toast } from './toast.jsx';
 import { uploadOwner } from './uploads.js';
@@ -419,6 +419,86 @@ export function ChangePasswordModal({ onClose }) {
   );
 }
 
+// ───── Profile & branding modal ─────────────────────────────────────────────
+export function ProfileModal({ user, onClose, onSaved }) {
+  const [name, setName] = useState(user.name || '');
+  const [email, setEmail] = useState(user.email || '');
+  const [accent, setAccent] = useState(user.accent || 'violet');
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState(user.has_logo ? API.logoUrl(user.id) + '?v=' + Date.now() : null);
+  const [removeLogo, setRemoveLogo] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+
+  // live-preview accent while picking
+  useEffect(() => { applyAccent(accent); }, [accent]);
+  useEffect(() => () => { if (!busy) applyAccent(user.accent || 'violet'); }, []); // restore on unmount if not saved
+
+  const pickLogo = (f) => { setLogoFile(f); setRemoveLogo(false); setLogoPreview(URL.createObjectURL(f)); };
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      await API.updateProfile({ name: name.trim(), email: email.trim(), accent });
+      if (logoFile) await API.uploadLogo(logoFile);
+      else if (removeLogo) await API.deleteLogo();
+      const me = await API.me();
+      applyAccent(me.user.accent || 'violet');
+      toast('Profil gespeichert', 'success');
+      onSaved && onSaved(me.user);
+      onClose();
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 520, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.users(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>Profil & Branding</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}>
+          <FieldInput label="Anzeigename" value={name} onChange={setName}/>
+          <FieldInput label="E-Mail" type="email" value={email} onChange={setEmail}/>
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 8 }}>Akzentfarbe</div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {Object.keys(ACCENTS).map((k) => (
+                <button key={k} onClick={() => setAccent(k)} title={k} style={{
+                  width: 34, height: 34, borderRadius: '50%', cursor: 'pointer',
+                  background: `linear-gradient(135deg, ${ACCENTS[k].from}, ${ACCENTS[k].to})`,
+                  border: '2px solid ' + (accent === k ? 'var(--fg)' : 'transparent'),
+                  boxShadow: accent === k ? '0 0 0 2px var(--bg)' : 'none',
+                }}/>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 8 }}>Logo (für Share- & Upload-Seiten)</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <div style={{ width: 64, height: 64, borderRadius: 'var(--r-md)', background: 'var(--surface-hi)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                {logoPreview && !removeLogo ? <img src={logoPreview} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }}/> : <span style={{ color: 'var(--fg-4)' }}>{Ic.fileImg(24)}</span>}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Btn variant="glass" size="sm" icon={Ic.upload(13)} onClick={() => fileRef.current?.click()}>Logo wählen</Btn>
+                {(logoPreview && !removeLogo) && <Btn variant="ghost" size="sm" icon={Ic.trash(13)} onClick={() => { setRemoveLogo(true); setLogoFile(null); setLogoPreview(null); }}>Entfernen</Btn>}
+              </div>
+              <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickLogo(f); e.target.value = ''; }}/>
+            </div>
+          </div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={save} icon={busy ? Ic.loader(15) : null}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
 function FieldInput({ label, value, onChange, type = 'text', placeholder }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -438,7 +518,7 @@ function FieldInput({ label, value, onChange, type = 'text', placeholder }) {
 }
 
 // ───── Sidebar ─────────────────────────────────────────────────────────────
-function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, onUpload, onChangePassword }) {
+function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, onUpload, onChangePassword, onProfile }) {
   const items = [
     { id: 'files',    label: 'Meine Dateien', icon: Ic.home,   count: stats?.files },
     { id: 'shared',   label: 'Geteilt',       icon: Ic.share,  count: stats?.shares },
@@ -456,7 +536,11 @@ function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, on
       borderRight: '1px solid var(--border)', borderTop: 0, borderLeft: 0, borderBottom: 0,
       display: 'flex', flexDirection: 'column', flexShrink: 0, padding: '20px 14px',
     }}>
-      <div style={{ padding: '4px 10px 22px', cursor: 'pointer' }} onClick={() => onNavigate({ name: 'files' })}><NyzaWordmark size={16}/></div>
+      <div style={{ padding: '4px 10px 22px', cursor: 'pointer' }} onClick={() => onNavigate({ name: 'files' })}>
+        {user?.has_logo
+          ? <img src={API.logoUrl(user.id)} alt="Logo" style={{ maxHeight: 30, maxWidth: 160, objectFit: 'contain' }}/>
+          : <NyzaWordmark size={16}/>}
+      </div>
       <Btn variant="primary" size="md" icon={Ic.upload(16)} full onClick={onUpload}>Hochladen</Btn>
       <div style={{ height: 1, background: 'var(--border)', margin: '18px 4px 12px' }}/>
 
@@ -502,6 +586,7 @@ function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, on
             <div style={{ fontSize: 10.5, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || ''}</div>
           </div>
           <IconBtn size={28} title="Theme" onClick={onTheme}>{theme === 'dark' ? Ic.sun(14) : Ic.moon(14)}</IconBtn>
+          <IconBtn size={28} title="Profil & Branding" onClick={onProfile}>{Ic.cog(14)}</IconBtn>
           <IconBtn size={28} title="Passwort ändern" onClick={onChangePassword}>{Ic.lock(14)}</IconBtn>
           <IconBtn size={28} title="Abmelden" onClick={onLogout}>{Ic.logout(14)}</IconBtn>
         </div>
@@ -547,7 +632,7 @@ function MobileNav({ active, onNavigate, onUpload, onMore }) {
   );
 }
 
-function MoreSheet({ user, theme, onTheme, onNavigate, onChangePassword, onLogout, onClose }) {
+function MoreSheet({ user, theme, onTheme, onNavigate, onChangePassword, onProfile, onLogout, onClose }) {
   const item = (icon, label, onClick, danger) => (
     <button onClick={() => { onClick(); onClose(); }} style={{
       display: 'flex', alignItems: 'center', gap: 14, width: '100%', padding: '14px 16px',
@@ -567,6 +652,7 @@ function MoreSheet({ user, theme, onTheme, onNavigate, onChangePassword, onLogou
         </div>
         {item(Ic.clock(18), 'Aktivität', () => onNavigate({ name: 'activity' }))}
         {item(Ic.trash(18), 'Papierkorb', () => onNavigate({ name: 'trash' }))}
+        {item(Ic.cog(18), 'Profil & Branding', onProfile)}
         {item(theme === 'dark' ? Ic.sun(18) : Ic.moon(18), theme === 'dark' ? 'Helles Design' : 'Dunkles Design', onTheme)}
         {item(Ic.lock(18), 'Passwort ändern', onChangePassword)}
         {item(Ic.logout(18), 'Abmelden', onLogout, true)}
@@ -1508,7 +1594,7 @@ function sortFiles(files, sort) {
 }
 
 // ───── Dashboard (router shell) ────────────────────────────────────────────
-export function Dashboard({ user, theme, onTheme, basePath }) {
+export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const [view, setView] = useState('grid');
   const [sort, setSort] = useState({ by: 'date', dir: 'desc' });
   const [search, setSearch] = useState('');
@@ -1521,6 +1607,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
   const [showUploadLinkModal, setShowUploadLinkModal] = useState(false);
   const [uploadLinkFolder, setUploadLinkFolder] = useState(null);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [renameFolderTarget, setRenameFolderTarget] = useState(null);
   const [moveTarget, setMoveTarget] = useState(null); // { kind:'folder'|'files', folder?, ids? }
   const [allFolders, setAllFolders] = useState([]);
@@ -1598,6 +1685,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
           onNavigate={(n) => { setNav(n); setSearch(''); }}
           onUpload={() => triggerUpload(null)}
           onChangePassword={() => setShowPasswordModal(true)}
+          onProfile={() => setShowProfile(true)}
           onLogout={() => { setToken(null); location.reload(); }}/>
       )}
 
@@ -1667,6 +1755,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
         <UploadProgress items={uploads} onClose={() => { setShowUploadProgress(false); setUploads([]); }}/>
       )}
       {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)}/>}
+      {showProfile && <ProfileModal user={user} onClose={() => setShowProfile(false)} onSaved={(u) => onUserChange && onUserChange(u)}/>}
       {renameFolderTarget && (
         <RenameFolderModal folder={renameFolderTarget} onClose={() => setRenameFolderTarget(null)} onSaved={refreshAll}/>
       )}
@@ -1692,6 +1781,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
         <MoreSheet user={user} theme={theme} onTheme={onTheme}
           onNavigate={(n) => { setNav(n); setSearch(''); }}
           onChangePassword={() => setShowPasswordModal(true)}
+          onProfile={() => setShowProfile(true)}
           onLogout={() => { setToken(null); location.reload(); }}
           onClose={() => setShowMore(false)}/>
       )}

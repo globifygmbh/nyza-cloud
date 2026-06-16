@@ -37,6 +37,7 @@ export const Ic = {
   fileGen:   (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>,
   inbox:     (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6l2-8z"/></svg>,
   logout:    (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>,
+  cog:       (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
   loader:    (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="nyza-spin"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>,
 };
 
@@ -242,6 +243,26 @@ export function NyzaAmbient() {
       <i className="b1"/><i className="b2"/><i className="b3"/>
     </div>
   );
+}
+
+// Accent presets — applied app-wide by overriding the CSS custom properties.
+export const ACCENTS = {
+  violet: { from: 'oklch(0.66 0.20 282)', to: 'oklch(0.66 0.18 248)', solid: 'oklch(0.62 0.20 282)', glow: 'oklch(0.66 0.20 282 / 0.45)' },
+  blue:   { from: 'oklch(0.70 0.16 240)', to: 'oklch(0.66 0.16 220)', solid: 'oklch(0.62 0.17 240)', glow: 'oklch(0.70 0.16 240 / 0.45)' },
+  aurora: { from: 'oklch(0.78 0.18 168)', to: 'oklch(0.72 0.18 220)', solid: 'oklch(0.70 0.17 190)', glow: 'oklch(0.78 0.18 168 / 0.45)' },
+  sunset: { from: 'oklch(0.74 0.20 30)',  to: 'oklch(0.66 0.22 360)', solid: 'oklch(0.68 0.22 15)',  glow: 'oklch(0.74 0.20 30 / 0.45)' },
+  rose:   { from: 'oklch(0.72 0.20 350)', to: 'oklch(0.66 0.20 320)', solid: 'oklch(0.66 0.21 345)', glow: 'oklch(0.72 0.20 350 / 0.45)' },
+  emerald:{ from: 'oklch(0.74 0.17 155)', to: 'oklch(0.70 0.15 175)', solid: 'oklch(0.66 0.17 158)', glow: 'oklch(0.74 0.17 155 / 0.45)' },
+  amber:  { from: 'oklch(0.80 0.16 75)',  to: 'oklch(0.72 0.18 45)',  solid: 'oklch(0.72 0.17 65)',  glow: 'oklch(0.80 0.16 75 / 0.45)' },
+};
+export function applyAccent(key) {
+  const a = ACCENTS[key] || ACCENTS.violet;
+  const r = document.documentElement.style;
+  r.setProperty('--accent', a.solid);
+  r.setProperty('--accent-from', a.from);
+  r.setProperty('--accent-to', a.to);
+  r.setProperty('--accent-grad', `linear-gradient(135deg, ${a.from}, ${a.to})`);
+  r.setProperty('--accent-glow', a.glow);
 }
 
 export function humanSize(bytes) {

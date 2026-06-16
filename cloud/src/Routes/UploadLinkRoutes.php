@@ -147,7 +147,7 @@ final class UploadLinkRoutes
         $link = self::loadByToken($args['token']);
         if (!$link) return Json::err($res, 'Not found', 404);
 
-        $owner = Database::pdo()->prepare('SELECT name, email FROM users WHERE id = ?');
+        $owner = Database::pdo()->prepare('SELECT id, name, accent, logo_path FROM users WHERE id = ?');
         $owner->execute([(int)$link['user_id']]);
         $ownerRow = $owner->fetch();
 
@@ -163,7 +163,10 @@ final class UploadLinkRoutes
             'remaining' => $link['max_files'] !== null
                 ? max(0, (int)$link['max_files'] - (int)$link['upload_count'])
                 : null,
-            'owner' => $ownerRow ? ['name' => $ownerRow['name']] : null,
+            'owner' => $ownerRow ? [
+                'id' => (int)$ownerRow['id'], 'name' => $ownerRow['name'],
+                'accent' => $ownerRow['accent'] ?? null, 'has_logo' => !empty($ownerRow['logo_path']),
+            ] : null,
         ]);
     }
 

@@ -174,7 +174,7 @@ final class ShareRoutes
         }
 
         $pdo = Database::pdo();
-        $owner = $pdo->prepare('SELECT name, email FROM users WHERE id = ?');
+        $owner = $pdo->prepare('SELECT id, name, email, accent, logo_path FROM users WHERE id = ?');
         $owner->execute([(int)$share['user_id']]);
         $ownerRow = $owner->fetch();
 
@@ -182,7 +182,10 @@ final class ShareRoutes
             'token' => $share['token'],
             'allow_download' => (bool)$share['allow_download'],
             'expires_at' => $share['expires_at'],
-            'owner' => $ownerRow ? ['name' => $ownerRow['name'], 'email' => $ownerRow['email']] : null,
+            'owner' => $ownerRow ? [
+                'id' => (int)$ownerRow['id'], 'name' => $ownerRow['name'], 'email' => $ownerRow['email'],
+                'accent' => $ownerRow['accent'] ?? null, 'has_logo' => !empty($ownerRow['logo_path']),
+            ] : null,
         ];
 
         if ($share['folder_id']) {

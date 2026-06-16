@@ -121,6 +121,10 @@ export const API = {
   login:          (body) => request('/api/auth/login', { method: 'POST', body, skipAuth: true }),
   me:             ()     => request('/api/auth/me'),
   changePassword: (body) => request('/api/auth/change-password', { method: 'POST', body }),
+  updateProfile:  (body) => request('/api/auth/profile', { method: 'PATCH', body }),
+  uploadLogo:     (file) => upload('/api/auth/logo', file, {}),
+  deleteLogo:     () => request('/api/auth/logo', { method: 'DELETE' }),
+  logoUrl:        (uid) => url('/api/branding/logo/' + uid),
 
   // Folders
   folders:      (parent) => request('/api/folders' + (parent ? '?parent_id=' + parent : '')),
