@@ -2,12 +2,13 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
-import { API, getToken, setToken } from './api.js';
+import { API, BASE, getToken, setToken } from './api.js';
 import {
   Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
   Toggle, CircularProgress, humanSize, timeAgo, ACCENTS, applyAccent,
 } from './system.jsx';
 import { toast } from './toast.jsx';
+import { confirmDialog, openContextMenu } from './overlays.jsx';
 import { uploadOwner } from './uploads.js';
 
 // Track viewport for mobile-responsive chrome.
@@ -102,7 +103,7 @@ function TextPane({ fileId, src, name, editable, onSave }) {
     finally { setHistBusy(false); }
   };
   const restore = async (vid) => {
-    if (!confirm('Diese Version wiederherstellen? Die aktuelle wird im Verlauf gesichert.')) return;
+    if (!await confirmDialog({ title: 'Version wiederherstellen?', message: 'Die aktuelle Fassung wird vorher automatisch im Verlauf gesichert.', confirmLabel: 'Wiederherstellen', icon: Ic.rotate(22) })) return;
     try { await API.restoreVersion(fileId, vid); await loadContent(); setHist(null); toast('Version wiederhergestellt', 'success'); }
     catch (e) { toast(e.message, 'error'); }
   };
@@ -585,6 +586,29 @@ export function SecurityModal({ user, onClose, onChanged, onChangePassword }) {
                   ))}
                 </div>}
           </div>
+
+          {/* WebDAV (network drive) */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Als Laufwerk verbinden (WebDAV)</div>
+            <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: '0 0 10px' }}>
+              Im Finder „Mit Server verbinden" (⌘K) bzw. in Windows „Netzlaufwerk verbinden" — mit dieser Adresse, deiner E-Mail und deinem Passwort.
+            </p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <code style={{ flex: 1, fontSize: 12, wordBreak: 'break-all', background: 'var(--surface-hi)', padding: '8px 10px', borderRadius: 6 }}>{location.origin + (BASE || '') + '/webdav/'}</code>
+              <Btn variant="glass" size="sm" icon={Ic.copy(13)} onClick={() => { navigator.clipboard?.writeText(location.origin + (BASE || '') + '/webdav/'); toast('Adresse kopiert', 'success'); }}>Kopieren</Btn>
+            </div>
+          </div>
+
+          {/* Updates */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Updates</div>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Neueste Version aus GitHub installieren</div>
+            </div>
+            <a href={(BASE || '') + '/?update=1&token=' + (getToken() || '')} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+              <Btn variant="glass" size="sm" icon={Ic.rotate(13)}>Nach Updates suchen</Btn>
+            </a>
+          </div>
         </div>
       </Glass>
     </div>
@@ -914,7 +938,7 @@ function MoreSheet({ user, theme, onTheme, onNavigate, onSecurity, onProfile, on
 }
 
 // ───── Top bar ─────────────────────────────────────────────────────────────
-function TopBar({ crumbs = ['Meine Dateien'], view, onView, onSearch, search, sort, onSort, right }) {
+function TopBar({ crumbs = ['Meine Dateien'], view, onView, onSearch, search, sort, onSort, selectMode, onSelectMode, right }) {
   return (
     <div className="nyza-topbar" style={{
       height: 64, padding: '0 28px', display: 'flex', alignItems: 'center', gap: 14,
@@ -953,6 +977,11 @@ function TopBar({ crumbs = ['Meine Dateien'], view, onView, onSearch, search, so
         </div>
       )}
       {sort && <SortControl sort={sort} onSort={onSort}/>}
+      {onSelectMode && (
+        <IconBtn active={!!selectMode} onClick={() => onSelectMode(!selectMode)} size={38}
+          title={selectMode ? 'Auswahl beenden' : 'Auswählen'}
+          style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.checkSquare(16)}</IconBtn>
+      )}
       {view !== undefined && (
         <div style={{ display: 'flex', padding: 3, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
           <IconBtn active={view === 'grid'} onClick={() => onView('grid')} size={32} title="Raster">{Ic.grid(15)}</IconBtn>
@@ -1057,11 +1086,11 @@ function KebabMenu({ items }) {
 }
 
 // ───── Folder card ─────────────────────────────────────────────────────────
-function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDropFiles }) {
+function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDropFiles, onContext }) {
   const tones = ({ violet: [280, 250], aurora: [168, 200], sunset: [30, 360], mono: [240, 260] })[folder.tone] || [280, 250];
   const [dropOver, setDropOver] = useState(false);
   return (
-    <div onClick={onClick} style={{
+    <div onClick={onClick} onContextMenu={onContext ? (e) => { e.preventDefault(); e.stopPropagation(); onContext(folder, e); } : undefined} style={{
       borderRadius: 'var(--r-lg)', background: 'var(--surface)',
       border: '1px solid ' + (dropOver ? 'var(--accent)' : 'var(--border)'),
       backdropFilter: 'blur(20px) saturate(160%)', WebkitBackdropFilter: 'blur(20px) saturate(160%)',
@@ -1121,7 +1150,7 @@ function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDr
 }
 
 // ───── File tile (grid) with real thumbnail + selection ────────────────────
-function FileTile({ file, selected, selecting, onOpen, onToggleSelect, onToggleStar }) {
+function FileTile({ file, selected, selecting, onActivate, onContext, onToggleSelect, onToggleStar }) {
   const [imgOk, setImgOk] = useState(true);
   const isImage = file.kind === 'image' && imgOk;
   const isNew = !!file.uploader_name;
@@ -1134,7 +1163,8 @@ function FileTile({ file, selected, selecting, onOpen, onToggleSelect, onToggleS
       boxShadow: selected ? '0 0 0 3px var(--accent-glow)' : '0 1px 0 var(--inner-hi) inset',
       transition: 'all .2s',
     }}
-    onClick={() => (selecting ? onToggleSelect() : onOpen())}>
+    onClick={(e) => onActivate(e)}
+    onContextMenu={onContext ? (e) => onContext(e) : undefined}>
       <div style={{ aspectRatio: '4/3', position: 'relative', background: 'var(--surface-hi)' }}>
         {isImage ? (
           <img src={API.thumbUrl(file.id)} alt={file.name} loading="lazy"
@@ -1186,7 +1216,13 @@ function FileTile({ file, selected, selecting, onOpen, onToggleSelect, onToggleS
         )}
       </div>
       <div style={{ padding: '10px 12px' }}>
-        <div style={{ fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ flex: 1, fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</div>
+          {onContext && (
+            <span className="file-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); onContext({ clientX: b.right, clientY: b.bottom, preventDefault() {}, stopPropagation() {} }); }}
+              style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
+          )}
+        </div>
         <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 2, display: 'flex', justifyContent: 'space-between' }}>
           <span>{humanSize(file.size)}</span>
           <span>{timeAgo(file.created_at)}</span>
@@ -1202,9 +1238,31 @@ function FileTile({ file, selected, selecting, onOpen, onToggleSelect, onToggleS
 }
 
 // ───── File grid + list (reusable) ─────────────────────────────────────────
-function FileGrid({ files, selected, onOpen, onToggleSelect, onDragSelect, onToggleStar, onDragFiles }) {
-  const selecting = selected.size > 0;
+function FileGrid({ files, selected, onOpen, onToggleSelect, onDragSelect, onToggleStar, onDragFiles, onContext, selectMode }) {
+  const selecting = selected.size > 0 || !!selectMode;
   const wrapRef = useRef(null);
+  const lastIdx = useRef(null);
+
+  // Click handling: plain = open; cmd/ctrl = toggle one; shift = range from the
+  // last clicked; in select-mode any tap toggles. Mirrors desktop file managers.
+  const activate = (f, idx, e) => {
+    if (e.metaKey || e.ctrlKey) {
+      onToggleSelect(f.id); lastIdx.current = idx; return;
+    }
+    if (e.shiftKey && lastIdx.current != null && onDragSelect) {
+      const [a, b] = [lastIdx.current, idx].sort((x, y) => x - y);
+      const range = new Set(selected);
+      for (let i = a; i <= b; i++) range.add(files[i].id);
+      onDragSelect(range); return;
+    }
+    if (selecting) { onToggleSelect(f.id); lastIdx.current = idx; return; }
+    onOpen(f);
+  };
+  const context = (f, idx, e) => {
+    e.preventDefault(); e.stopPropagation();
+    // Right-clicking a file outside the current selection selects just it.
+    if (onContext) onContext(f, e, () => { if (!selected.has(f.id)) { onDragSelect ? onDragSelect(new Set([f.id])) : onToggleSelect(f.id); } });
+  };
   const [rect, setRect] = useState(null); // rubber-band {l,t,w,h} in container coords
   const drag = useRef(null);
 
@@ -1241,7 +1299,7 @@ function FileGrid({ files, selected, onOpen, onToggleSelect, onDragSelect, onTog
   return (
     <div ref={wrapRef} onPointerDown={onPointerDown} style={{ position: 'relative' }}>
       <div className="file-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 14 }}>
-        {files.map((f) => (
+        {files.map((f, idx) => (
           <div data-fid={f.id} key={f.id}
             draggable={!!onDragFiles}
             onDragStart={(e) => {
@@ -1254,7 +1312,9 @@ function FileGrid({ files, selected, onOpen, onToggleSelect, onDragSelect, onTog
             }}>
             <FileTile file={f}
               selected={selected.has(f.id)} selecting={selecting}
-              onOpen={() => onOpen(f)} onToggleSelect={() => onToggleSelect(f.id)}
+              onActivate={(e) => activate(f, idx, e)}
+              onContext={onContext ? (e) => context(f, idx, e) : null}
+              onToggleSelect={() => onToggleSelect(f.id)}
               onToggleStar={onToggleStar ? () => onToggleStar(f) : null}/>
           </div>
         ))}
@@ -1345,8 +1405,21 @@ function SkeletonGrid({ count = 10 }) {
   );
 }
 
-function FileList({ files, selected, onOpen, onToggleSelect, onShareFile, onDeleteFile, onToggleStar }) {
+function FileList({ files, selected, onOpen, onToggleSelect, onDragSelect, onShareFile, onDeleteFile, onToggleStar, onContext, selectMode }) {
   const allSel = files.length > 0 && files.every((f) => selected.has(f.id));
+  const selecting = selected.size > 0 || !!selectMode;
+  const lastIdx = useRef(null);
+  const activate = (f, idx, e) => {
+    if (e.metaKey || e.ctrlKey) { onToggleSelect(f.id); lastIdx.current = idx; return; }
+    if (e.shiftKey && lastIdx.current != null && onDragSelect) {
+      const [a, b] = [lastIdx.current, idx].sort((x, y) => x - y);
+      const range = new Set(selected);
+      for (let i = a; i <= b; i++) range.add(files[i].id);
+      onDragSelect(range); return;
+    }
+    if (selecting) { onToggleSelect(f.id); lastIdx.current = idx; return; }
+    onOpen(f);
+  };
   return (
     <div style={{ borderRadius: 'var(--r-md)', overflow: 'hidden', background: 'var(--surface)', border: '1px solid var(--border)' }}>
       <div style={{
@@ -1372,6 +1445,7 @@ function FileList({ files, selected, onOpen, onToggleSelect, onShareFile, onDele
             fontSize: 13, transition: 'background .15s', cursor: 'pointer',
             background: sel ? 'color-mix(in oklab, var(--accent) 10%, transparent)' : 'transparent',
           }}
+          onContextMenu={onContext ? (e) => { e.preventDefault(); e.stopPropagation(); onContext(r, e, () => { if (!sel) { onDragSelect ? onDragSelect(new Set([r.id])) : onToggleSelect(r.id); } }); } : undefined}
           onMouseEnter={(e) => { if (!sel) e.currentTarget.style.background = 'var(--surface-hi)'; }}
           onMouseLeave={(e) => { if (!sel) e.currentTarget.style.background = 'transparent'; }}>
             <span onClick={() => onToggleSelect(r.id)} style={{ cursor: 'pointer' }}>
@@ -1381,7 +1455,7 @@ function FileList({ files, selected, onOpen, onToggleSelect, onShareFile, onDele
                 background: sel ? 'var(--accent-grad)' : 'transparent', color: '#fff',
               }}>{sel && Ic.check(11)}</span>
             </span>
-            <div onClick={() => onOpen(r)} style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+            <div onClick={(e) => activate(r, i, e)} style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
               <FileIcon kind={r.kind} size={15} tint={r.hue}/>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
               {r.uploader_name && <span style={{ fontSize: 10.5, color: 'var(--accent)', flexShrink: 0 }}>· {r.uploader_name}</span>}
@@ -1393,7 +1467,9 @@ function FileList({ files, selected, onOpen, onToggleSelect, onShareFile, onDele
               {onToggleStar && <IconBtn size={28} title={r.starred ? 'Favorit entfernen' : 'Zu Favoriten'} onClick={() => onToggleStar(r)} style={{ color: r.starred ? 'oklch(0.82 0.16 85)' : undefined }}>{Ic.star(14)}</IconBtn>}
               <IconBtn size={28} title="Vorschau" onClick={() => onOpen(r)}>{Ic.eye(14)}</IconBtn>
               <IconBtn size={28} title="Teilen" onClick={() => onShareFile(r)}>{Ic.share(13)}</IconBtn>
-              <IconBtn size={28} title="Löschen" onClick={() => onDeleteFile(r)}>{Ic.trash(13)}</IconBtn>
+              {onContext
+                ? <IconBtn size={28} title="Mehr" onClick={(e) => { const b = e.currentTarget.getBoundingClientRect(); onContext(r, { clientX: b.left, clientY: b.bottom, preventDefault() {}, stopPropagation() {} }, () => {}); }}>{Ic.more(15)}</IconBtn>
+                : <IconBtn size={28} title="Löschen" onClick={() => onDeleteFile(r)}>{Ic.trash(13)}</IconBtn>}
             </div>
           </div>
         );
@@ -1943,6 +2019,51 @@ function SectionHeader({ title, count, action }) {
   );
 }
 
+// Standalone version history for ANY file (not just text). Lists snapshots with
+// restore + download — the binary-aware counterpart to the editor's history.
+function VersionHistoryModal({ file, onClose, onChanged }) {
+  const [list, setList] = useState(null);
+  const load = useCallback(() => { API.versions(file.id).then((d) => setList(d.versions || [])).catch((e) => { toast(e.message, 'error'); setList([]); }); }, [file.id]);
+  useEffect(() => { load(); }, [load]);
+  const restore = async (v) => {
+    if (!await confirmDialog({ title: 'Version wiederherstellen?', message: 'Die aktuelle Fassung wird vorher automatisch im Verlauf gesichert.', confirmLabel: 'Wiederherstellen', icon: Ic.rotate(22) })) return;
+    try { await API.restoreVersion(file.id, v.id); toast('Version wiederhergestellt', 'success'); load(); onChanged && onChanged(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, borderRadius: 'var(--r-xl)', overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '74vh' }}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ color: 'var(--accent)' }}>{Ic.clock(18)}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Versionsverlauf</h2>
+            <div style={{ fontSize: 12, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</div>
+          </div>
+          <IconBtn size={30} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ overflowY: 'auto', padding: 10 }}>
+          {list === null ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--fg-3)' }}>{Ic.loader(20)}</div>
+          ) : list.length === 0 ? (
+            <div style={{ padding: 28, textAlign: 'center', color: 'var(--fg-3)', fontSize: 13 }}>Noch keine früheren Versionen.<br/>Sie entstehen automatisch, wenn du eine Datei gleichen Namens erneut hochlädst oder speicherst.</div>
+          ) : list.map((v, i) => (
+            <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', marginBottom: 6 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>{i === 0 ? 'Neueste Version' : 'Version ' + (list.length - i)} · {humanSize(v.size)}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{timeAgo(v.created_at)}</div>
+              </div>
+              <a href={API.versionRawUrl(file.id, v.id)} download style={{ textDecoration: 'none' }}>
+                <IconBtn size={30} title="Diese Version herunterladen">{Ic.download(14)}</IconBtn>
+              </a>
+              <Btn variant="glass" size="sm" icon={Ic.rotate(13)} onClick={() => restore(v)}>Wiederherstellen</Btn>
+            </div>
+          ))}
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
 function NewFolderRow({ onCreate, onCancel }) {
   const [name, setName] = useState('');
   const [kind, setKind] = useState('normal');
@@ -2078,7 +2199,18 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
     try { await API.starFile(f.id, !f.starred); refreshAll(); }
     catch (e) { toast(e.message, 'error'); }
   };
+  const [versionsTarget, setVersionsTarget] = useState(null);
+  const doUnzip = async (f) => {
+    if (!await confirmDialog({ title: 'ZIP entpacken?', message: `Der Inhalt von „${f.name}" wird in einen neuen Ordner entpackt.`, confirmLabel: 'Entpacken', icon: Ic.archive(22) })) return;
+    toast('Entpacke …', 'info');
+    try { const d = await API.unzipFile(f.id); toast(`Entpackt · ${d.extracted} Dateien${d.skipped ? `, ${d.skipped} übersprungen` : ''}`, 'success'); refreshAll(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const downloadOne = (f) => { window.location.href = API.fileRawUrl(f.id) + '?token=' + (getToken() || '') + '&dl=1'; };
   const dropToFolder = async (folderId, ids) => {
+    const dest = (allFolders.find((f) => f.id === folderId) || folders.find((f) => f.id === folderId));
+    const where = dest ? `„${dest.name}"` : 'diesen Ordner';
+    if (!await confirmDialog({ title: 'Verschieben?', message: `${ids.length} ${ids.length === 1 ? 'Datei' : 'Dateien'} nach ${where} verschieben?`, confirmLabel: 'Verschieben', icon: Ic.folder(22) })) return;
     try { await API.moveFiles(ids, folderId); toast(ids.length + ' verschoben', 'success'); refreshAll(); }
     catch (e) { toast(e.message, 'error'); }
   };
@@ -2107,7 +2239,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onRenameFolder={(f) => setRenameFolderTarget(f)}
             onMoveFolder={(f) => openMove({ kind: 'folder', folder: f })}
             onMoveFiles={(ids) => openMove({ kind: 'files', ids })}
-            onDeleteFolder={async (f) => { if (!confirm(`Ordner "${f.name}" und alle Inhalte löschen?`)) return; try { await API.deleteFolder(f.id); toast('Ordner gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
+            onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner löschen?', message: `„${f.name}" und alle enthaltenen Dateien werden endgültig gelöscht. Das kann nicht rückgängig gemacht werden.`, confirmLabel: 'Ordner löschen', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onNewFolder={async (name, kind, tone) => { try { await API.newFolder({ name, kind, tone }); toast('Ordner erstellt', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onUpload={() => triggerUpload(null)}
             onNewText={() => newText(null)}
@@ -2116,7 +2248,10 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onShareFile={(f) => setShareTarget({ file: f })}
             onToggleStar={toggleStar}
             onDropFiles={dropToFolder}
-            onDeleteFile={async (f) => { try { await API.deleteFile(f.id); toast('Gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
+            onUnzip={doUnzip}
+            onVersions={(f) => setVersionsTarget(f)}
+            onDownloadFile={downloadOne}
+            onDeleteFile={async (f) => { if (!await confirmDialog({ title: 'In den Papierkorb?', message: `„${f.name}" wird in den Papierkorb verschoben. Du kannst sie dort wiederherstellen.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFile(f.id); toast('In den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
           />
         )}
         {nav.name === 'favorites' && (
@@ -2140,7 +2275,14 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onShareFile={(f) => setShareTarget({ file: f })}
             onToggleStar={toggleStar}
             onDropFiles={dropToFolder}
-            onDeleteFile={async (f) => { try { await API.deleteFile(f.id); toast('Gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
+            onUnzip={doUnzip}
+            onVersions={(f) => setVersionsTarget(f)}
+            onDownloadFile={downloadOne}
+            onMoveFolder={(f) => openMove({ kind: 'folder', folder: f })}
+            onRenameFolder={(f) => setRenameFolderTarget(f)}
+            onShareFolderItem={(f) => setShareTarget({ folder: f })}
+            onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner löschen?', message: `„${f.name}" und alle enthaltenen Dateien werden endgültig gelöscht.`, confirmLabel: 'Ordner löschen', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
+            onDeleteFile={async (f) => { if (!await confirmDialog({ title: 'In den Papierkorb?', message: `„${f.name}" wird in den Papierkorb verschoben. Du kannst sie dort wiederherstellen.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFile(f.id); toast('In den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             afterChange={refreshAll}
           />
         )}
@@ -2178,6 +2320,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         onChangePassword={() => setShowPasswordModal(true)}/>}
       {renameFolderTarget && (
         <RenameFolderModal folder={renameFolderTarget} onClose={() => setRenameFolderTarget(null)} onSaved={refreshAll}/>
+      )}
+      {versionsTarget && (
+        <VersionHistoryModal file={versionsTarget} onClose={() => setVersionsTarget(null)} onChanged={refreshAll}/>
       )}
       {moveTarget && (
         <MoveModal
@@ -2227,16 +2372,53 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   );
 }
 
+// Context-menu item builders — shared by the grid, list and folder cards.
+function fileMenuItems(file, o) {
+  if (o.multi) {
+    return [
+      { header: o.count + ' ausgewählt' },
+      { label: 'Als ZIP herunterladen', icon: Ic.download(15), onClick: o.onZip },
+      o.onMoveMany && { label: 'Verschieben', icon: Ic.folder(15), onClick: o.onMoveMany },
+      { separator: true },
+      { label: 'In den Papierkorb', icon: Ic.trash(15), danger: true, onClick: o.onDeleteMany },
+    ];
+  }
+  const isZip = /\.zip$/i.test(file.name);
+  return [
+    { label: 'Öffnen', icon: Ic.eye(15), onClick: () => o.onOpen(file) },
+    { label: 'Herunterladen', icon: Ic.download(15), onClick: () => o.onDownload(file) },
+    isZip && o.onUnzip && { label: 'Entpacken', icon: Ic.archive(15), onClick: () => o.onUnzip(file) },
+    o.onToggleStar && { label: file.starred ? 'Aus Favoriten entfernen' : 'Zu Favoriten', icon: Ic.star(15), onClick: () => o.onToggleStar(file) },
+    { separator: true },
+    o.onShare && { label: 'Teilen', icon: Ic.share(15), onClick: () => o.onShare(file) },
+    o.onMove && { label: 'Verschieben', icon: Ic.folder(15), onClick: () => o.onMove(file) },
+    o.onVersions && { label: 'Versionsverlauf', icon: Ic.clock(15), onClick: () => o.onVersions(file) },
+    { separator: true },
+    o.onDelete && { label: 'In den Papierkorb', icon: Ic.trash(15), danger: true, onClick: () => o.onDelete(file) },
+  ];
+}
+function folderMenuItems(folder, o) {
+  return [
+    { label: 'Öffnen', icon: Ic.folder(15), onClick: () => o.onOpen(folder) },
+    o.onRename && { label: 'Umbenennen', icon: Ic.fileGen(15), onClick: () => o.onRename(folder) },
+    o.onMove && { label: 'Verschieben', icon: Ic.folder(15), onClick: () => o.onMove(folder) },
+    o.onShare && { label: 'Teilen', icon: Ic.share(15), onClick: () => o.onShare(folder) },
+    { separator: true },
+    o.onDelete && { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => o.onDelete(folder) },
+  ];
+}
+
 // ───── Files (home) view ───────────────────────────────────────────────────
 function FilesView({
   user, stats, folders, view, setView, sort, setSort, search, setSearch, refreshTick,
   onOpenFolder, onShareFolder, onRenameFolder, onMoveFolder, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
-  onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles,
+  onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, onUnzip, onVersions, onDownloadFile,
 }) {
   const [files, setFiles] = useState(null);
   const [recent, setRecent] = useState([]);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [selected, setSelected] = useState(new Set());
+  const [selectMode, setSelectMode] = useState(false);
   const [zipBusy, setZipBusy] = useState(false);
   const [results, setResults] = useState(null); // server search results when searching
 
@@ -2266,19 +2448,45 @@ function FilesView({
     }
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   };
-  const clearSel = () => setSelected(new Set());
+  const clearSel = () => { setSelected(new Set()); setSelectMode(false); };
   const doZip = () => downloadZip([...selected], setZipBusy, clearSel);
   const doBulkDelete = async () => {
-    if (!confirm(`${selected.size} Datei(en) löschen?`)) return;
+    if (!await confirmDialog({ title: 'In den Papierkorb?', message: `${selected.size} ${selected.size === 1 ? 'Datei wird' : 'Dateien werden'} in den Papierkorb verschoben.`, confirmLabel: 'In Papierkorb', danger: true })) return;
     for (const id of selected) { try { await API.deleteFile(id); } catch {} }
-    toast('Gelöscht', 'success'); clearSel();
+    toast('In den Papierkorb', 'success'); clearSel();
     API.files().then((d) => setFiles(d.files || []));
+  };
+  const fileCtx = (f, e, selectThis) => {
+    const multi = selected.has(f.id) && selected.size > 1;
+    if (!multi) selectThis && selectThis();
+    openContextMenu(e.clientX, e.clientY, fileMenuItems(f, {
+      multi, count: selected.size,
+      onOpen: (x) => onOpenFile(x, fFiles), onDownload: onDownloadFile, onUnzip,
+      onToggleStar, onShare: onShareFile, onMove: (x) => onMoveFiles([x.id]),
+      onVersions, onDelete: onDeleteFile,
+      onZip: doZip, onMoveMany: () => onMoveFiles([...selected]), onDeleteMany: doBulkDelete,
+    }));
+  };
+  const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
+    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolder, onDelete: onDeleteFolder,
+  }));
+  const bgCtx = (e) => {
+    if (e.target.closest('[data-fid]') || e.target.closest('[data-folder-card]')) return;
+    e.preventDefault();
+    openContextMenu(e.clientX, e.clientY, [
+      { label: 'Neuer Ordner', icon: Ic.plus(15), onClick: () => setCreatingFolder(true) },
+      { label: 'Notiz erstellen', icon: Ic.fileGen(15), onClick: onNewText },
+      { label: 'Hochladen', icon: Ic.upload(15), onClick: onUpload },
+      { separator: true },
+      { label: selectMode ? 'Auswahl beenden' : 'Auswählen', icon: Ic.checkSquare(15), onClick: () => setSelectMode((s) => !s) },
+    ]);
   };
 
   return (
     <>
-      <TopBar crumbs={['Meine Dateien']} view={view} onView={setView} search={search} onSearch={setSearch} sort={sort} onSort={setSort}/>
-      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px' }}>
+      <TopBar crumbs={['Meine Dateien']} view={view} onView={setView} search={search} onSearch={setSearch} sort={sort} onSort={setSort}
+        selectMode={selectMode} onSelectMode={(v) => { setSelectMode(v); if (!v) setSelected(new Set()); }}/>
+      <div data-scroll onContextMenu={bgCtx} style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 24, marginBottom: 28 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, color: 'var(--fg-3)', marginBottom: 6 }}>{greeting()}, {user?.name}</div>
@@ -2344,7 +2552,7 @@ function FilesView({
                   </div>
                 )}
                 {results.files.length > 0 && (
-                  <FileGrid files={results.files} selected={selected} onOpen={(f) => onOpenFile(f, results.files)} onToggleSelect={toggleSelect} onDragSelect={setSelected}/>
+                  <FileGrid files={results.files} selected={selected} onOpen={(f) => onOpenFile(f, results.files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onContext={fileCtx} selectMode={selectMode}/>
                 )}
               </>
             )}
@@ -2358,7 +2566,7 @@ function FilesView({
                 {fFolders.map((f) => <FolderCard key={f.id} folder={f}
                   onClick={() => onOpenFolder(f)} onShare={() => onShareFolder(f)}
                   onRename={() => onRenameFolder(f)} onMove={() => onMoveFolder(f)}
-                  onDropFiles={onDropFiles}
+                  onDropFiles={onDropFiles} onContext={folderCtx}
                   onDelete={() => onDeleteFolder(f)}/>)}
               </div>
             ) : !creatingFolder && (
@@ -2371,8 +2579,8 @@ function FilesView({
               <SkeletonGrid/>
             ) : fFiles.length > 0 ? (
               view === 'grid'
-                ? <FileGrid files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onDragFiles={() => {}}/>
-                : <FileList files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onShareFile={onShareFile} onToggleStar={onToggleStar} onDeleteFile={(f) => { onDeleteFile(f); }}/>
+                ? <FileGrid files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onDragFiles={() => {}} onContext={fileCtx} selectMode={selectMode}/>
+                : <FileList files={fFiles} selected={selected} onOpen={(f) => onOpenFile(f, fFiles)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onShareFile={onShareFile} onToggleStar={onToggleStar} onDeleteFile={(f) => { onDeleteFile(f); }} onContext={fileCtx} selectMode={selectMode}/>
             ) : (
               <EmptyHint icon={Ic.upload(40)} title="Noch keine Dateien" desc="Zieh Dateien hierher oder klick auf Hochladen."
                 actions={<Btn variant="primary" size="md" icon={Ic.upload(14)} onClick={onUpload}>Erste Datei hochladen</Btn>}/>
@@ -2390,10 +2598,12 @@ function FilesView({
 function FolderView({
   folderId, view, setView, sort, setSort, search, setSearch, refreshTick,
   onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onMoveFiles, onUploadLink, onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, afterChange,
+  onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onShareFolderItem, onDeleteFolder,
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(new Set());
+  const [selectMode, setSelectMode] = useState(false);
   const [zipBusy, setZipBusy] = useState(false);
   const [over, setOver] = useState(false);
 
@@ -2417,12 +2627,36 @@ function FolderView({
     if (id === '__all__') { setSelected((s) => s.size === files.length ? new Set() : new Set(files.map((f) => f.id))); return; }
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   };
-  const clearSel = () => setSelected(new Set());
+  const clearSel = () => { setSelected(new Set()); setSelectMode(false); };
   const doZip = () => downloadZip([...selected], setZipBusy, clearSel);
   const doBulkDelete = async () => {
-    if (!confirm(`${selected.size} Datei(en) löschen?`)) return;
+    if (!await confirmDialog({ title: 'In den Papierkorb?', message: `${selected.size} ${selected.size === 1 ? 'Datei wird' : 'Dateien werden'} in den Papierkorb verschoben.`, confirmLabel: 'In Papierkorb', danger: true })) return;
     for (const id of selected) { try { await API.deleteFile(id); } catch {} }
-    toast('Gelöscht', 'success'); clearSel(); load(); afterChange && afterChange();
+    toast('In den Papierkorb', 'success'); clearSel(); load(); afterChange && afterChange();
+  };
+  const fileCtx = (f, e, selectThis) => {
+    const multi = selected.has(f.id) && selected.size > 1;
+    if (!multi) selectThis && selectThis();
+    openContextMenu(e.clientX, e.clientY, fileMenuItems(f, {
+      multi, count: selected.size,
+      onOpen: (x) => onOpenFile(x, files), onDownload: onDownloadFile, onUnzip,
+      onToggleStar, onShare: onShareFile, onMove: (x) => onMoveFiles([x.id]),
+      onVersions, onDelete: onDeleteFile,
+      onZip: doZip, onMoveMany: () => onMoveFiles([...selected]), onDeleteMany: doBulkDelete,
+    }));
+  };
+  const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
+    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolderItem, onDelete: onDeleteFolder,
+  }));
+  const bgCtx = (e) => {
+    if (e.target.closest('[data-fid]')) return;
+    e.preventDefault();
+    openContextMenu(e.clientX, e.clientY, [
+      { label: 'Notiz erstellen', icon: Ic.fileGen(15), onClick: () => onNewText(folder.id) },
+      { label: 'Hochladen', icon: Ic.upload(15), onClick: () => onUpload(folder.id) },
+      { separator: true },
+      { label: selectMode ? 'Auswahl beenden' : 'Auswählen', icon: Ic.checkSquare(15), onClick: () => setSelectMode((s) => !s) },
+    ]);
   };
 
   return (
@@ -2430,6 +2664,7 @@ function FolderView({
       <TopBar
         crumbs={[{ label: 'Meine Dateien', onClick: onBack }, folder.name]}
         view={view} onView={setView} search={search} onSearch={setSearch} sort={sort} onSort={setSort}
+        selectMode={selectMode} onSelectMode={(v) => { setSelectMode(v); if (!v) setSelected(new Set()); }}
         right={
           <div style={{ display: 'flex', gap: 8 }}>
             <Btn variant="glass" size="sm" icon={Ic.fileGen(14)} onClick={() => onNewText(folder.id)}>Notiz</Btn>
@@ -2443,6 +2678,7 @@ function FolderView({
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => { e.preventDefault(); setOver(false); const fs = Array.from(e.dataTransfer.files || []); if (fs.length) onUpload(folder.id, fs); }}
+        onContextMenu={bgCtx}
         data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px', position: 'relative', outline: over ? '2px dashed var(--accent)' : 'none', outlineOffset: -12 }}>
         <div style={{ marginBottom: 22 }}>
           <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 }}>
@@ -2455,15 +2691,15 @@ function FolderView({
           <>
             <SectionHeader title="Unterordner" count={subfolders.length}/>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 32 }}>
-              {subfolders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)} onDropFiles={onDropFiles}/>)}
+              {subfolders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)} onDropFiles={onDropFiles} onContext={folderCtx}/>)}
             </div>
           </>
         )}
 
         {files.length > 0 ? (
           view === 'grid'
-            ? <FileGrid files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onDragFiles={() => {}}/>
-            : <FileList files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onShareFile={onShareFile} onToggleStar={onToggleStar} onDeleteFile={(f) => { onDeleteFile(f); }}/>
+            ? <FileGrid files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onDragFiles={() => {}} onContext={fileCtx} selectMode={selectMode}/>
+            : <FileList files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onShareFile={onShareFile} onToggleStar={onToggleStar} onDeleteFile={(f) => { onDeleteFile(f); }} onContext={fileCtx} selectMode={selectMode}/>
         ) : (
           <EmptyHint icon={Ic.upload(40)} title="Dieser Ordner ist leer" desc="Zieh Dateien hierher oder lade welche hoch."
             actions={<Btn variant="primary" size="md" icon={Ic.upload(14)} onClick={() => onUpload(folder.id)}>Hochladen</Btn>}/>
@@ -2481,7 +2717,7 @@ function SharesView({ refreshTick, basePath, afterChange }) {
   const load = useCallback(() => { API.shares().then((d) => setShares(d.shares || [])).catch(() => setShares([])); }, []);
   useEffect(() => { load(); }, [load, refreshTick]);
 
-  const del = async (id) => { if (!confirm('Share-Link löschen? Der Link wird sofort ungültig.')) return; try { await API.deleteShare(id); toast('Gelöscht', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
+  const del = async (id) => { if (!await confirmDialog({ title: 'Share-Link löschen?', message: 'Der Link wird sofort ungültig — niemand kann ihn mehr öffnen.', confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteShare(id); toast('Gelöscht', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
   const copy = (token) => { navigator.clipboard?.writeText(location.origin + (basePath || '') + '/s/' + token); toast('Link kopiert', 'success'); };
 
   return (
@@ -2527,7 +2763,7 @@ function LinksView({ refreshTick, basePath, onCreate, afterChange }) {
   const load = useCallback(() => { API.uploadLinks().then((d) => setLinks(d.upload_links || [])).catch(() => setLinks([])); }, []);
   useEffect(() => { load(); }, [load, refreshTick]);
 
-  const del = async (id) => { if (!confirm('Upload-Link löschen? Externe können dann nicht mehr hochladen.')) return; try { await API.deleteUploadLink(id); toast('Gelöscht', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
+  const del = async (id) => { if (!await confirmDialog({ title: 'Upload-Link löschen?', message: 'Externe können über diesen Link dann keine Dateien mehr hochladen.', confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteUploadLink(id); toast('Gelöscht', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
   const copy = (token) => { navigator.clipboard?.writeText(location.origin + (basePath || '') + '/u/' + token); toast('Link kopiert', 'success'); };
 
   return (
@@ -2623,8 +2859,8 @@ function TrashView({ refreshTick, onOpenFile, afterChange }) {
   useEffect(() => { load(); }, [load, refreshTick]);
 
   const restore = async (f) => { try { await API.restoreFile(f.id); toast('Wiederhergestellt', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
-  const forever = async (f) => { if (!confirm(`"${f.name}" endgültig löschen?`)) return; try { await API.deleteForever(f.id); toast('Endgültig gelöscht', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
-  const empty = async () => { if (!confirm('Papierkorb wirklich leeren? Alle Dateien werden endgültig gelöscht.')) return; try { await API.emptyTrash(); toast('Papierkorb geleert', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
+  const forever = async (f) => { if (!await confirmDialog({ title: 'Endgültig löschen?', message: `„${f.name}" wird unwiderruflich gelöscht. Das kann nicht rückgängig gemacht werden.`, confirmLabel: 'Endgültig löschen', danger: true })) return; try { await API.deleteForever(f.id); toast('Endgültig gelöscht', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
+  const empty = async () => { if (!await confirmDialog({ title: 'Papierkorb leeren?', message: 'Alle Dateien im Papierkorb werden unwiderruflich gelöscht.', confirmLabel: 'Papierkorb leeren', danger: true })) return; try { await API.emptyTrash(); toast('Papierkorb geleert', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
 
   return (
     <>

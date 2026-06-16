@@ -21,6 +21,7 @@ use Nyza\Routes\FileRoutes;
 use Nyza\Routes\FolderRoutes;
 use Nyza\Routes\ShareRoutes;
 use Nyza\Routes\UploadLinkRoutes;
+use Nyza\Routes\WebDavRoutes;
 use Nyza\SetupWizard;
 use Slim\Factory\AppFactory;
 
@@ -32,6 +33,13 @@ if (isset($_GET['setup'])) {
 }
 
 Config::load(__DIR__ . '/config.php');
+
+// `?update=1` → in-app updater (pulls latest from GitHub). Admin-token gated
+// inside Updater. Runs after Config::load so the DB is available for the check.
+if (isset($_GET['update'])) {
+    (new \Nyza\Updater(__DIR__))->handle();
+    exit;
+}
 
 // Ist dieser Subfolder unter /www/nyza/ deployed? Slim braucht den base path.
 // Wir leiten ihn aus SCRIPT_NAME ab — das ist '/nyza/index.php' wenn der
@@ -172,6 +180,7 @@ FileRoutes::mount($app);
 ShareRoutes::mount($app);
 UploadLinkRoutes::mount($app);
 ActivityRoutes::mount($app);
+WebDavRoutes::mount($app);
 
 /** Asset / SPA fallback for all non-API GETs. */
 $app->get('/{path:.+}', function ($req, $res, $args) use ($assetsRoot, $serveSpa) {

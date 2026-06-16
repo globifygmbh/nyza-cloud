@@ -33,6 +33,7 @@ final class FileRoutes
             $g->get('/{id}/raw',              [self::class, 'raw']);
             $g->get('/{id}/thumb',            [self::class, 'thumb']);
             $g->post('/{id}/star',            [self::class, 'star']);
+            $g->post('/{id}/unzip',           [self::class, 'unzip']);
             $g->get('/{id}/comments',         [self::class, 'comments']);
             $g->post('/{id}/comments',        [self::class, 'addComment']);
             $g->delete('/{id}/comments/{cid}',[self::class, 'deleteComment']);
@@ -40,6 +41,7 @@ final class FileRoutes
             $g->put('/{id}/content',          [self::class, 'saveContent']);
             $g->get('/{id}/versions',         [self::class, 'versions']);
             $g->get('/{id}/versions/{vid}',   [self::class, 'versionContent']);
+            $g->get('/{id}/versions/{vid}/raw', [self::class, 'versionRaw']);
             $g->post('/{id}/versions/{vid}/restore', [self::class, 'restoreVersion']);
             $g->post('/{id}/restore',         [self::class, 'restore']);
             $g->delete('/{id}/permanent',     [self::class, 'permanent']);
@@ -277,14 +279,22 @@ final class FileRoutes
         if (Storage::isDangerous($name)) {
             return Json::err($res, 'Dieser Dateityp ist aus Sicherheitsgründen nicht erlaubt', 415, 'blocked_type');
         }
-        if (!self::quotaOk($uid, $size)) {
+        // Re-uploading a same-named file into the same folder versions it instead
+        // of creating a duplicate. Quota is checked against the net size delta.
+        $existing = self::existingInFolder($uid, $folder, $name);
+        $quotaNeed = $existing ? max(0, $size - (int)$existing['size']) : $size;
+        if (!self::quotaOk($uid, $quotaNeed)) {
             return Json::err($res, 'Storage quota exceeded', 413, 'quota_exceeded');
         }
 
         $rel = Storage::relPath($uid, $name);
         $files->moveTo(Storage::abs($rel));
 
-        $id = self::insertFile($uid, $folder, $name, $rel, $mime, $size, null, null);
+        if ($existing) {
+            $id = self::replaceWithVersion($uid, $existing, $rel, $mime, $size);
+        } else {
+            $id = self::insertFile($uid, $folder, $name, $rel, $mime, $size, null, null);
+        }
         return Json::ok($res, ['file' => self::fetchOne($uid, $id)], 201);
     }
 
@@ -344,24 +354,85 @@ final class FileRoutes
         return Json::ok($res, ['file' => self::fetchOne($uid, (int)$f['id'])]);
     }
 
-    // Save the current on-disk content as a history entry; keep the last 50.
+    // Snapshot the file's CURRENT on-disk content as a history entry, then prune
+    // to the newest 50. Small text files are stored inline (so the editor's
+    // version diff/preview keeps working); everything else (incl. large binary
+    // media) is copied to a versions/ blob on disk and referenced by path.
     private static function snapshot(int $uid, array $f): void
     {
         $abs = Storage::abs($f['storage_path']);
         if (!is_file($abs)) return;
-        $cur = (string) file_get_contents($abs);
+        $size = (int) filesize($abs);
         $pdo = Database::pdo();
-        $ins = $pdo->prepare('INSERT INTO file_versions (file_id, user_id, content, size) VALUES (?, ?, ?, ?)');
-        $ins->bindValue(1, (int)$f['id'], \PDO::PARAM_INT);
-        $ins->bindValue(2, $uid, \PDO::PARAM_INT);
-        $ins->bindValue(3, $cur, \PDO::PARAM_LOB);
-        $ins->bindValue(4, strlen($cur), \PDO::PARAM_INT);
-        $ins->execute();
-        // prune: keep newest 50
-        $pdo->prepare(
-            'DELETE FROM file_versions WHERE file_id = ? AND id NOT IN '
-            . '(SELECT id FROM (SELECT id FROM file_versions WHERE file_id = ? ORDER BY id DESC LIMIT 50) t)'
-        )->execute([(int)$f['id'], (int)$f['id']]);
+
+        if (self::isTextish($f) && $size <= self::TEXT_MAX) {
+            $cur = (string) file_get_contents($abs);
+            $ins = $pdo->prepare(
+                'INSERT INTO file_versions (file_id, user_id, content, storage_path, mime_type, name, size) '
+                . 'VALUES (?, ?, ?, NULL, ?, ?, ?)'
+            );
+            $ins->bindValue(1, (int)$f['id'], \PDO::PARAM_INT);
+            $ins->bindValue(2, $uid, \PDO::PARAM_INT);
+            $ins->bindValue(3, $cur, \PDO::PARAM_LOB);
+            $ins->bindValue(4, (string)($f['mime_type'] ?? 'text/plain'));
+            $ins->bindValue(5, (string)$f['name']);
+            $ins->bindValue(6, strlen($cur), \PDO::PARAM_INT);
+            $ins->execute();
+        } else {
+            $vrel = Storage::versionPath($uid);
+            if (!@copy($abs, Storage::abs($vrel))) return;
+            $pdo->prepare(
+                'INSERT INTO file_versions (file_id, user_id, content, storage_path, mime_type, name, size) '
+                . 'VALUES (?, ?, NULL, ?, ?, ?, ?)'
+            )->execute([(int)$f['id'], $uid, $vrel, (string)($f['mime_type'] ?? 'application/octet-stream'), (string)$f['name'], $size]);
+        }
+        self::pruneVersions((int)$f['id']);
+    }
+
+    // Keep only the newest 50 versions of a file; unlink any pruned disk blobs.
+    private static function pruneVersions(int $fileId): void
+    {
+        $pdo = Database::pdo();
+        $keep = $pdo->prepare('SELECT id FROM file_versions WHERE file_id = ? ORDER BY id DESC LIMIT 50');
+        $keep->execute([$fileId]);
+        $keepIds = array_map('intval', array_column($keep->fetchAll(), 'id'));
+        if (!$keepIds) return;
+        $place = implode(',', array_fill(0, count($keepIds), '?'));
+        $old = $pdo->prepare("SELECT id, storage_path FROM file_versions WHERE file_id = ? AND id NOT IN ($place)");
+        $old->execute(array_merge([$fileId], $keepIds));
+        $stale = $old->fetchAll();
+        if (!$stale) return;
+        foreach ($stale as $v) {
+            if (!empty($v['storage_path'])) Storage::deleteRel($v['storage_path']);
+        }
+        $delPlace = implode(',', array_fill(0, count($stale), '?'));
+        $pdo->prepare("DELETE FROM file_versions WHERE id IN ($delPlace)")
+            ->execute(array_map(static fn($v) => (int)$v['id'], $stale));
+    }
+
+    // Text-like files are previewed/edited as text; their versions stay inline.
+    private static function isTextish(array $f): bool
+    {
+        $mime = strtolower((string)($f['mime_type'] ?? ''));
+        if (str_starts_with($mime, 'text/')) return true;
+        if (in_array($mime, ['application/json', 'application/xml', 'application/javascript', 'application/x-yaml'], true)) return true;
+        $ext = strtolower(pathinfo((string)$f['name'], PATHINFO_EXTENSION));
+        return in_array($ext, [
+            'txt', 'md', 'markdown', 'json', 'xml', 'yml', 'yaml', 'csv', 'log', 'ini', 'conf',
+            'js', 'ts', 'jsx', 'tsx', 'css', 'scss', 'html', 'htm', 'php', 'py', 'rb', 'go', 'rs',
+            'java', 'c', 'cpp', 'h', 'sh', 'sql', 'env',
+        ], true);
+    }
+
+    /** Read a version's bytes whether stored inline (content) or on disk. */
+    private static function versionBytes(array $v): string
+    {
+        if ($v['content'] !== null) return (string)$v['content'];
+        if (!empty($v['storage_path'])) {
+            $abs = Storage::abs($v['storage_path']);
+            if (is_file($abs)) return (string) file_get_contents($abs);
+        }
+        return '';
     }
 
     public static function versions(Request $req, Response $res, array $args): Response
@@ -369,19 +440,44 @@ final class FileRoutes
         $uid = (int)$req->getAttribute('uid');
         $f = self::fetchOne($uid, (int)$args['id']);
         if (!$f) return Json::err($res, 'Not found', 404);
-        $stmt = Database::pdo()->prepare('SELECT id, size, created_at FROM file_versions WHERE file_id = ? AND user_id = ? ORDER BY id DESC');
+        $stmt = Database::pdo()->prepare('SELECT id, size, name, mime_type, (content IS NOT NULL) AS inline, created_at FROM file_versions WHERE file_id = ? AND user_id = ? ORDER BY id DESC');
         $stmt->execute([(int)$f['id'], $uid]);
-        return Json::ok($res, ['versions' => $stmt->fetchAll(), 'current' => ['size' => (int)$f['size']]]);
+        $rows = array_map(static function (array $v): array {
+            return [
+                'id' => (int)$v['id'], 'size' => (int)$v['size'],
+                'name' => $v['name'], 'mime_type' => $v['mime_type'],
+                'inline' => (bool)$v['inline'], 'created_at' => $v['created_at'],
+            ];
+        }, $stmt->fetchAll());
+        return Json::ok($res, ['versions' => $rows, 'current' => ['size' => (int)$f['size'], 'name' => $f['name']]]);
     }
 
     public static function versionContent(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $stmt = Database::pdo()->prepare('SELECT content FROM file_versions WHERE id = ? AND file_id = ? AND user_id = ?');
+        $stmt = Database::pdo()->prepare('SELECT content, storage_path FROM file_versions WHERE id = ? AND file_id = ? AND user_id = ?');
         $stmt->execute([(int)$args['vid'], (int)$args['id'], $uid]);
         $row = $stmt->fetch();
         if (!$row) return Json::err($res, 'Not found', 404);
-        return Json::ok($res, ['content' => (string)$row['content']]);
+        return Json::ok($res, ['content' => self::versionBytes($row)]);
+    }
+
+    // Download a version's raw bytes (used for binary file versions).
+    public static function versionRaw(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $stmt = Database::pdo()->prepare('SELECT content, storage_path, name, mime_type, size FROM file_versions WHERE id = ? AND file_id = ? AND user_id = ?');
+        $stmt->execute([(int)$args['vid'], (int)$args['id'], $uid]);
+        $v = $stmt->fetch();
+        if (!$v) return Json::err($res, 'Not found', 404);
+        $bytes = self::versionBytes($v);
+        $res->getBody()->write($bytes);
+        $mime = $v['mime_type'] ?: 'application/octet-stream';
+        if (Storage::mustDownload($mime)) $mime = 'application/octet-stream';
+        return $res
+            ->withHeader('Content-Type', $mime)
+            ->withHeader('Content-Disposition', 'attachment; filename="' . addslashes((string)$v['name']) . '"')
+            ->withHeader('X-Content-Type-Options', 'nosniff');
     }
 
     public static function restoreVersion(Request $req, Response $res, array $args): Response
@@ -390,12 +486,12 @@ final class FileRoutes
         $f = self::fetchOne($uid, (int)$args['id']);
         if (!$f) return Json::err($res, 'Not found', 404);
         $pdo = Database::pdo();
-        $stmt = $pdo->prepare('SELECT content FROM file_versions WHERE id = ? AND file_id = ? AND user_id = ?');
+        $stmt = $pdo->prepare('SELECT content, storage_path FROM file_versions WHERE id = ? AND file_id = ? AND user_id = ?');
         $stmt->execute([(int)$args['vid'], (int)$f['id'], $uid]);
         $row = $stmt->fetch();
         if (!$row) return Json::err($res, 'Version not found', 404);
 
-        $content = (string) $row['content'];
+        $content = self::versionBytes($row);
         $newSize = strlen($content);
         $delta = $newSize - (int)$f['size'];
         if ($delta > 0 && !self::quotaOk($uid, $delta)) {
@@ -409,6 +505,109 @@ final class FileRoutes
         $pdo->prepare('UPDATE files SET size = ? WHERE id = ? AND user_id = ?')->execute([$newSize, (int)$f['id'], $uid]);
         $pdo->prepare('UPDATE users SET storage_used = MAX(0, storage_used + ?) WHERE id = ?')->execute([$delta, $uid]);
         return Json::ok($res, ['file' => self::fetchOne($uid, (int)$f['id'])]);
+    }
+
+    // ───── Unzip an uploaded .zip into a new folder named after it ────────────
+    public static function unzip(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchOne($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+        if (strtolower(pathinfo($f['name'], PATHINFO_EXTENSION)) !== 'zip') {
+            return Json::err($res, 'Keine ZIP-Datei', 422);
+        }
+        $abs = Storage::abs($f['storage_path']);
+        if (!is_file($abs)) return Json::err($res, 'Datei fehlt auf der Platte', 410);
+
+        $zip = new \ZipArchive();
+        if ($zip->open($abs) !== true) return Json::err($res, 'ZIP konnte nicht geöffnet werden', 422);
+
+        $entries = $zip->numFiles;
+        if ($entries > 10000) { $zip->close(); return Json::err($res, 'ZIP enthält zu viele Dateien', 413); }
+        $total = 0;
+        for ($i = 0; $i < $entries; $i++) {
+            $st = $zip->statIndex($i);
+            if ($st) $total += (int)$st['size'];
+        }
+        if (!self::quotaOk($uid, $total)) { $zip->close(); return Json::err($res, 'Storage quota exceeded', 413, 'quota_exceeded'); }
+
+        $parent = $f['folder_id'] !== null ? (int)$f['folder_id'] : null;
+        $baseName = pathinfo($f['name'], PATHINFO_FILENAME) ?: 'Entpackt';
+        $rootId = self::uniqueSubfolder($uid, $parent, $baseName);
+
+        $count = 0; $skipped = 0;
+        for ($i = 0; $i < $entries; $i++) {
+            $name = $zip->getNameIndex($i);
+            if ($name === false) continue;
+            $name = str_replace('\\', '/', $name);
+            $isDir = substr($name, -1) === '/';
+            // Sanitise: drop empty / '.' / '..' segments (zip-slip protection).
+            $parts = array_values(array_filter(explode('/', $name), static fn($p) => $p !== '' && $p !== '.' && $p !== '..'));
+            if (!$parts) continue;
+
+            $folderId = $rootId;
+            $dirParts = $isDir ? $parts : array_slice($parts, 0, -1);
+            foreach ($dirParts as $seg) { $folderId = self::ensureSubfolder($uid, $folderId, mb_substr($seg, 0, 255)); }
+            if ($isDir) continue;
+
+            $leaf = mb_substr($parts[count($parts) - 1], 0, 255);
+            if (Storage::isDangerous($leaf)) { $skipped++; continue; }
+            $st = $zip->statIndex($i);
+            $size = (int)($st['size'] ?? 0);
+            $in = $zip->getStream($name);
+            if (!$in) { $skipped++; continue; }
+            $rel = Storage::relPath($uid, $leaf);
+            $out = fopen(Storage::abs($rel), 'wb');
+            if (!$out) { fclose($in); $skipped++; continue; }
+            stream_copy_to_stream($in, $out);
+            fclose($out); fclose($in);
+            $mime = mime_content_type(Storage::abs($rel)) ?: 'application/octet-stream';
+            // Extracted files version same-named siblings just like normal uploads.
+            $existing = self::existingInFolder($uid, $folderId, $leaf);
+            if ($existing) self::replaceWithVersion($uid, $existing, $rel, $mime, $size);
+            else self::insertFile($uid, $folderId, $leaf, $rel, $mime, $size, null, null);
+            $count++;
+        }
+        $zip->close();
+        return Json::ok($res, ['folder_id' => $rootId, 'extracted' => $count, 'skipped' => $skipped], 201);
+    }
+
+    /** Find or create a child folder by name; returns its id. */
+    private static function ensureSubfolder(int $uid, ?int $parent, string $name): int
+    {
+        $pdo = Database::pdo();
+        if ($parent === null) {
+            $s = $pdo->prepare('SELECT id FROM folders WHERE user_id = ? AND parent_id IS NULL AND name = ? LIMIT 1');
+            $s->execute([$uid, $name]);
+        } else {
+            $s = $pdo->prepare('SELECT id FROM folders WHERE user_id = ? AND parent_id = ? AND name = ? LIMIT 1');
+            $s->execute([$uid, $parent, $name]);
+        }
+        if ($r = $s->fetch()) return (int)$r['id'];
+        $pdo->prepare('INSERT INTO folders (user_id, parent_id, name, kind, tone) VALUES (?, ?, ?, ?, ?)')
+            ->execute([$uid, $parent, $name, 'normal', 'violet']);
+        return (int)$pdo->lastInsertId();
+    }
+
+    /** Create a new child folder, appending " (n)" until the name is free. */
+    private static function uniqueSubfolder(int $uid, ?int $parent, string $base): int
+    {
+        $pdo = Database::pdo();
+        $exists = static function (string $n) use ($pdo, $uid, $parent): bool {
+            if ($parent === null) {
+                $s = $pdo->prepare('SELECT 1 FROM folders WHERE user_id = ? AND parent_id IS NULL AND name = ?');
+                $s->execute([$uid, $n]);
+            } else {
+                $s = $pdo->prepare('SELECT 1 FROM folders WHERE user_id = ? AND parent_id = ? AND name = ?');
+                $s->execute([$uid, $parent, $n]);
+            }
+            return (bool)$s->fetch();
+        };
+        $name = $base; $i = 1;
+        while ($exists($name)) { $name = $base . ' (' . $i . ')'; $i++; }
+        $pdo->prepare('INSERT INTO folders (user_id, parent_id, name, kind, tone) VALUES (?, ?, ?, ?, ?)')
+            ->execute([$uid, $parent, $name, 'normal', 'violet']);
+        return (int)$pdo->lastInsertId();
     }
 
     // ───── Resumable chunked upload (owner) ──────────────────────────────────
@@ -483,7 +682,12 @@ final class FileRoutes
         Database::pdo()->prepare("UPDATE upload_sessions SET status = 'finalized' WHERE id = ?")->execute([$s['id']]);
 
         $folder = $s['folder_id'] !== null ? (int)$s['folder_id'] : null;
-        $id = self::insertFile($uid, $folder, $s['file_name'], $rel, $mime, (int)$s['total_size'], null, null);
+        $existing = self::existingInFolder($uid, $folder, $s['file_name']);
+        if ($existing) {
+            $id = self::replaceWithVersion($uid, $existing, $rel, $mime, (int)$s['total_size']);
+        } else {
+            $id = self::insertFile($uid, $folder, $s['file_name'], $rel, $mime, (int)$s['total_size'], null, null);
+        }
         return Json::ok($res, ['file' => self::fetchOne($uid, $id)], 201);
     }
 
@@ -574,32 +778,13 @@ final class FileRoutes
         $files = $stmt->fetchAll();
         if (!$files) return Json::err($res, 'No files found', 404);
 
-        $zipPath = Storage::temp() . '/zip_' . bin2hex(random_bytes(8)) . '.zip';
-        $zip = new \ZipArchive();
-        if ($zip->open($zipPath, \ZipArchive::CREATE) !== true) return Json::err($res, 'Could not create archive', 500);
-        $used = [];
+        // True streaming archive: constant memory, no temp file, instant start.
+        $members = [];
         foreach ($files as $f) {
-            $abs = Storage::abs($f['storage_path']);
-            if (!is_file($abs)) continue;
-            $base = $f['name']; $i = 1;
-            while (isset($used[$base])) {
-                $info = pathinfo($f['name']);
-                $base = $info['filename'] . " ($i)" . (isset($info['extension']) ? '.' . $info['extension'] : '');
-                $i++;
-            }
-            $used[$base] = true;
-            $zip->addFile($abs, $base);
+            $members[] = ['path' => Storage::abs($f['storage_path']), 'name' => $f['name']];
         }
-        $zip->close();
-
-        $size = filesize($zipPath);
-        $stream = fopen($zipPath, 'rb');
-        register_shutdown_function(static fn() => @unlink($zipPath));
-        return $res
-            ->withHeader('Content-Type', 'application/zip')
-            ->withHeader('Content-Disposition', 'attachment; filename="nyza-' . date('Ymd-His') . '.zip"')
-            ->withHeader('Content-Length', (string)$size)
-            ->withBody(new Stream($stream));
+        \Nyza\ZipStreamer::emit($members, 'nyza-' . date('Ymd-His') . '.zip');
+        return $res; // unreachable — emit() exits after streaming
     }
 
     // ───── helpers ───────────────────────────────────────────────────────────
@@ -629,11 +814,82 @@ final class FileRoutes
 
     private static function hardDelete(int $uid, array $f): void
     {
+        // Remove any on-disk version blobs first (DB rows cascade via FK).
+        $vs = Database::pdo()->prepare('SELECT storage_path FROM file_versions WHERE file_id = ? AND storage_path IS NOT NULL');
+        $vs->execute([(int)$f['id']]);
+        foreach ($vs->fetchAll() as $v) { Storage::deleteRel($v['storage_path']); }
+
         Database::pdo()->prepare('DELETE FROM files WHERE id = ? AND user_id = ?')->execute([(int)$f['id'], $uid]);
         Database::pdo()->prepare('UPDATE users SET storage_used = MAX(0, storage_used - ?) WHERE id = ?')
             ->execute([(int)$f['size'], $uid]);
         Storage::deleteRel($f['storage_path']);
         @unlink(Storage::root() . '/thumbs/' . (int)$f['id'] . '.jpg');
+    }
+
+    /**
+     * Store a file from a source path into the user's tree, versioning it if a
+     * same-named live file already exists in that folder. Moves the source into
+     * place. Throws RuntimeException(415|507) for blocked types / quota. Returns
+     * the resulting file row. Shared by the WebDAV PUT handler.
+     */
+    public static function ingestPath(int $uid, ?int $folder, string $name, string $srcAbs, ?string $mime = null): array
+    {
+        if (Storage::isDangerous($name)) {
+            throw new \RuntimeException('Dieser Dateityp ist nicht erlaubt', 415);
+        }
+        $size = (int) filesize($srcAbs);
+        $mime = $mime ?: (mime_content_type($srcAbs) ?: 'application/octet-stream');
+        $existing = self::existingInFolder($uid, $folder, $name);
+        $quotaNeed = $existing ? max(0, $size - (int)$existing['size']) : $size;
+        if (!self::quotaOk($uid, $quotaNeed)) {
+            throw new \RuntimeException('Storage quota exceeded', 507);
+        }
+        $rel = Storage::relPath($uid, $name);
+        if (!@rename($srcAbs, Storage::abs($rel))) {
+            if (!@copy($srcAbs, Storage::abs($rel))) throw new \RuntimeException('Write failed', 500);
+            @unlink($srcAbs);
+        }
+        $id = $existing
+            ? self::replaceWithVersion($uid, $existing, $rel, $mime, $size)
+            : self::insertFile($uid, $folder, $name, $rel, $mime, $size, null, null);
+        return self::fetchOne($uid, $id) ?? [];
+    }
+
+    /** A live (non-trashed) file with this exact name in the given folder, or null. */
+    private static function existingInFolder(int $uid, ?int $folder, string $name): ?array
+    {
+        $pdo = Database::pdo();
+        if ($folder === null) {
+            $stmt = $pdo->prepare('SELECT * FROM files WHERE user_id = ? AND folder_id IS NULL AND name = ? AND deleted_at IS NULL LIMIT 1');
+            $stmt->execute([$uid, $name]);
+        } else {
+            $stmt = $pdo->prepare('SELECT * FROM files WHERE user_id = ? AND folder_id = ? AND name = ? AND deleted_at IS NULL LIMIT 1');
+            $stmt->execute([$uid, $folder, $name]);
+        }
+        $r = $stmt->fetch();
+        return $r ?: null;
+    }
+
+    /**
+     * Point an existing file row at a freshly stored blob, archiving the previous
+     * content into the version history first. Adjusts quota by the size delta and
+     * removes the old blob + stale thumbnail. Returns the (unchanged) file id.
+     */
+    private static function replaceWithVersion(int $uid, array $existing, string $newRel, string $mime, int $newSize): int
+    {
+        self::snapshot($uid, $existing);
+        $oldRel = (string)$existing['storage_path'];
+        $delta = $newSize - (int)$existing['size'];
+        $pdo = Database::pdo();
+        $kind = Storage::kindFromMime($mime);
+        $pdo->prepare('UPDATE files SET storage_path = ?, mime_type = ?, size = ?, kind = ? WHERE id = ? AND user_id = ?')
+            ->execute([$newRel, $mime, $newSize, $kind, (int)$existing['id'], $uid]);
+        $pdo->prepare('UPDATE users SET storage_used = MAX(0, storage_used + ?) WHERE id = ?')->execute([$delta, $uid]);
+        if ($oldRel !== '' && $oldRel !== $newRel) Storage::deleteRel($oldRel);
+        @unlink(Storage::root() . '/thumbs/' . (int)$existing['id'] . '.jpg');
+        $pdo->prepare("INSERT INTO activity (user_id, kind, payload) VALUES (?, 'file_versioned', ?)")
+            ->execute([$uid, json_encode(['file_id' => (int)$existing['id'], 'name' => $existing['name'], 'size' => $newSize])]);
+        return (int)$existing['id'];
     }
 
     private static function session(string $sid, int $uid): ?array

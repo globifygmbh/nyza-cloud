@@ -3,6 +3,14 @@
 
 RewriteEngine On
 
+# HTTP-Basic-Auth-Header an PHP durchreichen (WebDAV-Mount in Finder/Explorer).
+# Apache/FPM verschluckt Authorization sonst gerne — beide Wege absichern.
+RewriteCond %{HTTP:Authorization} .
+RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+<IfModule mod_setenvif.c>
+  SetEnvIfNoCase ^Authorization$ "(.+)" HTTP_AUTHORIZATION=$1
+</IfModule>
+
 # Wenn das angefragte File nicht existiert (z.B. /api/files, /s/abc, /u/xyz),
 # leite alles auf index.php — Slim übernimmt das Routing.
 RewriteCond %{REQUEST_FILENAME} !-f

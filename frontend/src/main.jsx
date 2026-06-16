@@ -10,6 +10,7 @@ import { NyzaAmbient, applyAccent } from './system.jsx';
 import { AuthScreen, Dashboard } from './app.jsx';
 import { PublicSharePage, PublicUploadPage, CenteredLoader } from './pubpages.jsx';
 import { ToastHost } from './toast.jsx';
+import { ConfirmHost, ContextMenuHost } from './overlays.jsx';
 
 // Strip the deployment base path (injected by PHP as window.NYZA_BASE) before
 // matching client-side routes. Without this the regex below wouldn't match
@@ -75,6 +76,8 @@ function Root() {
       <NyzaAmbient/>
       <Dashboard user={user} onUserChange={setUser} theme={theme} onTheme={toggleTheme} basePath={BASE}/>
       <ToastHost/>
+      <ConfirmHost/>
+      <ContextMenuHost/>
     </>
   );
 }

@@ -272,23 +272,12 @@ final class ShareRoutes
         $rows = $files->fetchAll();
         if (!$rows) return Json::err($res, 'No files', 404);
 
-        $zipPath = Storage::temp() . '/share_' . bin2hex(random_bytes(8)) . '.zip';
-        $zip = new \ZipArchive();
-        $zip->open($zipPath, \ZipArchive::CREATE);
+        $members = [];
         foreach ($rows as $r) {
-            $abs = Storage::abs($r['storage_path']);
-            if (is_file($abs)) $zip->addFile($abs, $r['name']);
+            $members[] = ['path' => Storage::abs($r['storage_path']), 'name' => $r['name']];
         }
-        $zip->close();
-
-        $stream = fopen($zipPath, 'rb');
-        register_shutdown_function(static fn() => @unlink($zipPath));
-        $name = 'share-' . substr($share['token'], 0, 8) . '.zip';
-        return $res
-            ->withHeader('Content-Type', 'application/zip')
-            ->withHeader('Content-Disposition', 'attachment; filename="' . $name . '"')
-            ->withHeader('Content-Length', (string)filesize($zipPath))
-            ->withBody(new Stream($stream));
+        \Nyza\ZipStreamer::emit($members, 'share-' . substr($share['token'], 0, 8) . '.zip');
+        return $res; // unreachable — emit() exits after streaming
     }
 
     public static function downloadFile(Request $req, Response $res, array $args): Response

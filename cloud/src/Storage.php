@@ -47,6 +47,20 @@ final class Storage
         return $rel;
     }
 
+    /**
+     * Relative storage path for a version blob: users/<uid>/versions/<random>.
+     * Kept extension-less — versions are opaque snapshots, never web-served.
+     */
+    public static function versionPath(int $userId): string
+    {
+        $rel = sprintf('users/%d/versions/%s', $userId, bin2hex(random_bytes(16)));
+        $dir = dirname(self::root() . '/' . $rel);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+        return $rel;
+    }
+
     public static function abs(string $relPath): string
     {
         return self::root() . '/' . ltrim($relPath, '/');
