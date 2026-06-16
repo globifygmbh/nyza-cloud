@@ -31,6 +31,23 @@ final class Auth
         return JWT::encode($payload, self::secret(), 'HS256');
     }
 
+    /** Short-lived token that ONLY lets the holder complete the 2FA step. */
+    public static function issuePending(int $userId, string $email): string
+    {
+        $now = time();
+        return JWT::encode([
+            'sub' => $userId, 'email' => $email, 'twofa' => 'pending',
+            'iat' => $now, 'exp' => $now + 300,
+        ], self::secret(), 'HS256');
+    }
+
+    /** Decoded sub of a pending-2FA token, or null. */
+    public static function pendingUserId(string $token): ?int
+    {
+        $p = self::decode($token);
+        return ($p && ($p['twofa'] ?? null) === 'pending' && isset($p['sub'])) ? (int)$p['sub'] : null;
+    }
+
     public static function decode(string $token): ?array
     {
         try {
@@ -64,6 +81,8 @@ final class Auth
     public static function userId(Request $req): ?int
     {
         $p = self::fromRequest($req);
+        // A pending-2FA token must NOT authenticate normal API calls.
+        if ($p && ($p['twofa'] ?? null) === 'pending') return null;
         return $p && isset($p['sub']) ? (int)$p['sub'] : null;
     }
 

@@ -1,6 +1,7 @@
 // Authenticated app shell + screens.
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import QRCode from 'qrcode';
 import { API, getToken, setToken } from './api.js';
 import {
   Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
@@ -324,17 +325,32 @@ export function AuthScreen({ onAuth }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [challenge, setChallenge] = useState(null); // 2FA pending token
+  const [code, setCode] = useState('');
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
     try {
       const data = await API.login({ email, password });
+      if (data.requires_2fa) { setChallenge(data.challenge); setBusy(false); return; }
       setToken(data.token);
       onAuth(data.user);
     } catch (err) {
       toast(err.message, 'error');
-    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit2fa = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const data = await API.twoFactorLogin(challenge, code);
+      setToken(data.token);
+      onAuth(data.user);
+    } catch (err) {
+      toast(err.message, 'error');
       setBusy(false);
     }
   };
@@ -345,21 +361,158 @@ export function AuthScreen({ onAuth }) {
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 28 }}>
           <NyzaWordmark size={20}/>
         </div>
-        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 600, letterSpacing: -0.8, margin: 0, textAlign: 'center', lineHeight: 1.1 }}>
-          Willkommen zurück.
-        </h1>
-        <p style={{ fontSize: 13, color: 'var(--fg-3)', textAlign: 'center', marginTop: 8 }}>
-          Melde dich an, um deine Dateien zu sehen.
-        </p>
-        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 28 }}>
-          <FieldInput label="E-Mail" type="email" value={email} onChange={setEmail} placeholder="du@beispiel.de"/>
-          <FieldInput label="Passwort" type="password" value={password} onChange={setPassword}/>
-          <Btn variant="primary" size="lg" full type="submit" disabled={busy} icon={busy ? Ic.loader(16) : null}>
-            {busy ? 'Bitte warten…' : 'Anmelden'}
-          </Btn>
-        </form>
-        <div style={{ marginTop: 20, textAlign: 'center', fontSize: 12, color: 'var(--fg-4)' }}>
-          Single-User-System. Account-Verwaltung über Setup-Wizard.
+        {!challenge ? (
+          <>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 600, letterSpacing: -0.8, margin: 0, textAlign: 'center', lineHeight: 1.1 }}>
+              Willkommen zurück.
+            </h1>
+            <p style={{ fontSize: 13, color: 'var(--fg-3)', textAlign: 'center', marginTop: 8 }}>
+              Melde dich an, um deine Dateien zu sehen.
+            </p>
+            <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 28 }}>
+              <FieldInput label="E-Mail" type="email" value={email} onChange={setEmail} placeholder="du@beispiel.de"/>
+              <FieldInput label="Passwort" type="password" value={password} onChange={setPassword}/>
+              <Btn variant="primary" size="lg" full type="submit" disabled={busy} icon={busy ? Ic.loader(16) : null}>
+                {busy ? 'Bitte warten…' : 'Anmelden'}
+              </Btn>
+            </form>
+            <div style={{ marginTop: 20, textAlign: 'center', fontSize: 12, color: 'var(--fg-4)' }}>
+              Single-User-System. Account-Verwaltung über Setup-Wizard.
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+              <div style={{ width: 56, height: 56, borderRadius: 'var(--r-lg)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 12px 32px -8px var(--accent-glow)' }}>{Ic.lock(24)}</div>
+            </div>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, letterSpacing: -0.6, margin: 0, textAlign: 'center' }}>Bestätigung</h1>
+            <p style={{ fontSize: 13, color: 'var(--fg-3)', textAlign: 'center', marginTop: 8 }}>6-stelliger Code aus deiner Authenticator-App.</p>
+            <form onSubmit={submit2fa} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 24 }}>
+              <input autoFocus inputMode="numeric" maxLength={6} value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} placeholder="000000"
+                style={{ height: 56, textAlign: 'center', letterSpacing: 8, fontSize: 24, fontFamily: 'var(--font-mono)', padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', color: 'var(--fg)' }}/>
+              <Btn variant="primary" size="lg" full type="submit" disabled={busy || code.length !== 6} icon={busy ? Ic.loader(16) : null}>
+                {busy ? 'Prüfe…' : 'Anmelden'}
+              </Btn>
+              <Btn variant="ghost" size="md" type="button" onClick={() => { setChallenge(null); setCode(''); }}>Zurück</Btn>
+            </form>
+          </>
+        )}
+      </Glass>
+    </div>
+  );
+}
+
+// ───── Security modal: 2FA (TOTP) + login history ───────────────────────────
+export function SecurityModal({ user, onClose, onChanged, onChangePassword }) {
+  const [enabled, setEnabled] = useState(!!user.twofa);
+  const [setup, setSetup] = useState(null); // { secret, uri, qr }
+  const [code, setCode] = useState('');
+  const [disablePw, setDisablePw] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [logins, setLogins] = useState(null);
+
+  useEffect(() => { API.loginHistory().then((d) => setLogins(d.logins || [])).catch(() => setLogins([])); }, []);
+
+  const startSetup = async () => {
+    setBusy(true);
+    try {
+      const d = await API.twoFactorSetup();
+      const qr = await QRCode.toDataURL(d.uri, { margin: 1, width: 220 });
+      setSetup({ secret: d.secret, uri: d.uri, qr });
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const enable = async () => {
+    setBusy(true);
+    try { await API.twoFactorEnable(code); setEnabled(true); setSetup(null); setCode(''); toast('2FA aktiviert', 'success'); onChanged && onChanged(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const disable = async () => {
+    setBusy(true);
+    try { await API.twoFactorDisable(disablePw, code); setEnabled(false); setCode(''); setDisablePw(''); toast('2FA deaktiviert', 'success'); onChanged && onChanged(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 520, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '88vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.lock(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>Sicherheit</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 18, overflowY: 'auto' }}>
+          {/* 2FA */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+              <span style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>Zwei-Faktor-Authentifizierung</span>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 999, background: enabled ? 'color-mix(in oklab, var(--success) 20%, transparent)' : 'var(--surface-hi)', color: enabled ? 'var(--success)' : 'var(--fg-3)' }}>{enabled ? 'AKTIV' : 'AUS'}</span>
+            </div>
+
+            {!enabled && !setup && (
+              <>
+                <p style={{ fontSize: 13, color: 'var(--fg-3)', margin: '0 0 12px' }}>Schütze dein Konto zusätzlich mit einer Authenticator-App (Google Authenticator, Authy, 1Password …).</p>
+                <Btn variant="primary" size="md" disabled={busy} icon={busy ? Ic.loader(15) : Ic.lock(15)} onClick={startSetup}>2FA aktivieren</Btn>
+              </>
+            )}
+
+            {!enabled && setup && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <p style={{ fontSize: 13, color: 'var(--fg-3)', margin: 0 }}>1. Scanne den QR-Code in deiner App. 2. Gib den 6-stelligen Code ein.</p>
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <img src={setup.qr} alt="QR" style={{ width: 160, height: 160, borderRadius: 'var(--r-sm)', background: '#fff', padding: 6 }}/>
+                  <div style={{ flex: 1, minWidth: 180 }}>
+                    <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4 }}>Oder manuell eintippen:</div>
+                    <code style={{ fontSize: 12, wordBreak: 'break-all', background: 'var(--surface-hi)', padding: '6px 8px', borderRadius: 6, display: 'block' }}>{setup.secret}</code>
+                  </div>
+                </div>
+                <input inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} placeholder="000000"
+                  style={{ height: 48, textAlign: 'center', letterSpacing: 6, fontSize: 20, fontFamily: 'var(--font-mono)', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', color: 'var(--fg)' }}/>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <Btn variant="ghost" onClick={() => { setSetup(null); setCode(''); }}>Abbrechen</Btn>
+                  <Btn variant="primary" disabled={busy || code.length !== 6} onClick={enable} icon={busy ? Ic.loader(15) : null}>Aktivieren</Btn>
+                </div>
+              </div>
+            )}
+
+            {enabled && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <p style={{ fontSize: 13, color: 'var(--fg-3)', margin: 0 }}>Zum Deaktivieren Passwort + aktuellen Code eingeben.</p>
+                <input type="password" value={disablePw} onChange={(e) => setDisablePw(e.target.value)} placeholder="Aktuelles Passwort"
+                  style={{ height: 40, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', color: 'var(--fg)' }}/>
+                <input inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} placeholder="Code"
+                  style={{ height: 40, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', color: 'var(--fg)', fontFamily: 'var(--font-mono)' }}/>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <Btn variant="danger" disabled={busy || code.length !== 6 || !disablePw} onClick={disable}>2FA deaktivieren</Btn>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Password */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Passwort</div>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Login-Passwort ändern</div>
+            </div>
+            <Btn variant="glass" size="sm" icon={Ic.lock(13)} onClick={() => { onClose(); onChangePassword && onChangePassword(); }}>Ändern</Btn>
+          </div>
+
+          {/* Login history */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Login-Verlauf</div>
+            {logins === null ? <div style={{ color: 'var(--fg-3)' }}>{Ic.loader(18)}</div>
+              : logins.length === 0 ? <div style={{ fontSize: 13, color: 'var(--fg-3)' }}>Noch keine Einträge.</div>
+              : <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+                  {logins.map((l, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, padding: '7px 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)' }}>
+                      <span style={{ width: 7, height: 7, borderRadius: 4, background: l.ok ? 'var(--success)' : 'var(--danger)', flexShrink: 0 }}/>
+                      <span style={{ flex: 1, color: 'var(--fg-2)' }}>{l.ip || '—'} · {(l.user_agent || '').slice(0, 40)}</span>
+                      <span style={{ color: 'var(--fg-3)' }}>{timeAgo(l.created_at)}</span>
+                    </div>
+                  ))}
+                </div>}
+          </div>
         </div>
       </Glass>
     </div>
@@ -518,7 +671,7 @@ function FieldInput({ label, value, onChange, type = 'text', placeholder }) {
 }
 
 // ───── Sidebar ─────────────────────────────────────────────────────────────
-function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, onUpload, onChangePassword, onProfile }) {
+function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, onUpload, onSecurity, onProfile }) {
   const items = [
     { id: 'files',    label: 'Meine Dateien', icon: Ic.home,   count: stats?.files },
     { id: 'favorites',label: 'Favoriten',     icon: Ic.star },
@@ -588,7 +741,7 @@ function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, on
           </div>
           <IconBtn size={28} title="Theme" onClick={onTheme}>{theme === 'dark' ? Ic.sun(14) : Ic.moon(14)}</IconBtn>
           <IconBtn size={28} title="Profil & Branding" onClick={onProfile}>{Ic.cog(14)}</IconBtn>
-          <IconBtn size={28} title="Passwort ändern" onClick={onChangePassword}>{Ic.lock(14)}</IconBtn>
+          <IconBtn size={28} title="Sicherheit & 2FA" onClick={onSecurity}>{Ic.lock(14)}</IconBtn>
           <IconBtn size={28} title="Abmelden" onClick={onLogout}>{Ic.logout(14)}</IconBtn>
         </div>
       </div>
@@ -633,7 +786,7 @@ function MobileNav({ active, onNavigate, onUpload, onMore }) {
   );
 }
 
-function MoreSheet({ user, theme, onTheme, onNavigate, onChangePassword, onProfile, onLogout, onClose }) {
+function MoreSheet({ user, theme, onTheme, onNavigate, onSecurity, onProfile, onLogout, onClose }) {
   const item = (icon, label, onClick, danger) => (
     <button onClick={() => { onClick(); onClose(); }} style={{
       display: 'flex', alignItems: 'center', gap: 14, width: '100%', padding: '14px 16px',
@@ -655,7 +808,7 @@ function MoreSheet({ user, theme, onTheme, onNavigate, onChangePassword, onProfi
         {item(Ic.trash(18), 'Papierkorb', () => onNavigate({ name: 'trash' }))}
         {item(Ic.cog(18), 'Profil & Branding', onProfile)}
         {item(theme === 'dark' ? Ic.sun(18) : Ic.moon(18), theme === 'dark' ? 'Helles Design' : 'Dunkles Design', onTheme)}
-        {item(Ic.lock(18), 'Passwort ändern', onChangePassword)}
+        {item(Ic.lock(18), 'Sicherheit & 2FA', onSecurity)}
         {item(Ic.logout(18), 'Abmelden', onLogout, true)}
       </Glass>
     </div>
@@ -1700,6 +1853,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const [uploadLinkFolder, setUploadLinkFolder] = useState(null);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showSecurity, setShowSecurity] = useState(false);
   const [renameFolderTarget, setRenameFolderTarget] = useState(null);
   const [moveTarget, setMoveTarget] = useState(null); // { kind:'folder'|'files', folder?, ids? }
   const [allFolders, setAllFolders] = useState([]);
@@ -1785,7 +1939,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         <Sidebar active={activeNav} stats={stats} user={user} onTheme={onTheme} theme={theme}
           onNavigate={(n) => { setNav(n); setSearch(''); }}
           onUpload={() => triggerUpload(null)}
-          onChangePassword={() => setShowPasswordModal(true)}
+          onSecurity={() => setShowSecurity(true)}
           onProfile={() => setShowProfile(true)}
           onLogout={() => { setToken(null); location.reload(); }}/>
       )}
@@ -1867,6 +2021,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
       )}
       {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)}/>}
       {showProfile && <ProfileModal user={user} onClose={() => setShowProfile(false)} onSaved={(u) => onUserChange && onUserChange(u)}/>}
+      {showSecurity && <SecurityModal user={user} onClose={() => setShowSecurity(false)}
+        onChanged={async () => { try { const d = await API.me(); onUserChange && onUserChange(d.user); } catch {} }}
+        onChangePassword={() => setShowPasswordModal(true)}/>}
       {renameFolderTarget && (
         <RenameFolderModal folder={renameFolderTarget} onClose={() => setRenameFolderTarget(null)} onSaved={refreshAll}/>
       )}
@@ -1891,7 +2048,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
       {showMore && (
         <MoreSheet user={user} theme={theme} onTheme={onTheme}
           onNavigate={(n) => { setNav(n); setSearch(''); }}
-          onChangePassword={() => setShowPasswordModal(true)}
+          onSecurity={() => setShowSecurity(true)}
           onProfile={() => setShowProfile(true)}
           onLogout={() => { setToken(null); location.reload(); }}
           onClose={() => setShowMore(false)}/>

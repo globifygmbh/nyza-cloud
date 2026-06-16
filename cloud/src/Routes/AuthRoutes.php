@@ -24,13 +24,29 @@ final class AuthRoutes
     public static function mount(App $app): void
     {
         $app->post('/api/auth/login',           [self::class, 'login']);
+        $app->post('/api/auth/2fa/login',       [self::class, 'twoFactorLogin']);
         $app->get('/api/auth/me',               [self::class, 'me']);
         $app->post('/api/auth/change-password', [self::class, 'changePassword'])->add(new AuthMiddleware());
         $app->patch('/api/auth/profile',        [self::class, 'updateProfile'])->add(new AuthMiddleware());
         $app->post('/api/auth/logo',            [self::class, 'uploadLogo'])->add(new AuthMiddleware());
         $app->delete('/api/auth/logo',          [self::class, 'deleteLogo'])->add(new AuthMiddleware());
+        $app->post('/api/auth/2fa/setup',       [self::class, 'twoFactorSetup'])->add(new AuthMiddleware());
+        $app->post('/api/auth/2fa/enable',      [self::class, 'twoFactorEnable'])->add(new AuthMiddleware());
+        $app->post('/api/auth/2fa/disable',     [self::class, 'twoFactorDisable'])->add(new AuthMiddleware());
+        $app->get('/api/auth/logins',           [self::class, 'loginHistory'])->add(new AuthMiddleware());
         // Public: serve a user's logo for share/upload-page branding.
         $app->get('/api/branding/logo/{uid}',   [self::class, 'serveLogo']);
+    }
+
+    private static function logLogin(Request $req, ?int $uid, string $email, bool $ok, string $reason): void
+    {
+        try {
+            $sp = $req->getServerParams();
+            $ip = \Nyza\RateLimiter::clientIp($req);
+            $ua = substr((string)($sp['HTTP_USER_AGENT'] ?? ''), 0, 255);
+            Database::pdo()->prepare('INSERT INTO login_events (user_id, email, ip, user_agent, ok, reason) VALUES (?, ?, ?, ?, ?, ?)')
+                ->execute([$uid, $email !== '' ? $email : null, $ip, $ua, $ok ? 1 : 0, $reason]);
+        } catch (\Throwable $e) { /* best-effort */ }
     }
 
     /** Public user payload — id/email/name/accent + whether a logo exists. */
@@ -54,27 +70,113 @@ final class AuthRoutes
         $password = (string)($b['password'] ?? '');
 
         $pdo = Database::pdo();
-        $stmt = $pdo->prepare('SELECT id, email, password_hash, name FROM users WHERE email = ?');
+        $stmt = $pdo->prepare('SELECT id, email, password_hash, name, accent, logo_path, totp_enabled FROM users WHERE email = ?');
         $stmt->execute([$email]);
         $u = $stmt->fetch();
         if (!$u || !password_verify($password, $u['password_hash'])) {
+            self::logLogin($req, $u ? (int)$u['id'] : null, $email, false, 'bad_password');
             return Json::err($res, 'Invalid credentials', 401, 'invalid_credentials');
         }
+        // Second factor required → hand back a short-lived challenge instead of a token.
+        if (!empty($u['totp_enabled'])) {
+            return Json::ok($res, ['requires_2fa' => true, 'challenge' => Auth::issuePending((int)$u['id'], $u['email'])]);
+        }
+        self::logLogin($req, (int)$u['id'], $email, true, 'password');
         $token = Auth::issue((int)$u['id'], $u['email']);
         return Json::ok($res, ['token' => $token, 'user' => self::publicUser($u)]);
+    }
+
+    public static function twoFactorLogin(Request $req, Response $res): Response
+    {
+        if (!\Nyza\RateLimiter::allowReq($req, '2fa_login', 10, 300)) {
+            return Json::err($res, 'Zu viele Versuche — bitte später erneut', 429, 'rate_limited');
+        }
+        $b = (array) $req->getParsedBody();
+        $uid = Auth::pendingUserId((string)($b['challenge'] ?? ''));
+        if (!$uid) return Json::err($res, 'Challenge abgelaufen — bitte erneut anmelden', 401, 'challenge_expired');
+
+        $pdo = Database::pdo();
+        $stmt = $pdo->prepare('SELECT id, email, name, accent, logo_path, totp_secret, totp_enabled FROM users WHERE id = ?');
+        $stmt->execute([$uid]);
+        $u = $stmt->fetch();
+        if (!$u || empty($u['totp_enabled']) || !\Nyza\Totp::verify((string)($b['code'] ?? ''), (string)$u['totp_secret'])) {
+            self::logLogin($req, $uid, (string)($u['email'] ?? ''), false, 'bad_2fa');
+            return Json::err($res, 'Code ungültig', 401, 'bad_code');
+        }
+        self::logLogin($req, $uid, $u['email'], true, '2fa');
+        return Json::ok($res, ['token' => Auth::issue((int)$u['id'], $u['email']), 'user' => self::publicUser($u)]);
+    }
+
+    public static function twoFactorSetup(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $pdo = Database::pdo();
+        $stmt = $pdo->prepare('SELECT email, totp_secret, totp_enabled FROM users WHERE id = ?');
+        $stmt->execute([$uid]);
+        $u = $stmt->fetch();
+        if (!empty($u['totp_enabled'])) return Json::err($res, '2FA ist bereits aktiv', 409);
+        // (Re)generate a secret each time setup is opened, until confirmed.
+        $secret = \Nyza\Totp::secret();
+        $pdo->prepare('UPDATE users SET totp_secret = ? WHERE id = ?')->execute([$secret, $uid]);
+        return Json::ok($res, ['secret' => $secret, 'uri' => \Nyza\Totp::uri($secret, (string)$u['email'])]);
+    }
+
+    public static function twoFactorEnable(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $b = (array) $req->getParsedBody();
+        $pdo = Database::pdo();
+        $stmt = $pdo->prepare('SELECT totp_secret FROM users WHERE id = ?');
+        $stmt->execute([$uid]);
+        $u = $stmt->fetch();
+        if (!$u || !$u['totp_secret']) return Json::err($res, 'Bitte zuerst Setup starten', 400);
+        if (!\Nyza\Totp::verify((string)($b['code'] ?? ''), (string)$u['totp_secret'])) {
+            return Json::err($res, 'Code ungültig — bitte erneut versuchen', 422, 'bad_code');
+        }
+        $pdo->prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?')->execute([$uid]);
+        return Json::ok($res, ['ok' => true, 'enabled' => true]);
+    }
+
+    public static function twoFactorDisable(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $b = (array) $req->getParsedBody();
+        $pdo = Database::pdo();
+        $stmt = $pdo->prepare('SELECT password_hash, totp_secret FROM users WHERE id = ?');
+        $stmt->execute([$uid]);
+        $u = $stmt->fetch();
+        if (!$u) return Json::err($res, 'Not found', 404);
+        // Require current password AND a valid code to turn it off.
+        if (!password_verify((string)($b['password'] ?? ''), $u['password_hash'])) {
+            return Json::err($res, 'Passwort falsch', 401, 'wrong_password');
+        }
+        if (!\Nyza\Totp::verify((string)($b['code'] ?? ''), (string)$u['totp_secret'])) {
+            return Json::err($res, 'Code ungültig', 422, 'bad_code');
+        }
+        $pdo->prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?')->execute([$uid]);
+        return Json::ok($res, ['ok' => true, 'enabled' => false]);
+    }
+
+    public static function loginHistory(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $stmt = Database::pdo()->prepare('SELECT ip, user_agent, ok, reason, created_at FROM login_events WHERE user_id = ? ORDER BY id DESC LIMIT 50');
+        $stmt->execute([$uid]);
+        return Json::ok($res, ['logins' => $stmt->fetchAll()]);
     }
 
     public static function me(Request $req, Response $res): Response
     {
         $uid = Auth::userId($req);
         if (!$uid) return Json::err($res, 'Unauthorized', 401);
-        $stmt = Database::pdo()->prepare('SELECT id, email, name, storage_quota, storage_used, accent, logo_path, created_at FROM users WHERE id = ?');
+        $stmt = Database::pdo()->prepare('SELECT id, email, name, storage_quota, storage_used, accent, logo_path, totp_enabled, created_at FROM users WHERE id = ?');
         $stmt->execute([$uid]);
         $u = $stmt->fetch();
         if (!$u) return Json::err($res, 'Not found', 404);
         return Json::ok($res, ['user' => self::publicUser($u) + [
             'storage_quota' => (int)$u['storage_quota'],
             'storage_used' => (int)$u['storage_used'],
+            'twofa' => !empty($u['totp_enabled']),
             'created_at' => $u['created_at'],
         ]]);
     }
