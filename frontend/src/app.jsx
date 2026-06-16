@@ -1060,6 +1060,30 @@ function SortControl({ sort, onSort }) {
   );
 }
 
+// Folder colour palette (Google-Drive-style tags). Each entry drives the card
+// gradient, glow and the swatch dot. `h` = oklch hues, `c` = chroma factor
+// (gray uses near-zero). Legacy tones (aurora/sunset/mono) stay mapped.
+const FOLDER_TONES = {
+  violet: { label: 'Violett', h: [282, 265], c: 1 },
+  blue:   { label: 'Blau',    h: [245, 255], c: 1 },
+  teal:   { label: 'Türkis',  h: [195, 205], c: 1 },
+  green:  { label: 'Grün',    h: [150, 158], c: 1 },
+  yellow: { label: 'Gelb',    h: [95, 88],  c: 1 },
+  orange: { label: 'Orange',  h: [55, 38],  c: 1 },
+  red:    { label: 'Rot',     h: [25, 18],  c: 1 },
+  pink:   { label: 'Pink',    h: [350, 338], c: 1 },
+  gray:   { label: 'Grau',    h: [260, 260], c: 0.06 },
+  // legacy values kept for older folders
+  aurora: { label: 'Aurora',  h: [168, 200], c: 1 },
+  sunset: { label: 'Sunset',  h: [30, 360],  c: 1 },
+  mono:   { label: 'Mono',    h: [240, 260], c: 0.15 },
+};
+// Order shown in the colour picker.
+const FOLDER_COLOR_KEYS = ['violet', 'blue', 'teal', 'green', 'yellow', 'orange', 'red', 'pink', 'gray'];
+function folderTone(key) { return FOLDER_TONES[key] || FOLDER_TONES.violet; }
+function folderDot(key) { const t = folderTone(key); return `oklch(0.68 ${0.2 * t.c} ${t.h[0]})`; }
+const FOLDER_SWATCHES = FOLDER_COLOR_KEYS.map((k) => ({ key: k, label: FOLDER_TONES[k].label, dot: folderDot(k) }));
+
 // ───── Kebab menu (reusable) ───────────────────────────────────────────────
 function KebabMenu({ items }) {
   const [open, setOpen] = useState(false);
@@ -1101,7 +1125,9 @@ function KebabMenu({ items }) {
 
 // ───── Folder card ─────────────────────────────────────────────────────────
 function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDropFiles, onContext }) {
-  const tones = ({ violet: [280, 250], aurora: [168, 200], sunset: [30, 360], mono: [240, 260] })[folder.tone] || [280, 250];
+  const t = folderTone(folder.tone);
+  const tones = t.h;
+  const cc = t.c;
   const [dropOver, setDropOver] = useState(false);
   return (
     <div onClick={onClick} onContextMenu={onContext ? (e) => { e.preventDefault(); e.stopPropagation(); onContext(folder, e); } : undefined} style={{
@@ -1123,14 +1149,14 @@ function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDr
       <div style={{ height: 132, position: 'relative', overflow: 'hidden' }}>
         <div style={{
           position: 'absolute', inset: 0,
-          background: `linear-gradient(135deg, oklch(0.4 0.12 ${tones[0]} / 0.5), oklch(0.3 0.08 ${tones[1]} / 0.7))`,
+          background: `linear-gradient(135deg, oklch(0.4 ${0.12 * cc} ${tones[0]} / 0.5), oklch(0.3 ${0.08 * cc} ${tones[1]} / 0.7))`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <div style={{
             width: 64, height: 64, borderRadius: 'var(--r-md)',
-            background: `linear-gradient(135deg, oklch(0.7 0.18 ${tones[0]}), oklch(0.55 0.2 ${tones[1]}))`,
+            background: `linear-gradient(135deg, oklch(0.7 ${0.18 * cc} ${tones[0]}), oklch(0.55 ${0.2 * cc} ${tones[1]}))`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 1px 0 rgba(255,255,255,0.3) inset, 0 8px 24px -8px oklch(0.65 0.2 ' + tones[0] + ' / 0.6)', color: '#fff',
+            boxShadow: '0 1px 0 rgba(255,255,255,0.3) inset, 0 8px 24px -8px oklch(0.65 ' + (0.2 * cc) + ' ' + tones[0] + ' / 0.6)', color: '#fff',
           }}>{folder.kind === 'gallery' ? Ic.fileImg(28) : Ic.folder(28)}</div>
         </div>
         <div style={{
@@ -1142,7 +1168,10 @@ function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDr
       <div style={{ padding: '14px 16px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
           <div style={{ flex: 1, fontSize: 14, fontWeight: 540, lineHeight: 1.3, letterSpacing: -0.1 }}>{folder.name}</div>
-          {(onShare || onDelete || onRename || onMove) && (
+          {onContext ? (
+            <span title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); onContext(folder, { clientX: b.right, clientY: b.bottom, preventDefault() {}, stopPropagation() {} }); }}
+              style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
+          ) : (onShare || onDelete || onRename || onMove) && (
             <KebabMenu items={[
               ...(onRename ? [{ label: 'Umbenennen', icon: Ic.fileGen(15), onClick: onRename }] : []),
               ...(onMove ? [{ label: 'Verschieben', icon: Ic.folder(15), onClick: onMove }] : []),
@@ -1950,7 +1979,7 @@ export function RenameFolderModal({ folder, onClose, onSaved }) {
               <option value="normal">Dateien</option><option value="gallery">Galerie</option>
             </select>
             <select value={tone} onChange={(e) => setTone(e.target.value)} style={{ flex: 1, height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', color: 'var(--fg)' }}>
-              <option value="violet">Violet</option><option value="aurora">Aurora</option><option value="sunset">Sunset</option><option value="mono">Mono</option>
+              {FOLDER_COLOR_KEYS.map((k) => <option key={k} value={k}>{FOLDER_TONES[k].label}</option>)}
             </select>
           </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
@@ -2109,7 +2138,7 @@ function NewFolderRow({ onCreate, onCancel }) {
         <option value="normal">Dateien</option><option value="gallery">Galerie</option>
       </select>
       <select value={tone} onChange={(e) => setTone(e.target.value)} style={{ height: 36, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}>
-        <option value="violet">Violet</option><option value="aurora">Aurora</option><option value="sunset">Sunset</option><option value="mono">Mono</option>
+        {FOLDER_COLOR_KEYS.map((k) => <option key={k} value={k}>{FOLDER_TONES[k].label}</option>)}
       </select>
       <Btn variant="primary" size="sm" disabled={!name.trim()} onClick={() => onCreate(name.trim(), kind, tone)}>Erstellen</Btn>
       <Btn variant="ghost" size="sm" onClick={onCancel}>Abbrechen</Btn>
@@ -2239,6 +2268,10 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
     catch (e) { toast(e.message, 'error'); }
   };
   const downloadOne = (f) => { window.location.href = API.fileRawUrl(f.id) + '?token=' + (getToken() || '') + '&dl=1'; };
+  const setFolderColor = async (folder, tone) => {
+    try { await API.renameFolder(folder.id, { tone }); refreshAll(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
   const dropToFolder = async (folderId, ids) => {
     const dest = (allFolders.find((f) => f.id === folderId) || folders.find((f) => f.id === folderId));
     const where = dest ? `„${dest.name}"` : 'diesen Ordner';
@@ -2270,6 +2303,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onShareFolder={(f) => setShareTarget({ folder: f })}
             onRenameFolder={(f) => setRenameFolderTarget(f)}
             onMoveFolder={(f) => openMove({ kind: 'folder', folder: f })}
+            onFolderColor={setFolderColor}
             onMoveFiles={(ids) => openMove({ kind: 'files', ids })}
             onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner löschen?', message: `„${f.name}" und alle enthaltenen Dateien werden endgültig gelöscht. Das kann nicht rückgängig gemacht werden.`, confirmLabel: 'Ordner löschen', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onNewFolder={async (name, kind, tone) => { try { await API.newFolder({ name, kind, tone }); toast('Ordner erstellt', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
@@ -2313,6 +2347,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onMoveFolder={(f) => openMove({ kind: 'folder', folder: f })}
             onRenameFolder={(f) => setRenameFolderTarget(f)}
             onShareFolderItem={(f) => setShareTarget({ folder: f })}
+            onFolderColor={setFolderColor}
             onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner löschen?', message: `„${f.name}" und alle enthaltenen Dateien werden endgültig gelöscht.`, confirmLabel: 'Ordner löschen', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onDeleteFile={async (f) => { if (!await confirmDialog({ title: 'In den Papierkorb?', message: `„${f.name}" wird in den Papierkorb verschoben. Du kannst sie dort wiederherstellen.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFile(f.id); toast('In den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             afterChange={refreshAll}
@@ -2435,6 +2470,9 @@ function folderMenuItems(folder, o) {
     o.onRename && { label: 'Umbenennen', icon: Ic.fileGen(15), onClick: () => o.onRename(folder) },
     o.onMove && { label: 'Verschieben', icon: Ic.folder(15), onClick: () => o.onMove(folder) },
     o.onShare && { label: 'Teilen', icon: Ic.share(15), onClick: () => o.onShare(folder) },
+    o.onColor && { separator: true },
+    o.onColor && { header: 'Farbe' },
+    o.onColor && { swatches: FOLDER_SWATCHES, current: folder.tone || 'violet', onPick: (key) => o.onColor(folder, key) },
     { separator: true },
     o.onDelete && { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => o.onDelete(folder) },
   ];
@@ -2443,7 +2481,7 @@ function folderMenuItems(folder, o) {
 // ───── Files (home) view ───────────────────────────────────────────────────
 function FilesView({
   user, stats, folders, view, setView, sort, setSort, search, setSearch, refreshTick,
-  onOpenFolder, onShareFolder, onRenameFolder, onMoveFolder, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
+  onOpenFolder, onShareFolder, onRenameFolder, onMoveFolder, onFolderColor, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
   onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, onUnzip, onVersions, onDownloadFile,
 }) {
   const [files, setFiles] = useState(null);
@@ -2500,7 +2538,7 @@ function FilesView({
     }));
   };
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
-    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolder, onDelete: onDeleteFolder,
+    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolder, onColor: onFolderColor, onDelete: onDeleteFolder,
   }));
   const bgCtx = (e) => {
     if (e.target.closest('[data-fid]') || e.target.closest('[data-folder-card]')) return;
@@ -2630,7 +2668,7 @@ function FilesView({
 function FolderView({
   folderId, view, setView, sort, setSort, search, setSearch, refreshTick,
   onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onMoveFiles, onUploadLink, onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, afterChange,
-  onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onShareFolderItem, onDeleteFolder,
+  onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onShareFolderItem, onDeleteFolder, onFolderColor,
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2678,7 +2716,7 @@ function FolderView({
     }));
   };
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
-    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolderItem, onDelete: onDeleteFolder,
+    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolderItem, onColor: onFolderColor, onDelete: onDeleteFolder,
   }));
   const bgCtx = (e) => {
     if (e.target.closest('[data-fid]')) return;

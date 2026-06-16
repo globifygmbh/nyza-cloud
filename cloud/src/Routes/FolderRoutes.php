@@ -13,6 +13,9 @@ use Slim\Routing\RouteCollectorProxy;
 
 final class FolderRoutes
 {
+    /** Allowed folder colour/tone keys (Google-Drive-style colour tags + legacy). */
+    private const TONES = ['violet', 'blue', 'teal', 'green', 'yellow', 'orange', 'red', 'pink', 'gray', 'sunset', 'aurora', 'mono'];
+
     public static function mount(App $app): void
     {
         $app->group('/api/folders', function (RouteCollectorProxy $g) {
@@ -61,7 +64,7 @@ final class FolderRoutes
         if ($name === '') return Json::err($res, 'Name required', 422);
 
         $kind = in_array($b['kind'] ?? 'normal', ['normal', 'gallery'], true) ? $b['kind'] : 'normal';
-        $tone = in_array($b['tone'] ?? 'violet', ['violet', 'sunset', 'aurora', 'mono'], true) ? $b['tone'] : 'violet';
+        $tone = in_array($b['tone'] ?? 'violet', self::TONES, true) ? $b['tone'] : 'violet';
         $parent = isset($b['parent_id']) ? (int)$b['parent_id'] : null;
 
         $stmt = Database::pdo()->prepare(
@@ -109,12 +112,13 @@ final class FolderRoutes
             }
         }
 
+        $tone = (isset($b['tone']) && in_array($b['tone'], self::TONES, true)) ? $b['tone'] : null;
         $pdo = Database::pdo();
         $stmt = $pdo->prepare(
             'UPDATE folders SET name = COALESCE(?, name), kind = COALESCE(?, kind), tone = COALESCE(?, tone), updated_at = CURRENT_TIMESTAMP '
             . 'WHERE id = ? AND user_id = ?'
         );
-        $stmt->execute([$b['name'] ?? null, $b['kind'] ?? null, $b['tone'] ?? null, $id, $uid]);
+        $stmt->execute([$b['name'] ?? null, $b['kind'] ?? null, $tone, $id, $uid]);
 
         if ($movingParent) {
             $pdo->prepare('UPDATE folders SET parent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')

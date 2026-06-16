@@ -141,6 +141,24 @@ export function ContextMenuHost() {
       {menu.items.map((it, i) => {
         if (it.separator) return <div key={i} style={{ height: 1, background: 'var(--border)', margin: '5px 6px' }}/>;
         if (it.header) return <div key={i} style={{ padding: '6px 10px 4px', fontSize: 10.5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', color: 'var(--fg-3)' }}>{it.header}</div>;
+        if (it.swatches) return (
+          <div key={i} style={{ display: 'flex', flexWrap: 'wrap', gap: 7, padding: '6px 10px 8px' }}>
+            {it.swatches.map((s) => {
+              const active = s.key === it.current;
+              return (
+                <button key={s.key} title={s.label} onClick={() => { setMenu(null); it.onPick && it.onPick(s.key); }}
+                  style={{
+                    width: 22, height: 22, borderRadius: '50%', cursor: 'pointer', background: s.dot,
+                    border: active ? '2px solid var(--fg)' : '2px solid transparent',
+                    boxShadow: active ? '0 0 0 2px var(--surface)' : '0 1px 2px rgba(0,0,0,0.3)',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+                  }}>
+                  {active && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#fff' }}/>}
+                </button>
+              );
+            })}
+          </div>
+        );
         return (
           <button key={i} disabled={it.disabled}
             onClick={() => { setMenu(null); it.onClick && it.onClick(); }}
