@@ -128,6 +128,15 @@ input, textarea {
 .nyza-toast.error { color: var(--danger); }
 .nyza-toast.success { color: var(--success); }
 
+/* Masonry gallery (public share gallery mode) — images in original aspect */
+.nyza-masonry { columns: 4 260px; column-gap: 14px; }
+.nyza-masonry > div { break-inside: avoid; margin: 0 0 14px; position: relative; cursor: pointer; border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--border); }
+.nyza-masonry img { width: 100%; display: block; }
+.nyza-masonry .ov { position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,0.55), transparent 45%); opacity: 0; transition: opacity .2s; display: flex; align-items: flex-end; padding: 10px 12px; }
+.nyza-masonry > div:hover .ov { opacity: 1; }
+.nyza-masonry .ov span { color: #fff; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 760px) { .nyza-masonry { columns: 2 150px; column-gap: 8px; } .nyza-masonry > div { margin-bottom: 8px; } }
+
 /* Modal backdrop */
 .nyza-modal-backdrop {
   position: fixed; inset: 0; z-index: 100;
@@ -232,4 +241,8 @@ html, body, #root { max-width: 100%; overflow-x: hidden; }
   .nyza-listrow { flex-wrap: wrap; gap: 10px !important; }
   .nyza-listrow > div:first-child { display: none; }
   .nyza-listrow > .nyza-listrow-main { flex-basis: 100%; min-width: 0; }
+
+  /* Public gallery title smaller on phones */
+  .nyza-gallery-title { font-size: 32px !important; letter-spacing: -1px !important; }
+  .nyza-gallery-wrap { padding: 20px 16px 80px !important; }
 }

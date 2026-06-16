@@ -86,7 +86,14 @@ final class ShareRoutes
     public static function list(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $stmt = Database::pdo()->prepare('SELECT * FROM share_links WHERE user_id = ? ORDER BY created_at DESC');
+        // Include the shared item's NAME so the list shows what's shared, not just
+        // the opaque token.
+        $stmt = Database::pdo()->prepare(
+            'SELECT s.*, '
+            . '  (SELECT name FROM folders WHERE id = s.folder_id) AS folder_name, '
+            . '  (SELECT name FROM files   WHERE id = s.file_id)   AS file_name '
+            . 'FROM share_links s WHERE s.user_id = ? ORDER BY s.created_at DESC'
+        );
         $stmt->execute([$uid]);
         return Json::ok($res, ['shares' => $stmt->fetchAll()]);
     }
@@ -103,12 +110,14 @@ final class ShareRoutes
         $passwordHash = !empty($b['password']) ? password_hash((string)$b['password'], PASSWORD_BCRYPT) : null;
         $expires = !empty($b['expires_at']) ? (string)$b['expires_at'] : null;
         $allowDownload = isset($b['allow_download']) ? (int)(bool)$b['allow_download'] : 1;
+        // Gallery view only makes sense for a shared folder.
+        $gallery = ($folder && !empty($b['gallery'])) ? 1 : 0;
 
         $ins = Database::pdo()->prepare(
-            'INSERT INTO share_links (user_id, folder_id, file_id, token, password_hash, expires_at, allow_download) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO share_links (user_id, folder_id, file_id, token, password_hash, expires_at, allow_download, gallery) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         );
-        $ins->execute([$uid, $folder, $file, $token, $passwordHash, $expires, $allowDownload]);
+        $ins->execute([$uid, $folder, $file, $token, $passwordHash, $expires, $allowDownload, $gallery]);
         $id = (int)Database::pdo()->lastInsertId();
 
         // Optional: invite people by email. The frontend passes the fully-built
@@ -133,7 +142,7 @@ final class ShareRoutes
                 'id' => $id, 'token' => $token,
                 'folder_id' => $folder, 'file_id' => $file,
                 'expires_at' => $expires, 'allow_download' => (bool)$allowDownload,
-                'has_password' => $passwordHash !== null,
+                'has_password' => $passwordHash !== null, 'gallery' => (bool)$gallery,
                 'invited' => $sent,
             ],
         ], 201);
@@ -232,6 +241,7 @@ final class ShareRoutes
         $payload = [
             'token' => $share['token'],
             'allow_download' => (bool)$share['allow_download'],
+            'gallery' => !empty($share['gallery']),
             'expires_at' => $share['expires_at'],
             'owner' => $ownerRow ? [
                 'id' => (int)$ownerRow['id'], 'name' => $ownerRow['name'], 'email' => $ownerRow['email'],

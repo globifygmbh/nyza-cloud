@@ -86,6 +86,83 @@ export function PublicSharePage({ token }) {
   const items = isFolder ? data.files : (data.file ? [data.file] : []);
   const name = isFolder ? data.folder.name : (data.file?.name || 'Geteilte Datei');
   const totalSize = isFolder ? data.total_size : (data.file?.size || 0);
+  const galleryMode = isFolder && data.gallery;
+  const images = items.filter((f) => f.kind === 'image');
+
+  // ── Gallery mode: folder name as title, masonry of images in original aspect,
+  //    click → fullscreen viewer, bulk download. Perfect for Hochzeit/Geburtstag.
+  if (galleryMode) {
+    return (
+      <div style={{ height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
+        <div style={{ padding: '24px 28px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {data.owner?.has_logo
+              ? <img src={API.logoUrl(data.owner.id)} alt={data.owner?.name} style={{ maxHeight: 36, maxWidth: 180, objectFit: 'contain' }}/>
+              : <span style={{ fontSize: 13, fontWeight: 540 }}>{data.owner?.name}</span>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--fg-3)' }}>via <NyzaWordmark size={11}/></div>
+        </div>
+
+        <div className="nyza-gallery-wrap" style={{ padding: '28px 28px 70px', maxWidth: 1400, margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 22 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10 }}>Galerie</div>
+              <h1 className="nyza-gallery-title" style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 600, letterSpacing: -1.6, margin: 0, lineHeight: 1.0, wordBreak: 'break-word' }}>{name}</h1>
+              <p style={{ fontSize: 14, color: 'var(--fg-2)', marginTop: 12 }}>
+                {images.length} {images.length === 1 ? 'Bild' : 'Bilder'} · {humanSize(totalSize)}
+                {data.expires_at && <> · bis {new Date(data.expires_at).toLocaleDateString('de-DE')}</>}
+              </p>
+            </div>
+            {data.allow_download && (
+              <Btn variant="primary" size="lg" icon={Ic.download(18)} onClick={() => location.href = API.shareZipUrl(token, password)}>Alle herunterladen</Btn>
+            )}
+          </div>
+
+          <div className="nyza-masonry">
+            {images.map((f) => (
+              <div key={f.id} onClick={() => setViewing(f)}>
+                <img src={API.shareFileUrl(token, f.id, password)} alt={f.name} loading="lazy"/>
+                <div className="ov"><span>{f.name}</span></div>
+              </div>
+            ))}
+          </div>
+
+          {/* any non-image files still listed below */}
+          {items.length > images.length && (
+            <div style={{ marginTop: 32, display: 'grid', gap: 8 }}>
+              {items.filter((f) => f.kind !== 'image').map((f) => (
+                <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
+                  onClick={() => setViewing(f)}>
+                  <FileIcon kind={f.kind} size={16} tint={f.hue}/>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{humanSize(f.size)}</div>
+                  </div>
+                  {data.allow_download && <Btn variant="glass" size="sm" icon={Ic.download(13)} onClick={(e) => { e.stopPropagation(); location.href = API.shareFileUrl(token, f.id, password, true); }}>Download</Btn>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {viewing && (() => {
+          const gal = items.filter((f) => ['image', 'video', 'pdf', 'audio'].includes(f.kind) || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(f.name));
+          const list = gal.length ? gal : [viewing];
+          return (
+            <MediaViewer items={list} startIndex={Math.max(0, list.findIndex((x) => x.id === viewing.id))}
+              srcFor={(f) => API.shareFileUrl(token, f.id, password)}
+              downloadFor={(f) => data.allow_download ? API.shareFileUrl(token, f.id, password, true) : null}
+              comments={{
+                load: (f) => API.shareComments(token, f.id, password).then((d) => d.comments || []),
+                add: (f, { body, author_name }) => API.addShareComment(token, f.id, { body, author_name, password }).then((d) => d.comments || []),
+                askName: true,
+              }}
+              onClose={() => setViewing(null)}/>
+          );
+        })()}
+      </div>
+    );
+  }
 
   return (
     <div style={{ height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>

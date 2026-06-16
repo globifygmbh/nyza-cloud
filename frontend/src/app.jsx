@@ -1727,6 +1727,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const [withPassword, setWithPassword] = useState(false);
   const [password, setPassword] = useState('');
   const [allowDownload, setAllowDownload] = useState(true);
+  const [galleryMode, setGalleryMode] = useState(false);
   const [withExpiry, setWithExpiry] = useState(false);
   const [expiresAt, setExpiresAt] = useState(() => { const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10); });
   const [withInvite, setWithInvite] = useState(false);
@@ -1739,6 +1740,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
     setBusy(true);
     try {
       const body = { folder_id: folder?.id, file_id: file?.id, allow_download: allowDownload };
+      if (folder && galleryMode) body.gallery = true;
       if (withPassword && password) body.password = password;
       if (withExpiry && expiresAt) body.expires_at = expiresAt + ' 23:59:59';
       if (withInvite) {
@@ -1782,6 +1784,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
           ) : (
             <>
               <ShareToggleRow icon={Ic.download} title="Download erlauben" desc="ZIP & Einzeldownload" on={allowDownload} onToggle={() => setAllowDownload(!allowDownload)}/>
+              {folder && <ShareToggleRow icon={Ic.fileImg} title="Galerie-Ansicht" desc={galleryMode ? 'Bilder schön als Galerie' : 'Normale Dateiliste'} on={galleryMode} onToggle={() => setGalleryMode(!galleryMode)}/>}
               <ShareToggleRow icon={Ic.lock} title="Mit Passwort schützen" desc={withPassword ? 'Aktiv' : 'Kein Schutz'} on={withPassword} onToggle={() => setWithPassword(!withPassword)}/>
               {withPassword && <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Passwort eingeben" style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', marginTop: 8 }}/>}
               <ShareToggleRow icon={Ic.clock} title="Ablaufdatum" desc={withExpiry ? expiresAt : 'Nie'} on={withExpiry} onToggle={() => setWithExpiry(!withExpiry)}/>
@@ -2800,9 +2803,12 @@ function SharesView({ refreshTick, basePath, afterChange }) {
               <div key={s.id} className="nyza-listrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
                 <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'color-mix(in oklab, var(--accent) 16%, transparent)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{s.folder_id ? Ic.folder(18) : Ic.fileGen(18)}</div>
                 <div className="nyza-listrow-main" style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>/s/{s.token}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: 14, fontWeight: 540, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {s.folder_name || s.file_name || (s.folder_id ? 'Ordner' : 'Datei')}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
                     <span>{s.folder_id ? 'Ordner' : 'Datei'}</span>
+                    {!!s.gallery && <span>· {Ic.fileImg(10)} Galerie</span>}
                     <span>· {s.view_count || 0} Aufrufe</span>
                     {s.password_hash && <span>· {Ic.lock(10)} Passwort</span>}
                     {!s.allow_download && <span>· kein Download</span>}
