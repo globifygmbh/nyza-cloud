@@ -135,6 +135,8 @@ export const API = {
     upload('/api/files', file, { folder_id: folderId }, onProgress),
   deleteFile:  (id) => request('/api/files/' + id, { method: 'DELETE' }),
   fileRawUrl:  (id) => url('/api/files/' + id + '/raw'),
+  createText:  (body) => request('/api/files/text', { method: 'POST', body }),
+  saveContent: (id, content) => request('/api/files/' + id + '/content', { method: 'PUT', body: { content } }),
   zip: (body) => fetch(url('/api/files/zip'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },

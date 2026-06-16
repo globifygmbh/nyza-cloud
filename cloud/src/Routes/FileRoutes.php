@@ -20,6 +20,7 @@ final class FileRoutes
         $app->group('/api/files', function (RouteCollectorProxy $g) {
             $g->get('',                       [self::class, 'list']);
             $g->post('',                      [self::class, 'upload']);
+            $g->post('/text',                 [self::class, 'createText']);
             // Resumable chunked upload for large owner files.
             $g->post('/chunk/init',           [self::class, 'chunkInit']);
             $g->post('/chunk/{sid}',          [self::class, 'chunkAppend']);
@@ -27,6 +28,7 @@ final class FileRoutes
             $g->post('/chunk/{sid}/finalize', [self::class, 'chunkFinalize']);
             $g->get('/{id}',                  [self::class, 'show']);
             $g->get('/{id}/raw',              [self::class, 'raw']);
+            $g->put('/{id}/content',          [self::class, 'saveContent']);
             $g->post('/{id}/restore',         [self::class, 'restore']);
             $g->delete('/{id}/permanent',     [self::class, 'permanent']);
             $g->delete('/{id}',               [self::class, 'delete']);
@@ -84,6 +86,59 @@ final class FileRoutes
 
         $id = self::insertFile($uid, $folder, $name, $rel, $mime, $size, null, null);
         return Json::ok($res, ['file' => self::fetchOne($uid, $id)], 201);
+    }
+
+    // Max bytes accepted via the JSON text endpoints (create/save).
+    private const TEXT_MAX = 2 * 1024 * 1024; // 2 MB
+
+    public static function createText(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $b = (array) $req->getParsedBody();
+        $folder = isset($b['folder_id']) ? (int)$b['folder_id'] : null;
+        $name = trim((string)($b['name'] ?? ''));
+        $content = (string)($b['content'] ?? '');
+
+        if ($name === '') $name = 'Neue Notiz.txt';
+        if (!preg_match('/\.[A-Za-z0-9]{1,8}$/', $name)) $name .= '.txt';
+        if (Storage::isDangerous($name)) {
+            return Json::err($res, 'Dieser Dateityp ist nicht erlaubt', 415, 'blocked_type');
+        }
+        $size = strlen($content);
+        if ($size > self::TEXT_MAX) return Json::err($res, 'Text zu groß (max 2 MB)', 413);
+        if (!self::quotaOk($uid, $size)) return Json::err($res, 'Storage quota exceeded', 413, 'quota_exceeded');
+
+        $rel = Storage::relPath($uid, $name);
+        file_put_contents(Storage::abs($rel), $content);
+        $mime = str_ends_with(strtolower($name), '.md') ? 'text/markdown' : 'text/plain';
+        $id = self::insertFile($uid, $folder, $name, $rel, $mime, $size, null, null);
+        return Json::ok($res, ['file' => self::fetchOne($uid, $id)], 201);
+    }
+
+    public static function saveContent(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchOne($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+
+        $b = (array) $req->getParsedBody();
+        if (!array_key_exists('content', $b)) return Json::err($res, 'content required', 422);
+        $content = (string) $b['content'];
+        $newSize = strlen($content);
+        if ($newSize > self::TEXT_MAX) return Json::err($res, 'Text zu groß (max 2 MB)', 413);
+
+        $delta = $newSize - (int)$f['size'];
+        if ($delta > 0 && !self::quotaOk($uid, $delta)) {
+            return Json::err($res, 'Storage quota exceeded', 413, 'quota_exceeded');
+        }
+
+        if (file_put_contents(Storage::abs($f['storage_path']), $content) === false) {
+            return Json::err($res, 'Speichern fehlgeschlagen', 500);
+        }
+        $pdo = Database::pdo();
+        $pdo->prepare('UPDATE files SET size = ? WHERE id = ? AND user_id = ?')->execute([$newSize, (int)$f['id'], $uid]);
+        $pdo->prepare('UPDATE users SET storage_used = MAX(0, storage_used + ?) WHERE id = ?')->execute([$delta, $uid]);
+        return Json::ok($res, ['file' => self::fetchOne($uid, (int)$f['id'])]);
     }
 
     // ───── Resumable chunked upload (owner) ──────────────────────────────────

@@ -26,17 +26,68 @@ function useIsMobile() {
 const fileSrc = (id) => API.fileRawUrl(id) + '?token=' + (getToken() || '');
 const fileDownload = (id) => API.fileRawUrl(id) + '?token=' + (getToken() || '');
 
+// Textual files the in-app viewer can show (and, for owners, edit).
+const TEXT_EXT = ['txt','md','markdown','csv','tsv','log','json','xml','yml','yaml','ini','conf','cfg','env','js','jsx','ts','tsx','css','scss','less','html','htm','sql','py','rb','go','rs','java','c','cpp','h','hpp','sh','bash'];
+function isTextFile(f) {
+  const m = (f.mime_type || '').toLowerCase();
+  if (m.startsWith('text/') || m === 'application/json' || m === 'application/xml') return true;
+  const ext = (f.name.split('.').pop() || '').toLowerCase();
+  return TEXT_EXT.includes(ext);
+}
+
+// Fetches a text file and shows it in a monospace pane. Editable (owner) →
+// adds a Save button wired to onSave(content). Remount per file via key.
+function TextPane({ src, name, editable, onSave }) {
+  const [content, setContent] = useState(null);
+  const [orig, setOrig] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    let off = false;
+    fetch(src).then((r) => r.text()).then((t) => { if (!off) { setContent(t); setOrig(t); } })
+      .catch(() => { if (!off) { setContent(''); setOrig(''); } });
+    return () => { off = true; };
+  }, [src]);
+  const dirty = content !== null && content !== orig;
+  const save = async () => {
+    setSaving(true);
+    try { await onSave(content); setOrig(content); toast('Gespeichert', 'success'); }
+    catch (e) { toast(e.message || 'Speichern fehlgeschlagen', 'error'); }
+    finally { setSaving(false); }
+  };
+  return (
+    <Glass style={{ width: '100%', maxWidth: 980, height: '100%', borderRadius: 'var(--r-lg)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
+        <span style={{ color: 'var(--fg-3)' }}>{Ic.fileGen(15)}</span>
+        <span style={{ flex: 1, fontSize: 12.5, fontFamily: 'var(--font-mono)', color: 'var(--fg-2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}{dirty ? ' •' : ''}</span>
+        {editable && <Btn variant="primary" size="sm" disabled={!dirty || saving} icon={saving ? Ic.loader(13) : Ic.check(13)} onClick={save}>{saving ? 'Speichert…' : 'Speichern'}</Btn>}
+      </div>
+      {content === null ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-3)' }}>{Ic.loader(22)}</div>
+      ) : (
+        <textarea value={content} readOnly={!editable} spellCheck={false}
+          onChange={(e) => setContent(e.target.value)}
+          style={{
+            flex: 1, width: '100%', resize: 'none', border: 0, outline: 0, padding: '16px 18px',
+            background: 'transparent', color: 'var(--fg)', fontFamily: 'var(--font-mono)',
+            fontSize: 13, lineHeight: 1.6, tabSize: 2,
+          }}/>
+      )}
+    </Glass>
+  );
+}
+
 // ───── MediaViewer — fullscreen modal for images / videos / PDFs / files ───
 // Gallery-capable: pass items[] + startIndex + srcFor()/downloadFor() to enable
 // ←/→ keys, on-screen arrows and touch-swipe between files. Single-file mode
 // (file + src + downloadHref) still works.
-export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onClose }) {
+export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onSaveText, onClose }) {
   const gallery = Array.isArray(items) && items.length > 0;
   const [idx, setIdx] = useState(startIndex);
   const cur = gallery ? items[idx] : file;
   const curSrc = gallery ? srcFor(cur) : src;
   const curDl = gallery ? (downloadFor ? downloadFor(cur) : null) : downloadHref;
   const touch = useRef(null);
+  const textual = isTextFile(cur);
 
   const go = useCallback((d) => {
     if (!gallery) return;
@@ -126,7 +177,11 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
             boxShadow: '0 30px 80px rgba(0,0,0,0.6)',
           }}/>
         )}
-        {kind !== 'video' && kind !== 'image' && kind !== 'pdf' && (
+        {textual && (
+          <TextPane key={cur.id} src={curSrc} name={cur.name}
+            editable={!!onSaveText} onSave={(content) => onSaveText(cur, content)}/>
+        )}
+        {!textual && kind !== 'video' && kind !== 'image' && kind !== 'pdf' && (
           <Glass style={{ padding: '40px 48px', borderRadius: 'var(--r-xl)', textAlign: 'center' }}>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
               <FileIcon kind={kind} size={42} tint={cur.hue || 280}/>
@@ -1233,6 +1288,14 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
 
   const triggerUpload = (folderId = null) => { uploadTargetFolder.current = folderId; uploadInputRef.current?.click(); };
 
+  const newText = async (folderId = null) => {
+    try {
+      const d = await API.createText({ folder_id: folderId, name: 'Neue Notiz.txt', content: '' });
+      refreshAll();
+      openViewer(d.file, [d.file]); // opens straight into the editor
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
   const activeNav = nav.name === 'folder' ? 'files' : nav.name;
 
   return (
@@ -1256,6 +1319,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
             onDeleteFolder={async (f) => { if (!confirm(`Ordner "${f.name}" und alle Inhalte löschen?`)) return; try { await API.deleteFolder(f.id); toast('Ordner gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onNewFolder={async (name, kind, tone) => { try { await API.newFolder({ name, kind, tone }); toast('Ordner erstellt', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onUpload={() => triggerUpload(null)}
+            onNewText={() => newText(null)}
             onUploadLink={() => { setUploadLinkFolder(null); setShowUploadLinkModal(true); }}
             onOpenFile={openViewer}
             onShareFile={(f) => setShareTarget({ file: f })}
@@ -1269,6 +1333,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
             onBack={() => setNav({ name: 'files' })}
             onOpenFolder={(f) => setNav({ name: 'folder', id: f.id })}
             onUpload={(fid) => triggerUpload(fid)}
+            onNewText={(fid) => newText(fid)}
             onShareFolder={(f) => setShareTarget({ folder: f })}
             onUploadLink={(f) => { setUploadLinkFolder(f.id); setShowUploadLinkModal(true); }}
             onOpenFile={openViewer}
@@ -1308,6 +1373,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
       {viewing && (
         <MediaViewer items={viewing.items} startIndex={viewing.index}
           srcFor={(f) => fileSrc(f.id)} downloadFor={(f) => fileDownload(f.id)}
+          onSaveText={async (f, content) => { await API.saveContent(f.id, content); refreshAll(); }}
           onClose={() => setViewing(null)}/>
       )}
 
@@ -1335,7 +1401,7 @@ export function Dashboard({ user, theme, onTheme, basePath }) {
 // ───── Files (home) view ───────────────────────────────────────────────────
 function FilesView({
   user, stats, folders, view, setView, sort, setSort, search, setSearch, refreshTick,
-  onOpenFolder, onShareFolder, onDeleteFolder, onNewFolder, onUpload, onUploadLink,
+  onOpenFolder, onShareFolder, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
   onOpenFile, onShareFile, onDeleteFile,
 }) {
   const [files, setFiles] = useState(null);
@@ -1377,6 +1443,7 @@ function FilesView({
             </h1>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
+            <Btn variant="glass" size="md" icon={Ic.fileGen(15)} onClick={onNewText}>Notiz</Btn>
             <Btn variant="glass" size="md" icon={Ic.link(15)} onClick={onUploadLink}>Upload-Link</Btn>
             <Btn variant="primary" size="md" icon={Ic.upload(15)} onClick={onUpload}>Hochladen</Btn>
           </div>
@@ -1430,7 +1497,7 @@ function FilesView({
 // ───── Folder detail view ──────────────────────────────────────────────────
 function FolderView({
   folderId, view, setView, sort, setSort, search, setSearch, refreshTick,
-  onBack, onOpenFolder, onUpload, onShareFolder, onUploadLink, onOpenFile, onShareFile, onDeleteFile, afterChange,
+  onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onUploadLink, onOpenFile, onShareFile, onDeleteFile, afterChange,
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1473,6 +1540,7 @@ function FolderView({
         view={view} onView={setView} search={search} onSearch={setSearch} sort={sort} onSort={setSort}
         right={
           <div style={{ display: 'flex', gap: 8 }}>
+            <Btn variant="glass" size="sm" icon={Ic.fileGen(14)} onClick={() => onNewText(folder.id)}>Notiz</Btn>
             <Btn variant="glass" size="sm" icon={Ic.link(14)} onClick={() => onUploadLink(folder)}>Upload-Link</Btn>
             <Btn variant="glass" size="sm" icon={Ic.share(14)} onClick={() => onShareFolder(folder)}>Teilen</Btn>
             <Btn variant="primary" size="sm" icon={Ic.upload(14)} onClick={() => onUpload(folder.id)}>Hochladen</Btn>
