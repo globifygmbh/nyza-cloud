@@ -1753,7 +1753,24 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
               <ShareToggleRow icon={Ic.lock} title="Mit Passwort schützen" desc={withPassword ? 'Aktiv' : 'Kein Schutz'} on={withPassword} onToggle={() => setWithPassword(!withPassword)}/>
               {withPassword && <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Passwort eingeben" style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', marginTop: 8 }}/>}
               <ShareToggleRow icon={Ic.clock} title="Ablaufdatum" desc={withExpiry ? expiresAt : 'Nie'} on={withExpiry} onToggle={() => setWithExpiry(!withExpiry)}/>
-              {withExpiry && <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', marginTop: 8, fontFamily: 'inherit' }}/>}
+              {withExpiry && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                    {[{ l: '1 Tag', d: 1 }, { l: '7 Tage', d: 7 }, { l: '14 Tage', d: 14 }, { l: '30 Tage', d: 30 }].map((p) => {
+                      const dt = (() => { const x = new Date(); x.setDate(x.getDate() + p.d); return x.toISOString().slice(0, 10); })();
+                      const active = expiresAt === dt;
+                      return (
+                        <button key={p.d} type="button" onClick={() => setExpiresAt(dt)} style={{
+                          height: 30, padding: '0 12px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5,
+                          border: '1px solid ' + (active ? 'transparent' : 'var(--border)'),
+                          background: active ? 'var(--accent-grad)' : 'var(--surface-hi)', color: active ? '#fff' : 'var(--fg-2)',
+                        }}>{p.l}</button>
+                      );
+                    })}
+                  </div>
+                  <input type="date" value={expiresAt} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setExpiresAt(e.target.value)} style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', fontFamily: 'inherit' }}/>
+                </div>
+              )}
               <ShareToggleRow icon={Ic.users} title="Per E-Mail einladen" desc={withInvite ? 'Empfänger bekommen den Link' : 'Nur Link erstellen'} on={withInvite} onToggle={() => setWithInvite(!withInvite)}/>
               {withInvite && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
