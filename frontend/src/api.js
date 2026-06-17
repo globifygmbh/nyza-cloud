@@ -326,4 +326,10 @@ export const API = {
   periodMarkPaid:    (id, paid_date) => request('/api/periods/' + id + '/mark-paid', { method: 'POST', body: { paid_date } }),
   periodUnmarkPaid:  (id) => request('/api/periods/' + id + '/unmark-paid', { method: 'POST', body: {} }),
   periodInvoice:     (id) => request('/api/periods/' + id + '/invoice', { method: 'POST', body: {} }),
+
+  // Apps · Kalender
+  calendarEvents: (from, to) => request('/api/calendar/events?from=' + from + '&to=' + to),
+  newEvent:       (body) => request('/api/calendar/events', { method: 'POST', body }),
+  updateEvent:    (id, body) => request('/api/calendar/events/' + id, { method: 'PATCH', body }),
+  deleteEvent:    (id) => request('/api/calendar/events/' + id, { method: 'DELETE' }),
 };

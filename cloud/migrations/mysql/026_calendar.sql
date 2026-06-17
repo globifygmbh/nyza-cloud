@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS calendar_events (
+    id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id    BIGINT UNSIGNED NOT NULL,
+    title      VARCHAR(300)    NOT NULL,
+    type       VARCHAR(12)     NOT NULL DEFAULT 'event',
+    all_day    TINYINT(1)      NOT NULL DEFAULT 0,
+    starts_at  DATETIME        NOT NULL,
+    ends_at    DATETIME        NOT NULL,
+    location   VARCHAR(255)    NULL,
+    note       TEXT            NULL,
+    color      VARCHAR(20)     NOT NULL DEFAULT 'violet',
+    contact_id BIGINT UNSIGNED NULL,
+    person     VARCHAR(120)    NULL,
+    created_at TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY ix_calendar_user (user_id),
+    KEY ix_calendar_range (user_id, starts_at, ends_at),
+    CONSTRAINT fk_calendar_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_calendar_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;

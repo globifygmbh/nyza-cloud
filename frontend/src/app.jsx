@@ -2655,6 +2655,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-accounting' && (
           <BuchhaltungApp onBack={() => setNav({ name: 'apps' })} onOpenSettings={() => setNav({ name: 'app-settings' })}/>
         )}
+        {nav.name === 'app-calendar' && (
+          <KalenderApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -3335,10 +3338,9 @@ function AppsView({ onOpenApp }) {
     { id: 'roadmap',  label: 'Roadmap',  desc: 'Planung & Meilensteine', icon: Ic.bolt(26),   grad: 'linear-gradient(135deg, oklch(0.74 0.18 30), oklch(0.66 0.2 360))' },
     { id: 'settings', label: 'Einstellungen', desc: 'Konfiguration',     icon: Ic.cog(26),    grad: 'linear-gradient(135deg, oklch(0.6 0.02 260), oklch(0.5 0.02 260))' },
     { id: 'accounting', label: 'Buchhaltung', desc: 'Rechnungen & Angebote', icon: Ic.archive(26), grad: 'linear-gradient(135deg, oklch(0.74 0.17 155), oklch(0.68 0.15 175))' },
-  ];
-  const soon = [
     { id: 'calendar',   label: 'Kalender',     desc: 'Termine & Events',       icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.72 0.2 350), oklch(0.66 0.2 320))' },
   ];
+  const soon = [];
   const Tile = ({ a, disabled }) => (
     <button disabled={disabled} onClick={disabled ? undefined : () => onOpenApp(a.id)} style={{
       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '6px 4px',
@@ -3372,10 +3374,12 @@ function AppsView({ onOpenApp }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 22, marginBottom: 40 }}>
           {live.map((a) => <Tile key={a.id} a={a}/>)}
         </div>
-        <SectionHeader title="In Entwicklung"/>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 22 }}>
-          {soon.map((a) => <Tile key={a.id} a={a} disabled/>)}
-        </div>
+        {soon.length > 0 && <>
+          <SectionHeader title="In Entwicklung"/>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 22 }}>
+            {soon.map((a) => <Tile key={a.id} a={a} disabled/>)}
+          </div>
+        </>}
       </div>
     </>
   );
@@ -5601,6 +5605,256 @@ function ProductModal({ product, onSave, onClose }) {
               <select value={taxRate} onChange={(e) => setTaxRate(e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value={20}>20</option><option value={13}>13</option><option value={10}>10</option><option value={0}>0</option></select>
             </label>
           </div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+// ───── Kalender app ──────────────────────────────────────────────────────
+const WD_SHORT = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+const HOUR_H = 44;
+const evStart = (e) => new Date(String(e.starts_at).replace(' ', 'T'));
+const evEnd = (e) => new Date(String(e.ends_at).replace(' ', 'T'));
+const sameYmd = (a, b) => ymdOf(a) === ymdOf(b);
+const hm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+const dayInEvent = (e, day) => { const ds = new Date(day); ds.setHours(0, 0, 0, 0); const de = new Date(day); de.setHours(23, 59, 59, 0); return evStart(e) <= de && evEnd(e) >= ds; };
+
+function KalenderApp({ onBack }) {
+  const [view, setView] = useState('week');
+  const [anchor, setAnchor] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; });
+  const [events, setEvents] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [q, setQ] = useState('');
+  const [modal, setModal] = useState(null);
+  const [contacts, setContacts] = useState([]);
+
+  // Visible range per view.
+  let rangeStart, rangeEnd, days;
+  if (view === 'day') { rangeStart = new Date(anchor); rangeEnd = new Date(anchor); days = [new Date(anchor)]; }
+  else if (view === 'week') { rangeStart = mondayOf(anchor); rangeEnd = addDays(rangeStart, 6); days = Array.from({ length: 7 }, (_, i) => addDays(rangeStart, i)); }
+  else { const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1); rangeStart = mondayOf(first); rangeEnd = addDays(rangeStart, 41); days = Array.from({ length: 42 }, (_, i) => addDays(rangeStart, i)); }
+
+  const load = useCallback(() => {
+    API.calendarEvents(ymdOf(rangeStart), ymdOf(rangeEnd)).then((d) => setEvents(d.events || [])).catch(() => setEvents([]));
+  }, [ymdOf(rangeStart), ymdOf(rangeEnd)]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { API.tasks().then((d) => setTasks(d.tasks || [])).catch(() => {}); API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {}); }, []);
+
+  const ql = q.trim().toLowerCase();
+  const matchEv = (e) => !ql || [e.title, e.location, e.person, e.contact_name].some((s) => (s || '').toLowerCase().includes(ql));
+  const evs = events.filter(matchEv);
+  const taskItems = tasks.filter((t) => t.due_date && (!ql || (t.title || '').toLowerCase().includes(ql)));
+  const tasksOn = (day) => taskItems.filter((t) => t.due_date === ymdOf(day));
+
+  const move = (dir) => setAnchor((a) => view === 'day' ? addDays(a, dir) : view === 'week' ? addDays(a, dir * 7) : new Date(a.getFullYear(), a.getMonth() + dir, 1));
+  const today = () => { const d = new Date(); d.setHours(0, 0, 0, 0); setAnchor(d); };
+
+  const rangeLabel = view === 'month'
+    ? anchor.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
+    : view === 'day'
+      ? anchor.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+      : `${rangeStart.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })} – ${rangeEnd.toLocaleDateString('de-DE', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+
+  const save = async (data) => { try { if (data.id) await API.updateEvent(data.id, data); else await API.newEvent(data); setModal(null); load(); } catch (e) { toast(e.message, 'error'); } };
+  const del = async (ev) => { if (!await confirmDialog({ title: 'Termin löschen?', message: `„${ev.title}" wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteEvent(ev.id); setModal(null); load(); } catch (e) { toast(e.message, 'error'); } };
+  const newAt = (day, hour) => { const s = new Date(day); s.setHours(hour ?? 9, 0, 0, 0); const e = new Date(s); e.setHours((hour ?? 9) + 1); setModal({ _start: s, _end: e }); };
+
+  const viewTabs = [{ id: 'day', label: 'Tag' }, { id: 'week', label: 'Woche' }, { id: 'month', label: 'Monat' }];
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Kalender']}
+        right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => newAt(view === 'month' ? new Date() : anchor, 9)}>Termin</Btn>}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '18px 24px 40px', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+          <Btn variant="glass" size="sm" onClick={today}>Heute</Btn>
+          <div style={{ display: 'flex', gap: 2 }}>
+            <IconBtn size={32} onClick={() => move(-1)} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronL(16)}</IconBtn>
+            <IconBtn size={32} onClick={() => move(1)} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronR(16)}</IconBtn>
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)' }}>{rangeLabel}</div>
+          <div style={{ flex: 1 }}/>
+          <div style={{ display: 'inline-flex', gap: 4, padding: 4, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+            {viewTabs.map((t) => { const on = view === t.id; return <button key={t.id} onClick={() => setView(t.id)} style={{ height: 30, padding: '0 14px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 540, background: on ? 'var(--accent-grad)' : 'transparent', color: on ? '#fff' : 'var(--fg-2)' }}>{t.label}</button>; })}
+          </div>
+        </div>
+        <div style={{ marginBottom: 14, position: 'relative', maxWidth: 360 }}>
+          <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--fg-3)' }}>{Ic.search(15)}</span>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Termine, Tasks, Urlaube durchsuchen…" style={{ width: '100%', height: 38, padding: '0 12px 0 36px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13.5, color: 'var(--fg)', fontFamily: 'inherit' }}/>
+        </div>
+
+        {view === 'month'
+          ? <CalMonth days={days} anchor={anchor} evs={evs} tasksOn={tasksOn} onOpen={setModal} onDay={(d) => { setAnchor(d); setView('day'); }}/>
+          : <CalTimeGrid days={days} evs={evs} tasksOn={tasksOn} onOpen={setModal} onSlot={newAt}/>}
+      </div>
+      {modal && <EventModal ev={modal} contacts={contacts} onSave={save} onDelete={del} onClose={() => setModal(null)}/>}
+    </>
+  );
+}
+
+function CalMonth({ days, anchor, evs, tasksOn, onOpen, onDay }) {
+  const month = anchor.getMonth();
+  const todayY = ymdOf(new Date());
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', background: 'var(--surface-hi)' }}>
+        {WD_SHORT.map((w) => <div key={w} style={{ padding: '6px 8px', fontSize: 11, fontWeight: 600, color: 'var(--fg-3)', textAlign: 'center' }}>{w}</div>)}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gridAutoRows: 'minmax(96px, 1fr)' }}>
+        {days.map((day, i) => {
+          const inMonth = day.getMonth() === month;
+          const isToday = ymdOf(day) === todayY;
+          const dayEvs = evs.filter((e) => dayInEvent(e, day)).sort((a, b) => (b.all_day || b.type === 'absence' ? 1 : 0) - (a.all_day || a.type === 'absence' ? 1 : 0) || evStart(a) - evStart(b));
+          const tks = tasksOn(day);
+          const items = [...dayEvs, ...tks.map((t) => ({ _task: t }))];
+          return (
+            <div key={i} style={{ borderRight: (i % 7 !== 6) ? '1px solid var(--border)' : 'none', borderTop: i >= 7 ? '1px solid var(--border)' : 'none', padding: 5, background: inMonth ? 'transparent' : 'var(--surface)', minWidth: 0, cursor: 'pointer' }} onClick={() => onDay(day)}>
+              <div style={{ fontSize: 11.5, fontWeight: isToday ? 700 : 500, color: isToday ? '#fff' : (inMonth ? 'var(--fg-2)' : 'var(--fg-4)'), width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isToday ? 'var(--accent)' : 'transparent', marginBottom: 3 }}>{day.getDate()}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {items.slice(0, 3).map((it, j) => it._task
+                  ? <div key={'t' + j} onClick={(ev) => { ev.stopPropagation(); }} style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'color-mix(in oklab, #eab308 20%, transparent)', color: '#eab308', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: it._task.done_at ? 'line-through' : 'none' }}>✓ {it._task.title}</div>
+                  : <div key={j} onClick={(ev) => { ev.stopPropagation(); onOpen(it); }} style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'color-mix(in oklab, ' + folderDot(it.color) + ' 22%, transparent)', color: folderDot(it.color), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(it.all_day || it.type === 'absence') ? '' : hm(evStart(it)) + ' '}{it.title}</div>)}
+                {items.length > 3 && <div style={{ fontSize: 10, color: 'var(--fg-3)' }}>+{items.length - 3} mehr</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CalTimeGrid({ days, evs, tasksOn, onOpen, onSlot }) {
+  const todayY = ymdOf(new Date());
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const allDayFor = (day) => evs.filter((e) => (e.all_day || e.type === 'absence') && dayInEvent(e, day));
+  const timedFor = (day) => evs.filter((e) => !e.all_day && e.type !== 'absence' && sameYmd(evStart(e), day));
+  const colTmpl = `52px repeat(${days.length}, 1fr)`;
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* Header */}
+      <div style={{ display: 'grid', gridTemplateColumns: colTmpl, background: 'var(--surface-hi)', borderBottom: '1px solid var(--border)' }}>
+        <div/>
+        {days.map((d, i) => { const isToday = ymdOf(d) === todayY; return (
+          <div key={i} style={{ padding: '6px 4px', textAlign: 'center', borderLeft: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 10.5, color: 'var(--fg-3)' }}>{WD_SHORT[(d.getDay() + 6) % 7]}</div>
+            <div style={{ fontSize: 14, fontWeight: isToday ? 700 : 540, color: isToday ? 'var(--accent)' : 'var(--fg)' }}>{d.getDate()}</div>
+          </div>
+        ); })}
+      </div>
+      {/* All-day band */}
+      <div style={{ display: 'grid', gridTemplateColumns: colTmpl, borderBottom: '1px solid var(--border)', minHeight: 26 }}>
+        <div style={{ fontSize: 9, color: 'var(--fg-4)', padding: '4px', textAlign: 'right' }}>ganzt.</div>
+        {days.map((d, i) => (
+          <div key={i} style={{ borderLeft: '1px solid var(--border)', padding: 3, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {allDayFor(d).map((e) => <div key={e.id} onClick={() => onOpen(e)} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, cursor: 'pointer', background: e.type === 'absence' ? 'color-mix(in oklab, #d97706 30%, transparent)' : 'color-mix(in oklab, ' + folderDot(e.color) + ' 26%, transparent)', color: e.type === 'absence' ? '#f59e0b' : folderDot(e.color), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.title}{e.person ? ' · ' + e.person : ''}</div>)}
+            {tasksOn(d).map((t) => <div key={'t' + t.id} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'color-mix(in oklab, #eab308 20%, transparent)', color: '#eab308', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: t.done_at ? 'line-through' : 'none' }}>✓ {t.title}</div>)}
+          </div>
+        ))}
+      </div>
+      {/* Hours grid */}
+      <div style={{ overflowY: 'auto', maxHeight: '58vh' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: colTmpl, position: 'relative' }}>
+          <div>
+            {hours.map((h) => <div key={h} style={{ height: HOUR_H, fontSize: 9.5, color: 'var(--fg-4)', textAlign: 'right', paddingRight: 6, transform: 'translateY(-6px)' }}>{h > 0 ? String(h).padStart(2, '0') + ':00' : ''}</div>)}
+          </div>
+          {days.map((day, di) => (
+            <div key={di} style={{ borderLeft: '1px solid var(--border)', position: 'relative' }}>
+              {hours.map((h) => <div key={h} onClick={() => onSlot(day, h)} style={{ height: HOUR_H, borderTop: '1px solid var(--border)', cursor: 'pointer' }}/>)}
+              {timedFor(day).map((e) => {
+                const s = evStart(e), en = evEnd(e);
+                const top = (s.getHours() * 60 + s.getMinutes()) / 60 * HOUR_H;
+                const dur = Math.max(20, (Math.min(24 * 60, (en.getHours() * 60 + en.getMinutes())) - (s.getHours() * 60 + s.getMinutes())) / 60 * HOUR_H);
+                return (
+                  <div key={e.id} onClick={() => onOpen(e)} style={{ position: 'absolute', top, left: 2, right: 2, height: dur, background: 'color-mix(in oklab, ' + folderDot(e.color) + ' 26%, var(--surface))', borderLeft: '3px solid ' + folderDot(e.color), borderRadius: 4, padding: '2px 5px', overflow: 'hidden', cursor: 'pointer' }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 600, color: folderDot(e.color), whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.title}</div>
+                    <div style={{ fontSize: 9.5, color: 'var(--fg-3)' }}>{hm(s)}–{hm(en)}{e.location ? ' · ' + e.location : ''}</div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EventModal({ ev, contacts, onSave, onDelete, onClose }) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const toDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const toTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const s0 = ev.starts_at ? new Date(ev.starts_at.replace(' ', 'T')) : (ev._start || new Date());
+  const e0 = ev.ends_at ? new Date(ev.ends_at.replace(' ', 'T')) : (ev._end || new Date(s0.getTime() + 3600000));
+  const [title, setTitle] = useState(ev.title || '');
+  const [type, setType] = useState(ev.type || 'event');
+  const [allDay, setAllDay] = useState(!!ev.all_day || ev.type === 'absence');
+  const [sDate, setSDate] = useState(toDate(s0));
+  const [sTime, setSTime] = useState(toTime(s0));
+  const [eDate, setEDate] = useState(toDate(e0));
+  const [eTime, setETime] = useState(toTime(e0));
+  const [location, setLocation] = useState(ev.location || '');
+  const [person, setPerson] = useState(ev.person || '');
+  const [contactId, setContactId] = useState(ev.contact_id ? String(ev.contact_id) : '');
+  const [color, setColor] = useState(ev.color || 'violet');
+  const [note, setNote] = useState(ev.note || '');
+  const [busy, setBusy] = useState(false);
+  const isAbsence = type === 'absence';
+  const fullDay = allDay || isAbsence;
+
+  const submit = async () => {
+    if (!title.trim()) { toast('Titel erforderlich', 'error'); return; }
+    const starts = fullDay ? `${sDate}T00:00` : `${sDate}T${sTime}`;
+    const ends = fullDay ? `${eDate}T23:59` : `${eDate}T${eTime}`;
+    setBusy(true);
+    await onSave({ id: ev.id, title: title.trim(), type, all_day: fullDay ? 1 : 0, starts_at: starts, ends_at: ends, location: location.trim() || null, person: person.trim() || null, contact_id: contactId || null, color, note: note.trim() || null });
+    setBusy(false);
+  };
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 480, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.clock(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{ev.id ? 'Termin bearbeiten' : 'Neuer Termin'}</h2>
+          {ev.id && <IconBtn size={32} title="Löschen" onClick={() => onDelete(ev)}>{Ic.trash(16)}</IconBtn>}
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 13, overflowY: 'auto' }}>
+          <input value={title} autoFocus onChange={(e) => setTitle(e.target.value)} placeholder={isAbsence ? 'z. B. Urlaub' : 'Titel'} style={{ ...fld, fontSize: 15 }}/>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[['event', 'Termin'], ['absence', 'Urlaub/Abwesenheit']].map(([k, l]) => (
+              <button key={k} onClick={() => setType(k)} style={{ flex: 1, height: 36, borderRadius: 'var(--r-sm)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 540, border: '1px solid ' + (type === k ? 'var(--accent)' : 'var(--border)'), background: type === k ? 'color-mix(in oklab, var(--accent) 14%, transparent)' : 'var(--surface-hi)', color: type === k ? 'var(--accent)' : 'var(--fg-2)' }}>{l}</button>
+            ))}
+          </div>
+          {!isAbsence && <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13.5 }}><input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)' }}/> Ganztägig</label>}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <label style={{ flex: '1 1 130px', display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Von</span><input type="date" value={sDate} onChange={(e) => setSDate(e.target.value)} style={fld}/></label>
+            {!fullDay && <label style={{ width: 110, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Beginn</span><input type="time" value={sTime} onChange={(e) => setSTime(e.target.value)} style={fld}/></label>}
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <label style={{ flex: '1 1 130px', display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Bis</span><input type="date" value={eDate} onChange={(e) => setEDate(e.target.value)} style={fld}/></label>
+            {!fullDay && <label style={{ width: 110, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Ende</span><input type="time" value={eTime} onChange={(e) => setETime(e.target.value)} style={fld}/></label>}
+          </div>
+          {isAbsence
+            ? <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Person</span><input value={person} onChange={(e) => setPerson(e.target.value)} placeholder="Name" style={fld}/></label>
+            : <>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Ort</span><input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Ort (optional)" style={fld}/></label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kunde</span>
+                  <select value={contactId} onChange={(e) => setContactId(e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value="">— keiner —</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                </label>
+              </>}
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 8 }}>Farbe</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {FOLDER_SWATCHES.map((sw) => <button key={sw.key} onClick={() => setColor(sw.key)} style={{ width: 26, height: 26, borderRadius: '50%', cursor: 'pointer', background: sw.dot, border: color === sw.key ? '2px solid var(--fg)' : '2px solid transparent' }}/>)}
+            </div>
+          </div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Notiz</span><textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Optional" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/></label>
         </div>
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
