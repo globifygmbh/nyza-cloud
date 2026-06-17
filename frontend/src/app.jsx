@@ -3821,6 +3821,7 @@ function ZeitenApp({ onBack }) {
   const [task, setTask] = useState('');
   const [contactId, setContactId] = useState('');
   const [modal, setModal] = useState(null); // {} new | entry edit
+  const [invoiceModal, setInvoiceModal] = useState(false);
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
 
   const load = useCallback(() => {
@@ -3870,7 +3871,10 @@ function ZeitenApp({ onBack }) {
   return (
     <>
       <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Zeiten']}
-        right={<Btn variant="glass" size="sm" icon={Ic.plus(14)} onClick={() => setModal({})}>Manuell</Btn>}/>
+        right={<div style={{ display: 'flex', gap: 8 }}>
+          <Btn variant="glass" size="sm" icon={Ic.fileGen(14)} onClick={() => setInvoiceModal(true)}>Rechnung</Btn>
+          <Btn variant="glass" size="sm" icon={Ic.plus(14)} onClick={() => setModal({})}>Manuell</Btn>
+        </div>}/>
       <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
         {/* Live tracker */}
         <Glass style={{ borderRadius: 'var(--r-lg)', padding: 18, marginBottom: 8, maxWidth: 860 }}>
@@ -3950,7 +3954,110 @@ function ZeitenApp({ onBack }) {
         )}
       </div>
       {modal && <TimeEntryModal entry={modal} contacts={contacts} onSave={save} onClose={() => setModal(null)}/>}
+      {invoiceModal && <TimeInvoiceModal contacts={contacts} onClose={() => setInvoiceModal(false)} onDone={() => { setInvoiceModal(false); load(); }}/>}
     </>
+  );
+}
+
+function TimeInvoiceModal({ contacts, onClose, onDone }) {
+  const [contactId, setContactId] = useState('');
+  const [entries, setEntries] = useState(null);
+  const [sel, setSel] = useState(() => new Set());
+  const [rate, setRate] = useState(80);
+  const [taxRate, setTaxRate] = useState(20);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!contactId) { setEntries(null); setSel(new Set()); return; }
+    setEntries(null); setSel(new Set());
+    API.timeBillable(contactId).then((d) => setEntries(d.entries || [])).catch(() => setEntries([]));
+  }, [contactId]);
+
+  const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const open = (entries || []).filter((e) => !e.invoice_id);
+  const allSel = open.length > 0 && open.every((e) => sel.has(e.id));
+  const toggleAll = () => setSel(() => allSel ? new Set() : new Set(open.map((e) => e.id)));
+
+  const selHours = (entries || []).filter((e) => sel.has(e.id)).reduce((a, e) => a + (e.duration || 0) / 3600, 0);
+  const net = Math.round(selHours * (Number(rate) || 0) * 100) / 100;
+  const gross = Math.round(net * (1 + (Number(taxRate) || 0) / 100) * 100) / 100;
+
+  const create = async () => {
+    if (sel.size === 0) { toast('Keine Einträge gewählt', 'error'); return; }
+    setBusy(true);
+    try {
+      const r = await API.invoiceFromTime({ contact_id: Number(contactId), entry_ids: [...sel], hourly_rate: Number(rate) || 0, tax_rate: Number(taxRate) || 0 });
+      toast('Rechnung ' + (r.number || '') + ' erstellt', 'success');
+      if (r.invoice_id) window.open(API.docPdfUrl(r.invoice_id, false), '_blank');
+      onDone();
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+
+  const fld = { height: 40, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 640, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.fileGen(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>Rechnung aus Zeiten</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kunde</span>
+            <select value={contactId} onChange={(e) => setContactId(e.target.value)} style={{ ...fld, cursor: 'pointer', width: '100%' }}>
+              <option value="">— Kunde wählen —</option>
+              {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+
+          {!contactId ? (
+            <div style={{ color: 'var(--fg-3)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>Wähle einen Kunden, um abrechenbare Zeiten zu sehen.</div>
+          ) : entries === null ? (
+            <div style={{ color: 'var(--fg-3)', padding: 16 }}>{Ic.loader(20)}</div>
+          ) : entries.length === 0 ? (
+            <div style={{ color: 'var(--fg-3)', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>Keine erfassten Zeiten für diesen Kunden.</div>
+          ) : (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--fg-2)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={allSel} onChange={toggleAll} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }}/>
+                  Alle offenen wählen
+                </label>
+                <div style={{ flex: 1 }}/>
+                <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{open.length} offen · {entries.length - open.length} verrechnet</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {entries.map((e) => {
+                  const billed = !!e.invoice_id;
+                  const checked = sel.has(e.id);
+                  return (
+                    <div key={e.id} onClick={() => !billed && toggle(e.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface)', border: '1px solid ' + (checked ? 'var(--accent)' : 'var(--border)'), cursor: billed ? 'default' : 'pointer', opacity: billed ? 0.45 : 1 }}>
+                      <input type="checkbox" disabled={billed} checked={checked} onChange={() => toggle(e.id)} onClick={(ev) => ev.stopPropagation()} style={{ width: 16, height: 16, accentColor: 'var(--accent)', flexShrink: 0 }}/>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.task || 'Ohne Aufgabe'}</div>
+                        <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 1 }}>{localDateKey(e.started_at) && new Date(dtParse(e.started_at)).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} · {fmtHM(e.started_at)}–{fmtHM(e.ended_at)}{billed ? ` · ${e.invoice_number || 'verrechnet'}` : ''}</div>
+                      </div>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtDur(e.duration)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--fg-2)' }}>Std-Satz €<input type="number" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} style={{ ...fld, width: 84, textAlign: 'right' }}/></label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--fg-2)' }}>USt
+            <select value={taxRate} onChange={(e) => setTaxRate(e.target.value)} style={{ ...fld, width: 70, cursor: 'pointer' }}><option value={20}>20%</option><option value={13}>13%</option><option value={10}>10%</option><option value={0}>0%</option></select>
+          </label>
+          <div style={{ flex: 1, minWidth: 120, textAlign: 'right', fontSize: 12.5, color: 'var(--fg-3)' }}>
+            {selHours.toFixed(2).replace('.', ',')} h · Netto <strong style={{ color: 'var(--fg-2)' }}>{fmtEUR(net)}</strong> · Brutto <strong style={{ color: 'var(--accent)' }}>{fmtEUR(gross)}</strong>
+          </div>
+          <Btn variant="primary" disabled={busy || sel.size === 0} onClick={create} icon={busy ? Ic.loader(15) : Ic.check(15)}>Rechnung erstellen</Btn>
+        </div>
+      </Glass>
+    </div>
   );
 }
 

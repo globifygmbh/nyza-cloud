@@ -251,6 +251,8 @@ export const API = {
   newTimeEntry:  (body) => request('/api/time', { method: 'POST', body }),
   updateTimeEntry: (id, body) => request('/api/time/' + id, { method: 'PATCH', body }),
   deleteTimeEntry: (id) => request('/api/time/' + id, { method: 'DELETE' }),
+  timeBillable:    (contactId) => request('/api/time/billable?contact_id=' + contactId),
+  invoiceFromTime: (body) => request('/api/time/invoice', { method: 'POST', body }),
 
   // Apps · Roadmap
   roadmap:          () => request('/api/roadmap'),

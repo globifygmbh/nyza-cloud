@@ -24,8 +24,10 @@ final class TimeRoutes
         $app->group('/api/time', function (RouteCollectorProxy $g) {
             $g->get('',           [self::class, 'list']);
             $g->get('/running',   [self::class, 'running']);
+            $g->get('/billable',  [self::class, 'billable']);
             $g->post('',          [self::class, 'create']);
             $g->post('/start',    [self::class, 'start']);
+            $g->post('/invoice',  [self::class, 'invoice']);
             $g->post('/{id}/stop',[self::class, 'stop']);
             $g->patch('/{id}',    [self::class, 'update']);
             $g->delete('/{id}',   [self::class, 'delete']);
@@ -212,6 +214,99 @@ final class TimeRoutes
             'ended_at'     => $end,
             'duration'     => $dur,
             'running'      => $end === null,
+            'invoice_id'   => isset($r['invoice_id']) && $r['invoice_id'] !== null ? (int)$r['invoice_id'] : null,
         ];
+    }
+
+    // ───── Billing: time entries → invoice ────────────────────────────────────
+    /** Completed entries for a contact, with billing status (for the popup). */
+    public static function billable(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $qp = $req->getQueryParams();
+        $cid = isset($qp['contact_id']) && $qp['contact_id'] !== '' ? (int)$qp['contact_id'] : 0;
+        if ($cid <= 0) return Json::ok($res, ['entries' => []]);
+        $stmt = Database::pdo()->prepare(
+            'SELECT t.*, d.number AS invoice_number FROM time_entries t '
+            . 'LEFT JOIN documents d ON d.id = t.invoice_id '
+            . 'WHERE t.user_id = ? AND t.contact_id = ? AND t.ended_at IS NOT NULL '
+            . 'ORDER BY t.started_at ASC'
+        );
+        $stmt->execute([$uid, $cid]);
+        $out = array_map(static function (array $r): array {
+            $s = self::shape($r);
+            $s['invoice_number'] = $r['invoice_number'] ?? null;
+            return $s;
+        }, $stmt->fetchAll());
+        return Json::ok($res, ['entries' => $out]);
+    }
+
+    /** Create an invoice from selected (unbilled) time entries at an hourly rate. */
+    public static function invoice(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $b = (array) $req->getParsedBody();
+        $cid = (int)($b['contact_id'] ?? 0);
+        if ($cid <= 0) return Json::err($res, 'Kunde erforderlich', 422);
+        $rate = round((float)($b['hourly_rate'] ?? 0), 2);
+        $taxRate = round((float)($b['tax_rate'] ?? 20), 2);
+        $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['entry_ids'] ?? [])), static fn($n) => $n > 0)));
+        if (!$ids) return Json::err($res, 'Keine Einträge gewählt', 422);
+
+        $place = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = Database::pdo()->prepare(
+            "SELECT * FROM time_entries WHERE user_id = ? AND contact_id = ? AND ended_at IS NOT NULL "
+            . "AND invoice_id IS NULL AND id IN ($place) ORDER BY started_at ASC"
+        );
+        $stmt->execute(array_merge([$uid, $cid], $ids));
+        $entries = $stmt->fetchAll();
+        if (!$entries) return Json::err($res, 'Keine abrechenbaren Einträge', 422);
+
+        $items = [];
+        $eligible = [];
+        foreach ($entries as $e) {
+            $eligible[] = (int)$e['id'];
+            $seconds = max(0, strtotime((string)$e['ended_at']) - strtotime((string)$e['started_at']));
+            $hours = round($seconds / 3600, 2);
+            $when = self::deRange((string)$e['started_at'], (string)$e['ended_at']);
+            $task = trim((string)($e['task'] ?? '')) !== '' ? (string)$e['task'] : 'Zeiterfassung';
+            $items[] = [
+                'description'    => $task . ' (' . $when . ')',
+                'quantity'       => $hours,
+                'unit'           => 'Std',
+                'unit_price_net' => $rate,
+                'tax_rate'       => $taxRate,
+            ];
+        }
+
+        $pdo = Database::pdo();
+        $pdo->beginTransaction();
+        try {
+            $docId = DocumentRoutes::createInvoice($uid, $cid, $items);
+            $ph = implode(',', array_fill(0, count($eligible), '?'));
+            $pdo->prepare("UPDATE time_entries SET invoice_id = ? WHERE user_id = ? AND id IN ($ph)")
+                ->execute(array_merge([$docId, $uid], $eligible));
+            $pdo->commit();
+        } catch (\Throwable $ex) {
+            $pdo->rollBack();
+            throw $ex;
+        }
+        $num = $pdo->prepare('SELECT number FROM documents WHERE id = ?');
+        $num->execute([$docId]);
+        $number = ($r = $num->fetch()) ? $r['number'] : '';
+        return Json::ok($res, ['invoice_id' => $docId, 'number' => $number, 'count' => count($eligible)], 201);
+    }
+
+    /** Format a UTC start/end pair as Berlin-local "d.m.Y H:i–H:i". */
+    private static function deRange(string $start, string $end): string
+    {
+        try {
+            $tz = new \DateTimeZone(date_default_timezone_get());
+            $s = (new \DateTime($start, new \DateTimeZone('UTC')))->setTimezone($tz);
+            $e = (new \DateTime($end, new \DateTimeZone('UTC')))->setTimezone($tz);
+            return $s->format('d.m.Y H:i') . '–' . $e->format('H:i');
+        } catch (\Throwable $ex) {
+            return substr($start, 0, 10);
+        }
     }
 }

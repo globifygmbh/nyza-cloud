@@ -1,0 +1,2 @@
+ALTER TABLE time_entries ADD COLUMN invoice_id BIGINT UNSIGNED NULL DEFAULT NULL;
+ALTER TABLE time_entries ADD CONSTRAINT fk_time_invoice FOREIGN KEY (invoice_id) REFERENCES documents(id) ON DELETE SET NULL;
