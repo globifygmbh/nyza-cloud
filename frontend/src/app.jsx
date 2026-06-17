@@ -2757,7 +2757,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           <RoadmapApp onBack={() => setNav({ name: 'apps' })}/>
         )}
         {nav.name === 'app-settings' && (
-          <SettingsApp onBack={() => setNav({ name: 'apps' })}
+          <SettingsApp user={user} onBack={() => setNav({ name: 'apps' })}
             onProfile={() => setShowProfile(true)} onSecurity={() => setShowSecurity(true)}/>
         )}
         {nav.name === 'app-accounting' && (
@@ -4420,9 +4420,98 @@ function RoadmapStepModal({ step, onSave, onClose }) {
 // ───── Einstellungen app ────────────────────────────────────────────────────
 const LEGAL_FORMS = ['Einzelunternehmen', 'GmbH', 'OG', 'KG', 'AG', 'Sonstige'];
 
-function SettingsApp({ onBack, onProfile, onSecurity }) {
+function UserAdminSection({ currentUser }) {
+  const [users, setUsers] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const load = () => API.adminUsers().then((d) => setUsers(d.users || [])).catch((e) => { toast(e.message, 'error'); setUsers([]); });
+  useEffect(() => { load(); }, []);
+  const save = async (data) => {
+    try { if (data.id) await API.adminUpdateUser(data.id, data); else await API.adminCreateUser(data); setEditing(null); load(); toast('Gespeichert', 'success'); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const del = async (u) => {
+    if (!await confirmDialog({ title: 'Benutzer löschen?', message: `„${u.name || u.email}" und alle seine Daten werden gelöscht.`, confirmLabel: 'Löschen', danger: true })) return;
+    try { await API.adminDeleteUser(u.id); load(); } catch (e) { toast(e.message, 'error'); }
+  };
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+        <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ role: 'user' })}>Benutzer anlegen</Btn>
+      </div>
+      {users === null ? <div style={{ color: 'var(--fg-3)', padding: 12 }}>{Ic.loader(20)}</div> : (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {users.map((u) => (
+            <div key={u.id} className="nyza-listrow" onClick={() => setEditing(u)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer', opacity: u.active ? 1 : 0.55 }}>
+              <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600, flexShrink: 0 }}>{(u.name || u.email || '?').slice(0, 1).toUpperCase()}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.name || u.email}{u.id === currentUser?.id ? ' (du)' : ''}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{u.email}</div>
+              </div>
+              {u.role === 'admin' && <span style={{ fontSize: 9.5, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'color-mix(in oklab, var(--accent) 18%, transparent)', color: 'var(--accent)' }}>ADMIN</span>}
+              {!u.active && <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--fg-4)' }}>GESPERRT</span>}
+              {u.id !== currentUser?.id && <span className="task-kebab" title="Löschen" onClick={(e) => { e.stopPropagation(); del(u); }} style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex' }}>{Ic.trash(15)}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {editing && <UserModal u={editing} self={editing.id === currentUser?.id} onSave={save} onClose={() => setEditing(null)}/>}
+    </div>
+  );
+}
+
+function UserModal({ u, self, onSave, onClose }) {
+  const [name, setName] = useState(u.name || '');
+  const [email, setEmail] = useState(u.email || '');
+  const [role, setRole] = useState(u.role || 'user');
+  const [active, setActive] = useState(u.active != null ? !!u.active : true);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!email.trim()) { toast('E-Mail erforderlich', 'error'); return; }
+    if (!u.id && password.length < 8) { toast('Passwort min. 8 Zeichen', 'error'); return; }
+    if (password && password.length < 8) { toast('Passwort min. 8 Zeichen', 'error'); return; }
+    setBusy(true);
+    const body = { id: u.id, name: name.trim() || null, role, active: active ? 1 : 0 };
+    if (!u.id) body.email = email.trim();
+    if (password) body.password = password;
+    await onSave(body);
+    setBusy(false);
+  };
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 420, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>{u.id ? 'Benutzer bearbeiten' : 'Neuer Benutzer'}</h2>
+          <IconBtn size={30} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Voller Name" style={fld}/></label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>E-Mail {u.id && <span style={{ color: 'var(--fg-4)' }}>(nicht änderbar)</span>}</span><input type="email" value={email} disabled={!!u.id} onChange={(e) => setEmail(e.target.value)} placeholder="name@firma.at" style={{ ...fld, opacity: u.id ? 0.6 : 1 }}/></label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>{u.id ? 'Neues Passwort (optional)' : 'Passwort'}</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={u.id ? 'leer = unverändert' : 'min. 8 Zeichen'} style={fld}/></label>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Rolle</span>
+              <select value={role} onChange={(e) => setRole(e.target.value)} disabled={self} style={{ ...fld, cursor: self ? 'not-allowed' : 'pointer', opacity: self ? 0.6 : 1 }}><option value="user">Benutzer</option><option value="admin">Admin</option></select>
+            </label>
+            <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, marginTop: 22, cursor: self ? 'not-allowed' : 'pointer', fontSize: 13.5, opacity: self ? 0.6 : 1 }}>
+              <input type="checkbox" checked={active} disabled={self} onChange={(e) => setActive(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)' }}/> Aktiv
+            </label>
+          </div>
+          {self && <div style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>Eigene Rolle/Sperre kann nicht geändert werden.</div>}
+        </div>
+        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   const [c, setC] = useState(null);
   const [busy, setBusy] = useState(false);
+  const isAdmin = user?.role === 'admin';
   useEffect(() => { API.getSettings('company').then((d) => setC(d.settings || {})).catch(() => setC({})); }, []);
   const set = (k, v) => setC((s) => ({ ...s, [k]: v }));
   const accountingMode = (c?.legal_form === 'GmbH' || c?.legal_form === 'AG') ? 'double_entry' : 'single_entry';
@@ -4467,6 +4556,11 @@ function SettingsApp({ onBack, onProfile, onSecurity }) {
               </button>
             ))}
           </div>
+
+          {isAdmin && (<>
+            <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Benutzerverwaltung · Admin</div>
+            <div style={{ marginBottom: 28 }}><UserAdminSection currentUser={user}/></div>
+          </>)}
 
           {/* Firma & Rechnungen */}
           <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>

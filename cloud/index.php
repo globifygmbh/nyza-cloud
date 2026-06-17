@@ -16,6 +16,7 @@ use Nyza\Config;
 use Nyza\Json;
 use Nyza\Middleware\CorsMiddleware;
 use Nyza\Routes\ActivityRoutes;
+use Nyza\Routes\AdminRoutes;
 use Nyza\Routes\AuthRoutes;
 use Nyza\Routes\CalendarRoutes;
 use Nyza\Routes\ContactRoutes;
@@ -189,6 +190,7 @@ JS;
 });
 
 AuthRoutes::mount($app);
+AdminRoutes::mount($app);
 FolderRoutes::mount($app);
 FileRoutes::mount($app);
 ShareRoutes::mount($app);

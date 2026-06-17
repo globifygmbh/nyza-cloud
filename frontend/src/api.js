@@ -275,6 +275,12 @@ export const API = {
   updateRoadmapTask:(id, tid, body) => request('/api/roadmap/' + id + '/tasks/' + tid, { method: 'PATCH', body }),
   deleteRoadmapTask:(id, tid) => request('/api/roadmap/' + id + '/tasks/' + tid, { method: 'DELETE' }),
 
+  // Admin · user management
+  adminUsers:      () => request('/api/admin/users'),
+  adminCreateUser: (body) => request('/api/admin/users', { method: 'POST', body }),
+  adminUpdateUser: (id, body) => request('/api/admin/users/' + id, { method: 'PATCH', body }),
+  adminDeleteUser: (id) => request('/api/admin/users/' + id, { method: 'DELETE' }),
+
   // App settings (namespaced JSON store)
   getSettings:  (ns) => request('/api/settings/' + ns),
   saveSettings: (ns, body) => request('/api/settings/' + ns, { method: 'PUT', body }),
