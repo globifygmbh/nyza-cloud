@@ -201,6 +201,7 @@ export const API = {
   // Shares
   shares:      () => request('/api/shares'),
   newShare:    (body) => request('/api/shares', { method: 'POST', body }),
+  updateShare: (id, body) => request('/api/shares/' + id, { method: 'PATCH', body }),
   deleteShare: (id) => request('/api/shares/' + id, { method: 'DELETE' }),
   publicShare: (token, password) =>
     request('/api/s/' + token + (password ? '?p=' + encodeURIComponent(password) : ''), { skipAuth: true }),

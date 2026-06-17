@@ -1951,9 +1951,27 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   useEffect(() => {
     API.shares().then((d) => {
       const m = (d.shares || []).find((s) => (folder && String(s.folder_id) === String(folder.id)) || (file && String(s.file_id) === String(file.id)));
-      if (m) setCreated(m);
+      if (m) { setCreated(m); initFromShare(m); }
     }).catch(() => {});
   }, []);
+  const initFromShare = (m) => {
+    setAllowDownload(m.allow_download !== 0 && m.allow_download !== false);
+    setGalleryMode(!!m.gallery);
+    setWithPassword(!!(m.has_password || m.password_hash));
+    setWithExpiry(!!m.expires_at);
+    if (m.expires_at) setExpiresAt(String(m.expires_at).slice(0, 10));
+  };
+  const editShare = async () => {
+    setBusy(true);
+    try {
+      const body = { allow_download: allowDownload, gallery: galleryMode, expires_at: withExpiry && expiresAt ? expiresAt + ' 23:59:59' : '' };
+      if (!withPassword) body.clear_password = true;
+      else if (password) body.password = password;
+      const d = await API.updateShare(created.id, body);
+      setCreated(d.share); setPassword('');
+      toast('Gespeichert', 'success'); onCreated && onCreated();
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
   const url = created ? location.origin + (basePath || '') + '/s/' + created.token : '';
   const delShare = async () => {
     if (!created?.id) { setCreated(null); return; }
@@ -1980,10 +1998,18 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
                 <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{url}</span>
                 <Btn variant="primary" size="sm" icon={Ic.copy(13)} onClick={() => { navigator.clipboard?.writeText(url); toast('Link kopiert', 'success'); }}>Kopieren</Btn>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{created.has_password || created.password ? '🔒 passwortgeschützt' : 'ohne Passwort'}{created.allow_download === 0 ? ' · kein Download' : ''}</span>
-                <Btn variant="ghost" size="sm" icon={Ic.trash(13)} onClick={delShare}>Link löschen</Btn>
-                <Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setCreated(null)}>Neuen Link</Btn>
+              {/* Edit existing link settings in place */}
+              <ShareToggleRow icon={Ic.download} title="Download erlauben" desc="ZIP & Einzeldownload" on={allowDownload} onToggle={() => setAllowDownload(!allowDownload)}/>
+              {folder && <ShareToggleRow icon={Ic.fileImg} title="Galerie-Ansicht" desc={galleryMode ? 'Bilder schön als Galerie' : 'Normale Dateiliste'} on={galleryMode} onToggle={() => setGalleryMode(!galleryMode)}/>}
+              <ShareToggleRow icon={Ic.lock} title="Mit Passwort schützen" desc={withPassword ? (created.has_password || created.password_hash ? 'Aktiv — leer lassen = unverändert' : 'Neues Passwort setzen') : 'Kein Schutz'} on={withPassword} onToggle={() => setWithPassword(!withPassword)}/>
+              {withPassword && <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={created.has_password || created.password_hash ? 'Neues Passwort (leer = unverändert)' : 'Passwort eingeben'} style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', marginTop: 8 }}/>}
+              <ShareToggleRow icon={Ic.clock} title="Ablaufdatum" desc={withExpiry ? expiresAt : 'Nie'} on={withExpiry} onToggle={() => setWithExpiry(!withExpiry)}/>
+              {withExpiry && <input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', marginTop: 8 }}/>}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
+                <Btn variant="ghost" size="sm" icon={Ic.trash(13)} onClick={delShare}>Löschen</Btn>
+                <Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => { setCreated(null); }}>Neuer Link</Btn>
+                <span style={{ flex: 1 }}/>
+                <Btn variant="primary" size="sm" disabled={busy} icon={busy ? Ic.loader(13) : Ic.check(13)} onClick={editShare}>Speichern</Btn>
               </div>
             </div>
           ) : (
@@ -3299,11 +3325,13 @@ function FolderView({
 // ───── Shares view ─────────────────────────────────────────────────────────
 function SharesView({ refreshTick, basePath, afterChange, embedded }) {
   const [shares, setShares] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
   const load = useCallback(() => { API.shares().then((d) => setShares(d.shares || [])).catch(() => setShares([])); }, []);
   useEffect(() => { load(); }, [load, refreshTick]);
 
   const del = async (id) => { if (!await confirmDialog({ title: 'Share-Link löschen?', message: 'Der Link wird sofort ungültig — niemand kann ihn mehr öffnen.', confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteShare(id); toast('Gelöscht', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
   const copy = (token) => { navigator.clipboard?.writeText(location.origin + (basePath || '') + '/s/' + token); toast('Link kopiert', 'success'); };
+  const edit = (s) => setEditTarget(s.folder_id ? { folder: { id: s.folder_id, name: s.folder_name || 'Ordner', kind: s.gallery ? 'gallery' : 'normal' } } : { file: { id: s.file_id, name: s.file_name || 'Datei' } });
 
   const body = (
       <>
@@ -3331,6 +3359,7 @@ function SharesView({ refreshTick, basePath, afterChange, embedded }) {
                     <span>· erstellt {timeAgo(s.created_at)}</span>
                   </div>
                 </div>
+                <Btn variant="glass" size="sm" icon={Ic.cog(13)} onClick={() => edit(s)}>Bearbeiten</Btn>
                 <Btn variant="glass" size="sm" icon={Ic.copy(13)} onClick={() => copy(s.token)}>Kopieren</Btn>
                 <a href={(basePath || '') + '/s/' + s.token} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}><Btn variant="glass" size="sm" icon={Ic.eye(13)}>Öffnen</Btn></a>
                 <IconBtn size={32} title="Löschen" onClick={() => del(s.id)}>{Ic.trash(14)}</IconBtn>
@@ -3338,6 +3367,7 @@ function SharesView({ refreshTick, basePath, afterChange, embedded }) {
             ))}
           </div>
         )}
+        {editTarget && <ShareModal folder={editTarget.folder} file={editTarget.file} basePath={basePath} onClose={() => setEditTarget(null)} onCreated={() => { load(); afterChange && afterChange(); }}/>}
       </>
   );
 

@@ -22,6 +22,7 @@ final class ShareRoutes
         $app->group('/api/shares', function (RouteCollectorProxy $g) {
             $g->get('',         [self::class, 'list']);
             $g->post('',        [self::class, 'create']);
+            $g->patch('/{id}',  [self::class, 'update']);
             $g->delete('/{id}', [self::class, 'delete']);
         })->add(new AuthMiddleware());
 
@@ -193,6 +194,35 @@ final class ShareRoutes
             if (\Nyza\Mailer::send($to, "{$o['name']} hat Dateien mit dir geteilt", $body, $o['email'], $o['name'])) $sent++;
         }
         return $sent;
+    }
+
+    /** Edit an existing link's settings (download, gallery, password, expiry). */
+    public static function update(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        $pdo = Database::pdo();
+        $stmt = $pdo->prepare('SELECT * FROM share_links WHERE id = ? AND user_id = ?');
+        $stmt->execute([$id, $uid]);
+        $share = $stmt->fetch();
+        if (!$share) return Json::err($res, 'Not found', 404);
+
+        $b = (array) $req->getParsedBody();
+        $sets = []; $params = [];
+        if (array_key_exists('allow_download', $b)) { $sets[] = 'allow_download = ?'; $params[] = (int)(bool)$b['allow_download']; }
+        if (array_key_exists('gallery', $b)) { $sets[] = 'gallery = ?'; $params[] = ($share['folder_id'] && !empty($b['gallery'])) ? 1 : 0; }
+        if (array_key_exists('expires_at', $b)) { $sets[] = 'expires_at = ?'; $params[] = !empty($b['expires_at']) ? (string)$b['expires_at'] : null; }
+        if (!empty($b['clear_password'])) { $sets[] = 'password_hash = ?'; $params[] = null; }
+        elseif (array_key_exists('password', $b) && (string)$b['password'] !== '') { $sets[] = 'password_hash = ?'; $params[] = password_hash((string)$b['password'], PASSWORD_BCRYPT); }
+
+        if ($sets) {
+            $params[] = $id; $params[] = $uid;
+            $pdo->prepare('UPDATE share_links SET ' . implode(', ', $sets) . ' WHERE id = ? AND user_id = ?')->execute($params);
+        }
+        $stmt->execute([$id, $uid]);
+        $row = $stmt->fetch();
+        $row['has_password'] = !empty($row['password_hash']);
+        return Json::ok($res, ['share' => $row]);
     }
 
     public static function delete(Request $req, Response $res, array $args): Response
