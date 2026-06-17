@@ -279,4 +279,14 @@ export const API = {
   newProduct:     (body) => request('/api/products', { method: 'POST', body }),
   updateProduct:  (id, body) => request('/api/products/' + id, { method: 'PATCH', body }),
   deleteProduct:  (id) => request('/api/products/' + id, { method: 'DELETE' }),
+
+  // Buchhaltung · wiederkehrend (Abos + Perioden)
+  subscriptions:     () => request('/api/subscriptions'),
+  newSubscription:   (body) => request('/api/subscriptions', { method: 'POST', body }),
+  updateSubscription:(id, body) => request('/api/subscriptions/' + id, { method: 'PATCH', body }),
+  deleteSubscription:(id) => request('/api/subscriptions/' + id, { method: 'DELETE' }),
+  subscriptionPeriods:(id) => request('/api/subscriptions/' + id + '/periods'),
+  periodMarkPaid:    (id, paid_date) => request('/api/periods/' + id + '/mark-paid', { method: 'POST', body: { paid_date } }),
+  periodUnmarkPaid:  (id) => request('/api/periods/' + id + '/unmark-paid', { method: 'POST', body: {} }),
+  periodInvoice:     (id) => request('/api/periods/' + id + '/invoice', { method: 'POST', body: {} }),
 };

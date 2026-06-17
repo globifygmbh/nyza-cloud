@@ -322,6 +322,41 @@ final class DocumentRoutes
         return $prefix . $value;
     }
 
+    /**
+     * Create an invoice from raw data and return its id. Reused by the recurring
+     * billing engine (period → invoice). Opens its own transaction only if the
+     * caller hasn't already started one.
+     */
+    public static function createInvoice(int $uid, ?int $contactId, array $rawItems, array $meta = []): int
+    {
+        $items = self::normalizeItems($rawItems);
+        $totals = self::computeTotals($items);
+        $snapshot = self::buildSnapshot($uid, $contactId);
+        $pdo = Database::pdo();
+        $ownTxn = !$pdo->inTransaction();
+        if ($ownTxn) $pdo->beginTransaction();
+        try {
+            $number = self::nextNumber($uid, 'invoice', 'RE-');
+            $pdo->prepare(
+                'INSERT INTO documents (user_id, type, number, contact_id, client_snapshot, doc_date, delivery_date, '
+                . 'intro_text, footer_text, notes, net, tax, gross) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $uid, 'invoice', $number, $contactId,
+                json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                $meta['doc_date'] ?? date('Y-m-d'), $meta['delivery_date'] ?? null,
+                $meta['intro_text'] ?? null, $meta['footer_text'] ?? null, $meta['notes'] ?? null,
+                $totals['net'], $totals['tax'], $totals['gross'],
+            ]);
+            $docId = (int)$pdo->lastInsertId();
+            self::insertItems($docId, $items);
+            if ($ownTxn) $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($ownTxn) $pdo->rollBack();
+            throw $e;
+        }
+        return $docId;
+    }
+
     // ───── Items ─────────────────────────────────────────────────────────────
     /** Coerce a raw items payload into clean rows (no position yet). */
     private static function normalizeItems($raw): array
@@ -657,7 +692,7 @@ final class DocumentRoutes
         $taxCol = self::footerLines([
             $cv('vat_id') !== '' ? 'UID: ' . $cv('vat_id') : '',
             $cv('tax_number') !== '' ? 'Steuernr.: ' . $cv('tax_number') : '',
-            ($isCorp && $cv('register_number') !== '') ? 'Firmenbuchnr.: ' . $cv('register_number') : '',
+            ($isCorp && $cv('firmenbuch_nr') !== '') ? 'Firmenbuchnr.: ' . $cv('firmenbuch_nr') : '',
             $cv('owner') !== '' ? 'Inhaber: ' . $cv('owner') : '',
         ]);
         $bankCol = self::footerLines([

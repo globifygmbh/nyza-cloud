@@ -3801,6 +3801,9 @@ function dtParse(s) { return s ? new Date(String(s).replace(' ', 'T') + 'Z') : n
 function fmtHM(s) { const d = dtParse(s); return d ? d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : ''; }
 function localDateKey(s) { const d = dtParse(s); if (!d) return ''; const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
 function todayKeyLocal() { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
+function ymdOf(d) { const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
+function mondayOf(date) { const x = new Date(date); x.setHours(0, 0, 0, 0); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); return x; }
+function addDays(date, n) { const x = new Date(date); x.setDate(x.getDate() + n); return x; }
 function dayLabel(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   const now = new Date(); now.setHours(0, 0, 0, 0);
@@ -3818,11 +3821,13 @@ function ZeitenApp({ onBack }) {
   const [task, setTask] = useState('');
   const [contactId, setContactId] = useState('');
   const [modal, setModal] = useState(null); // {} new | entry edit
+  const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
 
   const load = useCallback(() => {
-    API.timeEntries().then((d) => setEntries(d.entries || [])).catch(() => setEntries([]));
+    const from = ymdOf(weekStart), to = ymdOf(addDays(weekStart, 6));
+    API.timeEntries({ from, to }).then((d) => setEntries(d.entries || [])).catch(() => setEntries([]));
     API.timeRunning().then((d) => setRunning(d.entry || null)).catch(() => {});
-  }, []);
+  }, [weekStart]);
   useEffect(() => { load(); API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {}); }, [load]);
   // Tick once a second while a timer runs so the elapsed display stays live.
   useEffect(() => { if (!running) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [running]);
@@ -3858,6 +3863,9 @@ function ZeitenApp({ onBack }) {
   }
   const todayKey = todayKeyLocal();
   const todayTotal = (groups.find((g) => g.key === todayKey)?.total || 0) + (running ? liveElapsed : 0);
+  const weekEnd = addDays(weekStart, 6);
+  const weekLabel = `${weekStart.toLocaleDateString('de-DE', { day: 'numeric', month: 'long' })} – ${weekEnd.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+  const weekTotal = groups.reduce((a, g) => a + g.total, 0);
 
   return (
     <>
@@ -3889,12 +3897,26 @@ function ZeitenApp({ onBack }) {
             </div>
           )}
         </Glass>
-        <div style={{ fontSize: 12, color: 'var(--fg-3)', marginBottom: 24, maxWidth: 860 }}>Heute erfasst: <strong style={{ color: 'var(--fg-2)' }}>{fmtDur(todayTotal)}</strong></div>
+        <div style={{ fontSize: 12, color: 'var(--fg-3)', margin: '0 0 14px', maxWidth: 860 }}>Heute erfasst: <strong style={{ color: 'var(--fg-2)' }}>{fmtDur(todayTotal)}</strong></div>
+
+        {/* Week switcher */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, maxWidth: 860, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <IconBtn size={34} title="Vorige Woche" onClick={() => setWeekStart((w) => addDays(w, -7))} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronL(16)}</IconBtn>
+            <IconBtn size={34} title="Nächste Woche" onClick={() => setWeekStart((w) => addDays(w, 7))} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronR(16)}</IconBtn>
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 540, display: 'flex', alignItems: 'center', gap: 8 }}>{Ic.clock(14)}{weekLabel}</div>
+          {ymdOf(weekStart) !== ymdOf(mondayOf(new Date())) && (
+            <Btn variant="glass" size="sm" onClick={() => setWeekStart(mondayOf(new Date()))}>Heute</Btn>
+          )}
+          <div style={{ flex: 1 }}/>
+          <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Woche: <strong style={{ color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>{fmtDur(weekTotal)}</strong></span>
+        </div>
 
         {entries === null ? (
           <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
         ) : done.length === 0 ? (
-          <EmptyHint icon={Ic.clock(40)} title="Noch keine Zeiten" desc="Starte den Timer oder trage eine Zeit manuell ein."/>
+          <EmptyHint icon={Ic.clock(40)} title="Keine Zeiten in dieser Woche" desc="Starte den Timer, wechsle die Woche oder trage eine Zeit manuell ein."/>
         ) : (
           <div style={{ maxWidth: 860 }}>
             {groups.map((g) => (
@@ -4291,6 +4313,7 @@ const DOC_STATUS = {
   overdue:  { label: 'Überfällig',  color: '#ef4444' },
   due_soon: { label: 'Bald fällig', color: '#eab308' },
   open:     { label: 'Offen',       color: 'var(--fg-3)' },
+  upcoming: { label: 'Geplant',     color: 'var(--fg-3)' },
   accepted: { label: 'Angenommen',  color: '#22c55e' },
 };
 function fmtEUR(n) { return (Number(n) || 0).toLocaleString('de-AT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
@@ -4299,13 +4322,16 @@ function fmtDateShort(s) { return s ? new Date(s + 'T00:00:00').toLocaleDateStri
 function BuchhaltungApp({ onBack, onOpenSettings }) {
   const [tab, setTab] = useState('invoice');
   const [docs, setDocs] = useState(null);
+  const [subs, setSubs] = useState(null);
   const [products, setProducts] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [editing, setEditing] = useState(null);
   const [prodEditing, setProdEditing] = useState(null);
+  const [subEditing, setSubEditing] = useState(null);
 
   const load = useCallback(() => {
     if (tab === 'products') { API.products().then((d) => setProducts(d.products || [])).catch(() => setProducts([])); return; }
+    if (tab === 'subscriptions') { setSubs(null); API.subscriptions().then((d) => setSubs(d.subscriptions || [])).catch(() => setSubs([])); return; }
     setDocs(null);
     API.documents(tab).then((d) => setDocs(d.documents || [])).catch(() => setDocs([]));
   }, [tab]);
@@ -4319,15 +4345,20 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const convert = async (doc) => { try { const d = await API.convertDoc(doc.id); toast('Rechnung ' + (d.document?.number || '') + ' erstellt', 'success'); setTab('invoice'); } catch (e) { toast(e.message, 'error'); } };
   const delProduct = async (p) => { if (!await confirmDialog({ title: 'Produkt löschen?', message: `„${p.name}" wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteProduct(p.id); API.products().then((d) => setProducts(d.products || [])); } catch (e) { toast(e.message, 'error'); } };
   const saveProduct = async (data) => { try { if (data.id) await API.updateProduct(data.id, data); else await API.newProduct(data); setProdEditing(null); API.products().then((d) => setProducts(d.products || [])); } catch (e) { toast(e.message, 'error'); } };
+  const saveSub = async (data) => { try { if (data.id) await API.updateSubscription(data.id, data); else await API.newSubscription(data); setSubEditing(null); load(); } catch (e) { toast(e.message, 'error'); } };
+  const delSub = async (s) => { if (!await confirmDialog({ title: 'Abo löschen?', message: `„${s.name}" inkl. Perioden wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteSubscription(s.id); load(); } catch (e) { toast(e.message, 'error'); } };
+  const toggleActive = async (s) => { try { await API.updateSubscription(s.id, { active: s.active ? 0 : 1 }); load(); } catch (e) { toast(e.message, 'error'); } };
+  const payPeriod = async (s) => { if (!s.current_period) return; try { await API.periodMarkPaid(s.current_period.id); toast('Periode bezahlt', 'success'); load(); } catch (e) { toast(e.message, 'error'); } };
+  const invoicePeriod = async (s) => { if (!s.current_period) return; try { const r = await API.periodInvoice(s.current_period.id); toast('Rechnung erstellt', 'success'); load(); if (r.invoice_id) window.open(API.docPdfUrl(r.invoice_id, false), '_blank'); } catch (e) { toast(e.message, 'error'); } };
 
-  const tabs = [{ id: 'invoice', label: 'Rechnungen' }, { id: 'offer', label: 'Angebote' }, { id: 'products', label: 'Produkte' }];
+  const tabs = [{ id: 'invoice', label: 'Rechnungen' }, { id: 'offer', label: 'Angebote' }, { id: 'subscriptions', label: 'Abos' }, { id: 'products', label: 'Produkte' }];
+  const newBtn = tab === 'products' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setProdEditing({})}>Produkt</Btn>
+    : tab === 'subscriptions' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setSubEditing({ interval_unit: 'monthly', tax_rate: 20, active: 1 })}>Neues Abo</Btn>
+    : <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ type: tab })}>{tab === 'offer' ? 'Neues Angebot' : 'Neue Rechnung'}</Btn>;
 
   return (
     <>
-      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Buchhaltung']}
-        right={tab === 'products'
-          ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setProdEditing({})}>Produkt</Btn>
-          : <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ type: tab })}>{tab === 'offer' ? 'Neues Angebot' : 'Neue Rechnung'}</Btn>}/>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Buchhaltung']} right={newBtn}/>
       <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
         <div style={{ display: 'inline-flex', gap: 4, padding: 4, marginBottom: 22, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
           {tabs.map((t) => {
@@ -4352,6 +4383,45 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                   <span className="task-kebab" onClick={(e) => { e.stopPropagation(); delProduct(p); }} title="Löschen" style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex' }}>{Ic.trash(15)}</span>
                 </div>
               ))}
+            </div>
+          )
+        ) : tab === 'subscriptions' ? (
+          subs === null ? (
+            <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+          ) : subs.length === 0 ? (
+            <EmptyHint icon={Ic.copy(40)} title="Keine Abos" desc="Lege wiederkehrende Leistungen an — das System erzeugt automatisch fällige Perioden."
+              actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setSubEditing({ interval_unit: 'monthly', tax_rate: 20, active: 1 })}>Neues Abo</Btn>}/>
+          ) : (
+            <div style={{ display: 'grid', gap: 8, maxWidth: 860 }}>
+              {subs.map((s) => {
+                const iv = SUB_INTERVALS[s.interval_unit] || s.interval_unit;
+                const cp = s.current_period;
+                const pst = cp ? (DOC_STATUS[cp.status] || { label: cp.status, color: 'var(--fg-3)' }) : null;
+                return (
+                  <div key={s.id} className="nyza-listrow" onClick={() => setSubEditing(s)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer', opacity: s.active ? 1 : 0.55 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</span>
+                        <span style={{ fontSize: 9.5, fontWeight: 600, padding: '2px 7px', borderRadius: 999, background: 'var(--surface-hi)', color: 'var(--fg-3)' }}>{iv}</span>
+                        {!s.active && <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--fg-4)', textTransform: 'uppercase' }}>pausiert</span>}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>
+                        {s.contact_name || 'Ohne Kunde'}{cp ? ` · nächste Periode ${fmtDateShort(cp.due_date)}` : ''}
+                      </div>
+                    </div>
+                    {pst && <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + pst.color + ' 18%, transparent)', color: pst.color, textTransform: 'uppercase', flexShrink: 0 }}>{pst.label}</span>}
+                    <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', width: 120, textAlign: 'right', flexShrink: 0 }}>{fmtEUR(s.gross_price)}<span style={{ fontSize: 10.5, color: 'var(--fg-3)', fontWeight: 400 }}> brutto</span></div>
+                    <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
+                      ...(cp ? [{ label: 'Periode als bezahlt', icon: Ic.check(15), onClick: () => payPeriod(s) }, { label: 'Rechnung erstellen', icon: Ic.fileGen(15), onClick: () => invoicePeriod(s) }] : []),
+                      { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => setSubEditing(s) },
+                      { label: s.active ? 'Pausieren' : 'Aktivieren', icon: Ic.clock(15), onClick: () => toggleActive(s) },
+                      { separator: true },
+                      { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => delSub(s) },
+                    ]); }}
+                      style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
+                  </div>
+                );
+              })}
             </div>
           )
         ) : docs === null ? (
@@ -4391,7 +4461,66 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
       {editing && <DocumentEditor doc={editing} contacts={contacts} products={products} onSave={saveDoc} onClose={() => setEditing(null)}
         onOpenPdf={(id) => window.open(API.docPdfUrl(id, false), '_blank')}/>}
       {prodEditing && <ProductModal product={prodEditing} onSave={saveProduct} onClose={() => setProdEditing(null)}/>}
+      {subEditing && <SubscriptionModal sub={subEditing} contacts={contacts} onSave={saveSub} onClose={() => setSubEditing(null)}/>}
     </>
+  );
+}
+
+const SUB_INTERVALS = { monthly: 'monatlich', quarterly: 'quartalsweise', yearly: 'jährlich' };
+
+function SubscriptionModal({ sub, contacts, onSave, onClose }) {
+  const [name, setName] = useState(sub.name || '');
+  const [contactId, setContactId] = useState(sub.contact_id ? String(sub.contact_id) : '');
+  const [interval, setInterval] = useState(sub.interval_unit || 'monthly');
+  const [net, setNet] = useState(sub.net_price != null ? sub.net_price : 0);
+  const [taxRate, setTaxRate] = useState(sub.tax_rate != null ? sub.tax_rate : 20);
+  const [startDate, setStartDate] = useState(sub.start_date || todayKeyLocal());
+  const [active, setActive] = useState(sub.active != null ? !!sub.active : true);
+  const [description, setDescription] = useState(sub.description || '');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!name.trim()) { toast('Name erforderlich', 'error'); return; }
+    setBusy(true);
+    await onSave({ id: sub.id, name: name.trim(), contact_id: contactId || null, interval_unit: interval, net_price: Number(net) || 0, tax_rate: Number(taxRate) || 0, start_date: startDate || null, active: active ? 1 : 0, description: description.trim() || null });
+    setBusy(false);
+  };
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 480, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.copy(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{sub.id ? 'Abo bearbeiten' : 'Neues Abo'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Bezeichnung</span><input value={name} autoFocus onChange={(e) => setName(e.target.value)} placeholder="z. B. Website-Wartung" style={fld}/></label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kunde</span>
+            <select value={contactId} onChange={(e) => setContactId(e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value="">— Kunde wählen —</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+          </label>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Intervall</span>
+              <select value={interval} onChange={(e) => setInterval(e.target.value)} style={{ ...fld, cursor: 'pointer' }}>{Object.entries(SUB_INTERVALS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+            </label>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Start ab</span><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={fld}/></label>
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Preis netto</span><input type="number" step="0.01" value={net} onChange={(e) => setNet(e.target.value)} style={fld}/></label>
+            <label style={{ width: 90, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>USt %</span>
+              <select value={taxRate} onChange={(e) => setTaxRate(e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value={20}>20</option><option value={13}>13</option><option value={10}>10</option><option value={0}>0</option></select>
+            </label>
+          </div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Notiz</span><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="Optional" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/></label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13.5 }}>
+            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)' }}/> Aktiv (erzeugt fällige Perioden)
+          </label>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
   );
 }
 
