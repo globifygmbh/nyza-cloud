@@ -15,13 +15,26 @@ final class CorsMiddleware implements MiddlewareInterface
     {
         $origin = getenv('ALLOW_ORIGIN') ?: '*';
 
-        if (strtoupper($request->getMethod()) === 'OPTIONS') {
+        // CORS preflight short-circuit — but NOT for WebDAV. Native WebDAV clients
+        // (Finder, Windows Explorer, davfs2) probe with OPTIONS and read the `DAV`
+        // capability header from the response. If we answered preflight here, that
+        // header would never be emitted and the client would conclude the server
+        // isn't a WebDAV server → "connection failed". Let /webdav OPTIONS fall
+        // through to WebDavRoutes::options(), which advertises `DAV: 1, 2`.
+        if (strtoupper($request->getMethod()) === 'OPTIONS' && !$this->isWebDav($request)) {
             $res = new SlimResponse();
             return $this->headers($res, $origin);
         }
 
         $response = $handler->handle($request);
         return $this->headers($response, $origin);
+    }
+
+    /** True when the request targets the WebDAV mount (with or without deploy base path). */
+    private function isWebDav(Request $request): bool
+    {
+        $path = $request->getUri()->getPath();
+        return (bool) preg_match('#(^|/)webdav(/|$)#', $path);
     }
 
     private function headers(Response $r, string $origin): Response

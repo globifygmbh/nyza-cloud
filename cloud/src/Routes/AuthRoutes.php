@@ -33,6 +33,7 @@ final class AuthRoutes
         $app->post('/api/auth/2fa/setup',       [self::class, 'twoFactorSetup'])->add(new AuthMiddleware());
         $app->post('/api/auth/2fa/enable',      [self::class, 'twoFactorEnable'])->add(new AuthMiddleware());
         $app->post('/api/auth/2fa/disable',     [self::class, 'twoFactorDisable'])->add(new AuthMiddleware());
+        $app->post('/api/auth/2fa/recovery-codes', [self::class, 'twoFactorRecoveryCodes'])->add(new AuthMiddleware());
         $app->get('/api/auth/logins',           [self::class, 'loginHistory'])->add(new AuthMiddleware());
         // Public: serve a user's logo for share/upload-page branding.
         $app->get('/api/branding/logo/{uid}',   [self::class, 'serveLogo']);
@@ -96,15 +97,92 @@ final class AuthRoutes
         if (!$uid) return Json::err($res, 'Challenge abgelaufen — bitte erneut anmelden', 401, 'challenge_expired');
 
         $pdo = Database::pdo();
-        $stmt = $pdo->prepare('SELECT id, email, name, accent, logo_path, totp_secret, totp_enabled FROM users WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT id, email, name, accent, logo_path, totp_secret, totp_enabled, twofa_recovery FROM users WHERE id = ?');
         $stmt->execute([$uid]);
         $u = $stmt->fetch();
-        if (!$u || empty($u['totp_enabled']) || !\Nyza\Totp::verify((string)($b['code'] ?? ''), (string)$u['totp_secret'])) {
+        $code = (string)($b['code'] ?? '');
+        // Accept EITHER a valid TOTP code OR a single-use recovery code. Recovery
+        // codes are consumed (removed) on success so they can't be reused.
+        $okTotp = $u && !empty($u['totp_enabled']) && \Nyza\Totp::verify($code, (string)$u['totp_secret']);
+        $usedRecovery = false;
+        if (!$okTotp && $u && !empty($u['totp_enabled'])) {
+            $usedRecovery = self::consumeRecoveryCode($uid, $u['twofa_recovery'] ?? null, $code);
+        }
+        if (!$u || empty($u['totp_enabled']) || (!$okTotp && !$usedRecovery)) {
             self::logLogin($req, $uid, (string)($u['email'] ?? ''), false, 'bad_2fa');
             return Json::err($res, 'Code ungültig', 401, 'bad_code');
         }
-        self::logLogin($req, $uid, $u['email'], true, '2fa');
+        self::logLogin($req, $uid, $u['email'], true, $usedRecovery ? '2fa_recovery' : '2fa');
         return Json::ok($res, ['token' => Auth::issue((int)$u['id'], $u['email']), 'user' => self::publicUser($u)]);
+    }
+
+    /**
+     * Generate N fresh single-use recovery codes. Returns [plaintext[], hashed[]].
+     * Plaintext is shown to the user exactly once; only the hashes are persisted.
+     * Format: XXXX-XXXX (10 chars from an unambiguous alphabet) — easy to read/type.
+     */
+    private static function makeRecoveryCodes(int $n = 8): array
+    {
+        $alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // no 0/O/1/I
+        $plain = [];
+        $hashed = [];
+        for ($i = 0; $i < $n; $i++) {
+            $raw = '';
+            for ($j = 0; $j < 8; $j++) {
+                $raw .= $alphabet[random_int(0, strlen($alphabet) - 1)];
+            }
+            $code = substr($raw, 0, 4) . '-' . substr($raw, 4, 4);
+            $plain[] = $code;
+            $hashed[] = self::hashRecoveryCode($code);
+        }
+        return [$plain, $hashed];
+    }
+
+    /** Hash a recovery code for storage/comparison (case-insensitive, dash-insensitive). */
+    private static function hashRecoveryCode(string $code): string
+    {
+        $norm = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $code));
+        return hash('sha256', $norm);
+    }
+
+    /**
+     * Try to consume one recovery code. Returns true if $code matched a stored
+     * (hashed) code, removing it so it can't be reused. No-op false otherwise.
+     * $stored is the raw twofa_recovery TEXT column value (JSON array or null).
+     */
+    private static function consumeRecoveryCode(int $uid, ?string $stored, string $code): bool
+    {
+        $code = trim($code);
+        if ($code === '' || $stored === null || $stored === '') return false;
+        $codes = json_decode($stored, true);
+        if (!is_array($codes) || !$codes) return false;
+        $target = self::hashRecoveryCode($code);
+        $matched = false;
+        $remaining = [];
+        foreach ($codes as $h) {
+            if (!$matched && is_string($h) && hash_equals($h, $target)) {
+                $matched = true; // drop this one
+                continue;
+            }
+            $remaining[] = $h;
+        }
+        if (!$matched) return false;
+        Database::pdo()->prepare('UPDATE users SET twofa_recovery = ? WHERE id = ?')
+            ->execute([json_encode(array_values($remaining)), $uid]);
+        return true;
+    }
+
+    public static function twoFactorRecoveryCodes(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $pdo = Database::pdo();
+        $stmt = $pdo->prepare('SELECT totp_enabled FROM users WHERE id = ?');
+        $stmt->execute([$uid]);
+        $u = $stmt->fetch();
+        if (!$u || empty($u['totp_enabled'])) return Json::err($res, '2FA ist nicht aktiv', 409, 'twofa_inactive');
+        [$plain, $hashed] = self::makeRecoveryCodes();
+        $pdo->prepare('UPDATE users SET twofa_recovery = ? WHERE id = ?')->execute([json_encode($hashed), $uid]);
+        return Json::ok($res, ['recovery_codes' => $plain]);
     }
 
     public static function twoFactorSetup(Request $req, Response $res): Response
@@ -133,8 +211,12 @@ final class AuthRoutes
         if (!\Nyza\Totp::verify((string)($b['code'] ?? ''), (string)$u['totp_secret'])) {
             return Json::err($res, 'Code ungültig — bitte erneut versuchen', 422, 'bad_code');
         }
-        $pdo->prepare('UPDATE users SET totp_enabled = 1 WHERE id = ?')->execute([$uid]);
-        return Json::ok($res, ['ok' => true, 'enabled' => true]);
+        // Generate single-use recovery codes for authenticator-loss recovery.
+        // Store hashed; hand the plaintext back ONCE so the UI can display them.
+        [$plain, $hashed] = self::makeRecoveryCodes();
+        $pdo->prepare('UPDATE users SET totp_enabled = 1, twofa_recovery = ? WHERE id = ?')
+            ->execute([json_encode($hashed), $uid]);
+        return Json::ok($res, ['ok' => true, 'enabled' => true, 'recovery_codes' => $plain]);
     }
 
     public static function twoFactorDisable(Request $req, Response $res): Response
@@ -153,7 +235,7 @@ final class AuthRoutes
         if (!\Nyza\Totp::verify((string)($b['code'] ?? ''), (string)$u['totp_secret'])) {
             return Json::err($res, 'Code ungültig', 422, 'bad_code');
         }
-        $pdo->prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL WHERE id = ?')->execute([$uid]);
+        $pdo->prepare('UPDATE users SET totp_enabled = 0, totp_secret = NULL, twofa_recovery = NULL WHERE id = ?')->execute([$uid]);
         return Json::ok($res, ['ok' => true, 'enabled' => false]);
     }
 

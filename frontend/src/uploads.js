@@ -27,7 +27,7 @@ async function appendWithRetry(appendFn, sid, blob, onChunkProgress) {
 // Generic chunked driver. `ops` provides init/append/finalize bound to the
 // owner or client endpoints. onProgress(fraction 0..1) is reported across the
 // whole file (sum of completed chunks + current chunk progress).
-async function chunked(file, ops, onProgress) {
+async function chunked(file, ops, onProgress, signal) {
   const total = file.size;
   const initRes = await ops.init({
     file_name: file.name, total_size: total, chunk_size: CHUNK_SIZE,
@@ -35,9 +35,10 @@ async function chunked(file, ops, onProgress) {
   const sid = initRes.session_id;
   let sent = 0;
   for (let offset = 0; offset < total; offset += CHUNK_SIZE) {
+    if (signal && signal.aborted) throw Object.assign(new Error('Abgebrochen'), { code: 'aborted' });
     const blob = file.slice(offset, Math.min(offset + CHUNK_SIZE, total));
     const base = sent;
-    await appendWithRetry(ops.append, sid, blob, (cp) => {
+    await appendWithRetry((s, b, cb) => ops.append(s, b, cb, signal), sid, blob, (cp) => {
       onProgress && onProgress(Math.min(1, (base + cp * blob.size) / total));
     });
     sent += blob.size;
@@ -46,15 +47,15 @@ async function chunked(file, ops, onProgress) {
   return ops.finalize(sid);
 }
 
-export async function uploadOwner(file, folderId, onProgress) {
+export async function uploadOwner(file, folderId, onProgress, signal) {
   if (file.size > CHUNK_THRESHOLD) {
     return chunked(file, {
       init: (b) => API.chunkInit({ ...b, folder_id: folderId }),
-      append: (sid, blob, cb) => API.chunkAppend(sid, blob, cb),
+      append: (sid, blob, cb, sig) => API.chunkAppend(sid, blob, cb, sig),
       finalize: (sid) => API.chunkFinalize(sid),
-    }, onProgress);
+    }, onProgress, signal);
   }
-  return API.uploadFile(file, folderId, onProgress);
+  return API.uploadFile(file, folderId, onProgress, signal);
 }
 
 export async function uploadClient(token, file, opts, onProgress) {

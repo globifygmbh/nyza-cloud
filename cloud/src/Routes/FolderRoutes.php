@@ -24,6 +24,7 @@ final class FolderRoutes
             $g->get('/{id}',      [self::class, 'show']);
             $g->patch('/{id}',    [self::class, 'rename']);
             $g->post('/{id}/pin', [self::class, 'pin']);
+            $g->post('/{id}/restore', [self::class, 'restore']);
             $g->delete('/{id}',   [self::class, 'delete']);
         })->add(new AuthMiddleware());
     }
@@ -39,7 +40,7 @@ final class FolderRoutes
             $stmt = $pdo->prepare(
                 'SELECT f.*, '
                 . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count '
-                . 'FROM folders f WHERE user_id = ? ORDER BY name'
+                . 'FROM folders f WHERE user_id = ? AND deleted_at IS NULL ORDER BY name'
             );
             $stmt->execute([$uid]);
             return Json::ok($res, ['folders' => $stmt->fetchAll()]);
@@ -49,7 +50,7 @@ final class FolderRoutes
         $sql = 'SELECT f.*, '
              . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
              . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
-             . 'FROM folders f WHERE user_id = ? '
+             . 'FROM folders f WHERE user_id = ? AND deleted_at IS NULL '
              . ($parent === null ? 'AND parent_id IS NULL ' : 'AND parent_id = ? ')
              . 'ORDER BY pinned DESC, updated_at DESC';
         $stmt = $pdo->prepare($sql);
@@ -85,7 +86,7 @@ final class FolderRoutes
 
         $files = Database::pdo()->prepare('SELECT * FROM files WHERE user_id = ? AND folder_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, created_at DESC');
         $files->execute([$uid, $id]);
-        $sub = Database::pdo()->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id = ? ORDER BY pinned DESC, updated_at DESC');
+        $sub = Database::pdo()->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC');
         $sub->execute([$uid, $id]);
         return Json::ok($res, [
             'folder' => $folder,
@@ -147,20 +148,94 @@ final class FolderRoutes
         return $out;
     }
 
+    // Soft delete — moves the folder AND its entire subtree (nested subfolders
+    // + all files within) to the Papierkorb, mirroring file soft-delete
+    // (FileRoutes::delete sets deleted_at). Blobs stay on disk and quota still
+    // counts them; permanent removal happens via empty-trash. The subtree is
+    // walked in PHP (breadth-first) over LIVE folders only — WITH RECURSIVE
+    // needs MySQL 8.0+ / MariaDB 10.2.2+, and this app must run on older shared
+    // hosts too. Each soft-deleted file/subfolder is stamped with the SAME
+    // deleted_at instant as the root so restore can bring back exactly the rows
+    // that were trashed together.
     public static function delete(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
         $id = (int)$args['id'];
         $pdo = Database::pdo();
 
-        // ON DELETE CASCADE removes child folders + files rows, but the file
-        // blobs on disk need explicit cleanup. Walk the folder subtree in PHP
-        // (breadth-first) instead of a recursive CTE — WITH RECURSIVE needs
-        // MySQL 8.0+ / MariaDB 10.2.2+, and this app must run on older shared
-        // hosts too.
+        // Guard: the folder must exist, belong to the user, and be live.
+        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
+
+        $allIds = self::liveSubtreeIds($uid, $id);
+
+        // One shared timestamp marks the whole subtree as trashed together.
+        $now = date('Y-m-d H:i:s');
+        $place = implode(',', array_fill(0, count($allIds), '?'));
+
+        // Soft-delete every LIVE file in the subtree (skip already-trashed ones
+        // so an earlier individual trash time is preserved).
+        $pdo->prepare(
+            "UPDATE files SET deleted_at = ? WHERE user_id = ? AND deleted_at IS NULL AND folder_id IN ($place)"
+        )->execute(array_merge([$now, $uid], $allIds));
+
+        // Soft-delete the folder + every descendant folder.
+        $pdo->prepare(
+            "UPDATE folders SET deleted_at = ? WHERE user_id = ? AND deleted_at IS NULL AND id IN ($place)"
+        )->execute(array_merge([$now, $uid], $allIds));
+
+        return Json::ok($res, ['ok' => true, 'trashed' => true]);
+    }
+
+    // Restore a trashed folder and the files/subfolders that were trashed in the
+    // same operation (matched by the shared deleted_at instant). Best-effort: if
+    // the parent is still trashed, the restored folder surfaces at its original
+    // parent only once that parent is itself restored — but its rows are no
+    // longer lost. Mirrors FileRoutes::restore (deleted_at = NULL).
+    public static function restore(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        $pdo = Database::pdo();
+
+        $stmt = $pdo->prepare('SELECT deleted_at FROM folders WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL');
+        $stmt->execute([$id, $uid]);
+        $row = $stmt->fetch();
+        if (!$row) return Json::err($res, 'Not found', 404);
+        $when = (string)$row['deleted_at'];
+
+        // Restore the folder itself.
+        $pdo->prepare('UPDATE folders SET deleted_at = NULL WHERE id = ? AND user_id = ?')
+            ->execute([$id, $uid]);
+
+        // Restore the rest of the subtree that was trashed at the SAME instant.
+        // Walk the (now partially trashed) tree from this folder, keeping only
+        // descendants whose deleted_at matches the root's trash time.
+        $allIds = self::trashedSubtreeIds($uid, $id, $when);
+        if ($allIds) {
+            $place = implode(',', array_fill(0, count($allIds), '?'));
+            $pdo->prepare(
+                "UPDATE folders SET deleted_at = NULL WHERE user_id = ? AND deleted_at = ? AND id IN ($place)"
+            )->execute(array_merge([$uid, $when], $allIds));
+        }
+
+        // Restore files in the whole (now-restored) subtree that share the trash
+        // time. Include the root id so its own files come back too.
+        $fileScope = array_merge([$id], $allIds);
+        $fplace = implode(',', array_fill(0, count($fileScope), '?'));
+        $pdo->prepare(
+            "UPDATE files SET deleted_at = NULL WHERE user_id = ? AND deleted_at = ? AND folder_id IN ($fplace)"
+        )->execute(array_merge([$uid, $when], $fileScope));
+
+        return Json::ok($res, ['ok' => true, 'folder' => self::fetchOne($uid, $id)]);
+    }
+
+    /** Folder id + all LIVE descendant folder ids, breadth-first. */
+    private static function liveSubtreeIds(int $uid, int $id): array
+    {
+        $pdo = Database::pdo();
+        $childStmt = $pdo->prepare('SELECT id FROM folders WHERE parent_id = ? AND user_id = ? AND deleted_at IS NULL');
         $allIds = [$id];
         $frontier = [$id];
-        $childStmt = $pdo->prepare('SELECT id FROM folders WHERE parent_id = ? AND user_id = ?');
         $guard = 0;
         while ($frontier && $guard++ < 10000) {
             $next = [];
@@ -174,20 +249,30 @@ final class FolderRoutes
             }
             $frontier = $next;
         }
+        return $allIds;
+    }
 
-        // Collect blob paths for every file in the subtree before deletion.
-        $place = implode(',', array_fill(0, count($allIds), '?'));
-        $blobs = $pdo->prepare("SELECT storage_path FROM files WHERE user_id = ? AND folder_id IN ($place)");
-        $blobs->execute(array_merge([$uid], $allIds));
-        $paths = array_column($blobs->fetchAll(), 'storage_path');
-
-        // Deleting the root cascades the rest via FK ON DELETE CASCADE.
-        $pdo->prepare('DELETE FROM folders WHERE id = ? AND user_id = ?')->execute([$id, $uid]);
-
-        foreach ($paths as $p) {
-            \Nyza\Storage::deleteRel($p);
+    /** Descendant folder ids of $id that were trashed at $when (excluding $id). */
+    private static function trashedSubtreeIds(int $uid, int $id, string $when): array
+    {
+        $pdo = Database::pdo();
+        $childStmt = $pdo->prepare('SELECT id FROM folders WHERE parent_id = ? AND user_id = ? AND deleted_at = ?');
+        $out = [];
+        $frontier = [$id];
+        $guard = 0;
+        while ($frontier && $guard++ < 10000) {
+            $next = [];
+            foreach ($frontier as $fid) {
+                $childStmt->execute([$fid, $uid, $when]);
+                foreach ($childStmt->fetchAll() as $row) {
+                    $cid = (int)$row['id'];
+                    $out[] = $cid;
+                    $next[] = $cid;
+                }
+            }
+            $frontier = $next;
         }
-        return Json::ok($res, ['ok' => true]);
+        return $out;
     }
 
     public static function pin(Request $req, Response $res, array $args): Response
@@ -210,7 +295,7 @@ final class FolderRoutes
             'SELECT f.*, '
             . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
             . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
-            . 'FROM folders f WHERE id = ? AND user_id = ?'
+            . 'FROM folders f WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
         );
         $stmt->execute([$id, $uid]);
         $f = $stmt->fetch();

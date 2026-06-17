@@ -179,7 +179,7 @@ final class FileRoutes
 
         $f = $pdo->prepare("SELECT * FROM files WHERE user_id = ? AND deleted_at IS NULL AND name LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT 100");
         $f->execute([$uid, $like]);
-        $folders = $pdo->prepare("SELECT id, name, kind, tone, parent_id FROM folders WHERE user_id = ? AND name LIKE ? ESCAPE '\\' ORDER BY name LIMIT 50");
+        $folders = $pdo->prepare("SELECT id, name, kind, tone, parent_id FROM folders WHERE user_id = ? AND deleted_at IS NULL AND name LIKE ? ESCAPE '\\' ORDER BY name LIMIT 50");
         $folders->execute([$uid, $like]);
         return Json::ok($res, ['files' => $f->fetchAll(), 'folders' => $folders->fetchAll()]);
     }
@@ -218,7 +218,7 @@ final class FileRoutes
 
     private static function folderOwned(int $uid, int $fid): bool
     {
-        $s = Database::pdo()->prepare('SELECT 1 FROM folders WHERE id = ? AND user_id = ?');
+        $s = Database::pdo()->prepare('SELECT 1 FROM folders WHERE id = ? AND user_id = ? AND deleted_at IS NULL');
         $s->execute([$fid, $uid]);
         return (bool)$s->fetch();
     }
@@ -788,6 +788,11 @@ final class FileRoutes
         $stmt->execute([$uid]);
         $n = 0;
         foreach ($stmt->fetchAll() as $f) { self::hardDelete($uid, $f); $n++; }
+        // Also purge trashed FOLDER rows (folders soft-deleted via FolderRoutes).
+        // Their files are removed above; the empty folder shells go here. FK
+        // ON DELETE CASCADE drops any still-trashed nested folder rows.
+        Database::pdo()->prepare('DELETE FROM folders WHERE user_id = ? AND deleted_at IS NOT NULL')
+            ->execute([$uid]);
         return Json::ok($res, ['ok' => true, 'removed' => $n]);
     }
 

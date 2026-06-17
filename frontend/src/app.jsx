@@ -886,7 +886,7 @@ function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, on
     { id: 'files',    label: 'Meine Dateien', icon: Ic.home,   count: stats?.files },
     { id: 'favorites',label: 'Favoriten',     icon: Ic.star },
     { id: 'links',    label: 'Links',         icon: Ic.link,   count: ((stats?.shares || 0) + (stats?.upload_links || 0)) || null },
-    { id: 'apps',     label: 'Apps',          icon: Ic.grid,   badge: 'NEU' },
+    { id: 'apps',     label: 'Apps',          icon: Ic.grid },
     { id: 'activity', label: 'Aktivität',     icon: Ic.clock },
     { id: 'trash',    label: 'Papierkorb',    icon: Ic.trash,  count: stats?.trash || null },
   ];
@@ -1764,35 +1764,57 @@ export function UploadReview({ files: initial, title = 'Diese Dateien hochladen?
 // Non-blocking, minimizable upload widget — bottom-right on desktop (Google-
 // Drive style), above the bottom nav on mobile. The actual upload runs in the
 // Dashboard, so you can switch views / navigate freely while it continues.
-export function UploadProgress({ items, onClose }) {
+function fmtEta(s) { s = Math.max(0, Math.round(s)); const m = Math.floor(s / 60); const ss = s % 60; return m > 0 ? m + 'm ' + String(ss).padStart(2, '0') + 's' : ss + 's'; }
+
+export function UploadProgress({ items, onClose, onCancel }) {
   const [min, setMin] = useState(false);
   const total = items.reduce((s, x) => s + x.size, 0);
-  const done = items.reduce((s, x) => s + (x.status === 'done' ? x.size : x.size * (x.pct || 0)), 0);
-  const allDone = items.every((x) => x.status === 'done' || x.status === 'error');
+  const done = items.reduce((s, x) => s + (x.status === 'done' ? x.size : x.status === 'canceled' ? 0 : x.size * (x.pct || 0)), 0);
+  const active = items.some((x) => x.status === 'uploading' || x.status === 'queued');
   const errors = items.filter((x) => x.status === 'error').length;
+  const canceled = items.filter((x) => x.status === 'canceled').length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const doneCount = items.filter((x) => x.status === 'done').length;
+
+  // Live ETA from a rolling byte-rate sample (survives tab switches; XHR keeps
+  // running in the background so progress continues either way).
+  const liveRef = useRef({ done: 0, total: 0, active: false });
+  liveRef.current = { done, total, active };
+  const [eta, setEta] = useState(null);
+  const sampleRef = useRef(null);
+  useEffect(() => {
+    const id = setInterval(() => {
+      const L = liveRef.current;
+      if (!L.active) { setEta(null); sampleRef.current = null; return; }
+      const now = Date.now();
+      if (sampleRef.current) {
+        const dt = (now - sampleRef.current.t) / 1000;
+        if (dt >= 0.7) { const sp = (L.done - sampleRef.current.done) / dt; sampleRef.current = { t: now, done: L.done }; if (sp > 1) setEta((L.total - L.done) / sp); }
+      } else sampleRef.current = { t: now, done: L.done };
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  let subtitle = `${doneCount} von ${items.length} · ${humanSize(done)} / ${humanSize(total)}`;
+  if (active && eta != null) subtitle += ` · noch ${fmtEta(eta)}`;
+  const title = active ? 'Wird hochgeladen…' : ('Upload fertig' + (errors ? ` · ${errors} Fehler` : '') + (canceled ? ` · ${canceled} abgebrochen` : ''));
   return (
     <div className="nyza-upload-widget">
       <Glass style={{ borderRadius: 'var(--r-lg)', overflow: 'hidden' }}>
         <div onClick={() => setMin((m) => !m)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', cursor: 'pointer' }}>
           <CircularProgress pct={pct} size={42} thick={5}/>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: -0.1 }}>
-              {allDone ? (errors ? 'Upload fertig · ' + errors + ' Fehler' : 'Upload fertig') : 'Wird hochgeladen…'}
-            </div>
-            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {doneCount} von {items.length} · {humanSize(done)} / {humanSize(total)}
-            </div>
+            <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: -0.1 }}>{title}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{subtitle}</div>
           </div>
           <IconBtn size={30} title={min ? 'Aufklappen' : 'Minimieren'} onClick={(e) => { e.stopPropagation(); setMin((m) => !m); }}>
             {min ? Ic.chevronU(15) : Ic.chevronD(15)}
           </IconBtn>
-          {allDone && <IconBtn size={30} title="Schließen" onClick={(e) => { e.stopPropagation(); onClose(); }}>{Ic.close(15)}</IconBtn>}
+          {!active && <IconBtn size={30} title="Schließen" onClick={(e) => { e.stopPropagation(); onClose(); }}>{Ic.close(15)}</IconBtn>}
         </div>
         {!min && (
           <div style={{ borderTop: '1px solid var(--border)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 300, overflowY: 'auto' }}>
-            {items.map((f, i) => <UploadRow key={i} file={f}/>)}
+            {items.map((f) => <UploadRow key={f.id ?? f.name} file={f} onCancel={onCancel}/>)}
           </div>
         )}
       </Glass>
@@ -1800,11 +1822,16 @@ export function UploadProgress({ items, onClose }) {
   );
 }
 
-export function UploadRow({ file }) {
+export function UploadRow({ file, onCancel }) {
   const isDone = file.status === 'done';
   const isError = file.status === 'error';
   const isUp = file.status === 'uploading';
+  const isCanceled = file.status === 'canceled';
   const pct = Math.round((file.pct || 0) * 100);
+  const doCancel = async (e) => {
+    e.stopPropagation();
+    if (await confirmDialog({ title: 'Upload abbrechen?', message: `„${file.name}" wird nicht hochgeladen.`, confirmLabel: 'Upload stoppen', danger: true })) onCancel && onCancel(file.id);
+  };
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 'var(--r-sm)',
@@ -1818,11 +1845,15 @@ export function UploadRow({ file }) {
         <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</div>
         <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>{humanSize(file.size)}</div>
       </div>
-      <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {isDone && <div style={{ width: 22, height: 22, borderRadius: 11, background: 'var(--success)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.check(13)}</div>}
         {isError && <div style={{ fontSize: 11, color: 'var(--danger)' }}>Fehler</div>}
+        {isCanceled && <div style={{ fontSize: 11, color: 'var(--fg-4)' }}>Abgebrochen</div>}
         {isUp && <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>{pct}%</div>}
-        {!isDone && !isError && !isUp && <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>wartet</span>}
+        {!isDone && !isError && !isUp && !isCanceled && <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>wartet</span>}
+        {(isUp || (!isDone && !isError && !isCanceled)) && onCancel && (
+          <span title="Upload abbrechen" onClick={doCancel} style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex' }}>{Ic.close(14)}</span>
+        )}
       </div>
     </div>
   );
@@ -1881,7 +1912,19 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
     } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
   };
 
+  // Re-opening share on already-shared content shows the existing link.
+  useEffect(() => {
+    API.shares().then((d) => {
+      const m = (d.shares || []).find((s) => (folder && String(s.folder_id) === String(folder.id)) || (file && String(s.file_id) === String(file.id)));
+      if (m) setCreated(m);
+    }).catch(() => {});
+  }, []);
   const url = created ? location.origin + (basePath || '') + '/s/' + created.token : '';
+  const delShare = async () => {
+    if (!created?.id) { setCreated(null); return; }
+    try { await API.deleteShare(created.id); toast('Link gelöscht', 'success'); setCreated(null); onCreated && onCreated(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
 
   return (
     <div className="nyza-modal-backdrop" onClick={onClose}>
@@ -1902,7 +1945,11 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
                 <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{url}</span>
                 <Btn variant="primary" size="sm" icon={Ic.copy(13)} onClick={() => { navigator.clipboard?.writeText(url); toast('Link kopiert', 'success'); }}>Kopieren</Btn>
               </div>
-              <div style={{ fontSize: 12, color: 'var(--fg-3)', textAlign: 'center', padding: 8 }}>Empfänger sehen eine schöne Vorschauseite mit Download-Button.</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{created.has_password || created.password ? '🔒 passwortgeschützt' : 'ohne Passwort'}{created.allow_download === 0 ? ' · kein Download' : ''}</span>
+                <Btn variant="ghost" size="sm" icon={Ic.trash(13)} onClick={delShare}>Link löschen</Btn>
+                <Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setCreated(null)}>Neuen Link</Btn>
+              </div>
             </div>
           ) : (
             <>
@@ -2370,7 +2417,8 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const [view, setView] = useState('grid');
   const [sort, setSort] = useState({ by: 'date', dir: 'desc' });
   const [search, setSearch] = useState('');
-  const [nav, setNav] = useState({ name: 'files' }); // {name:'files'|'shared'|'links'|'activity'|'folder', id?}
+  const [nav, setNav] = useState(() => { try { const s = JSON.parse(localStorage.getItem('nyza.nav') || 'null'); if (s && s.name) return s; } catch {} return { name: 'files' }; }); // {name:'files'|'shared'|'links'|'activity'|'folder'|'apps'|'app-*', id?}
+  useEffect(() => { try { localStorage.setItem('nyza.nav', JSON.stringify(nav)); } catch {} }, [nav]);
   const [stats, setStats] = useState(null);
   const [folders, setFolders] = useState([]);
 
@@ -2401,6 +2449,14 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const uploadTargetFolder = useRef(null);
   const folderUploadInputRef = useRef(null);
   const folderUploadTargetRef = useRef(null);
+  // Upload queue: items uploaded strictly one after another (no flicker), each
+  // cancelable. Refs mirror state so the async worker reads the latest list.
+  const uploadsRef = useRef([]);
+  const uploadWorking = useRef(false);
+  const uploadCtrls = useRef({});
+  const uploadIdRef = useRef(0);
+  const setUploadsSync = (updater) => setUploads((prev) => { const next = typeof updater === 'function' ? updater(prev) : updater; uploadsRef.current = next; return next; });
+  const fileKind = (f) => f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type === 'application/pdf' ? 'pdf' : 'doc';
 
   const loadStats = useCallback(() => { API.stats().then(setStats).catch(() => {}); }, []);
   const loadFolders = useCallback(() => { API.folders().then((d) => setFolders(d.folders || [])).catch(() => {}); }, []);
@@ -2426,27 +2482,60 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
     catch (e) { toast(e.message, 'error'); }
   };
 
-  const runUpload = async (filesArr, folderId = null) => {
-    const items = filesArr.map((f) => ({
-      name: f.name, size: f.size, status: 'queued', pct: 0,
-      kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type === 'application/pdf' ? 'pdf' : 'doc',
+  // Append jobs to the queue and ensure the single worker is running.
+  const enqueueUploads = (jobs) => {
+    const items = jobs.filter((j) => j.file).map((j) => ({
+      id: ++uploadIdRef.current, name: j.file.name, size: j.file.size, status: 'queued', pct: 0,
+      kind: fileKind(j.file), file: j.file, folderId: j.folderId ?? null,
     }));
-    setUploads(items);
+    if (!items.length) return;
+    setUploadsSync((u) => [...u, ...items]);
     setShowUploadProgress(true);
-    for (let i = 0; i < filesArr.length; i++) {
-      setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'uploading' } : x));
-      try {
-        await uploadOwner(filesArr[i], folderId, (p) => setUploads((u) => u.map((x, j) => j === i ? { ...x, pct: p } : x)));
-        setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'done', pct: 1 } : x));
-      } catch (err) {
-        setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'error' } : x));
-        toast(err.message, 'error');
-      }
-    }
-    refreshAll();
+    pumpUploads();
   };
 
+  const pumpUploads = async () => {
+    if (uploadWorking.current) return;
+    uploadWorking.current = true;
+    for (;;) {
+      const next = uploadsRef.current.find((x) => x.status === 'queued');
+      if (!next) break;
+      const ctrl = new AbortController();
+      uploadCtrls.current[next.id] = ctrl;
+      setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, status: 'uploading' } : x));
+      try {
+        await uploadOwner(next.file, next.folderId, (p) => setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, pct: p } : x)), ctrl.signal);
+        setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, status: 'done', pct: 1, file: null } : x));
+        refreshAll();
+      } catch (err) {
+        if (err && err.code === 'aborted') setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, status: 'canceled', file: null } : x));
+        else { setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, status: 'error', file: null } : x)); toast(err.message, 'error'); }
+      } finally { delete uploadCtrls.current[next.id]; }
+    }
+    uploadWorking.current = false;
+  };
+
+  const cancelUpload = (id) => {
+    const it = uploadsRef.current.find((x) => x.id === id);
+    if (!it) return;
+    if (it.status === 'queued') setUploadsSync((u) => u.map((x) => x.id === id ? { ...x, status: 'canceled', file: null } : x));
+    else if (it.status === 'uploading' && uploadCtrls.current[id]) uploadCtrls.current[id].abort();
+  };
+
+  // Back-compat shim for existing callers.
+  const runUpload = (filesArr, folderId = null) => enqueueUploads(filesArr.map((f) => ({ file: f, folderId })));
+
   const triggerUpload = (folderId = null) => { uploadTargetFolder.current = folderId; uploadInputRef.current?.click(); };
+  // Unified upload entry: with dropped files → review+enqueue; without → picker.
+  const handleUpload = (folderId = null, filesArr = null) => {
+    // Guard: some callers wire onClick={onUpload}, passing a MouseEvent — never
+    // treat that as a folder id.
+    const fid = (typeof folderId === 'number' || (typeof folderId === 'string' && folderId !== '')) ? folderId : null;
+    const files = filesArr && (filesArr instanceof FileList || Array.isArray(filesArr)) && filesArr.length ? Array.from(filesArr) : null;
+    uploadTargetFolder.current = fid;
+    if (files) setReviewFiles(files);
+    else triggerUpload(fid);
+  };
 
   const runFolderUpload = async (filesArr, targetFolderId = null) => {
     const folderMap = {};
@@ -2472,27 +2561,11 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         toast(`Ordner „${name}" konnte nicht erstellt werden`, 'error');
       }
     }
-    const items = sorted.map((f) => ({
-      name: f.name, size: f.size, status: 'queued', pct: 0,
-      kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type === 'application/pdf' ? 'pdf' : 'doc',
-    }));
-    setUploads(items);
-    setShowUploadProgress(true);
-    for (let i = 0; i < sorted.length; i++) {
-      const f = sorted[i];
+    enqueueUploads(sorted.map((f) => {
       const parts = f.webkitRelativePath.split('/');
       const dirPath = parts.slice(0, -1).join('/');
-      const folderId = dirPath ? folderMap[dirPath] : targetFolderId;
-      setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'uploading' } : x));
-      try {
-        await uploadOwner(f, folderId, (p) => setUploads((u) => u.map((x, j) => j === i ? { ...x, pct: p } : x)));
-        setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'done', pct: 1 } : x));
-      } catch (err) {
-        setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'error' } : x));
-        toast(err.message, 'error');
-      }
-    }
-    refreshAll();
+      return { file: f, folderId: dirPath ? folderMap[dirPath] : targetFolderId };
+    }));
   };
 
   const triggerFolderUpload = (folderId = null) => {
@@ -2574,9 +2647,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onMoveFolder={(f) => openMove({ kind: 'folder', folder: f })}
             onFolderColor={setFolderColor}
             onMoveFiles={(ids) => openMove({ kind: 'files', ids })}
-            onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner löschen?', message: `„${f.name}" und alle enthaltenen Dateien werden endgültig gelöscht. Das kann nicht rückgängig gemacht werden.`, confirmLabel: 'Ordner löschen', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
+            onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner in den Papierkorb?', message: `„${f.name}" und alle enthaltenen Dateien werden in den Papierkorb verschoben. Du kannst sie dort wiederherstellen.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner in den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onNewFolder={async (name, kind, tone, templateId) => { try { const d = await API.newFolder({ name, kind, tone }); if (templateId) { const tpls = JSON.parse(localStorage.getItem('nyza.folderTemplates') || '[]'); const tpl = tpls.find((t) => t.id === templateId); if (tpl) { for (const sub of (tpl.folders || [])) { await API.newFolder({ name: sub, kind: 'normal', tone: 'violet', parent_id: d.folder.id }).catch(() => {}); } } } toast('Ordner erstellt', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
-            onUpload={() => triggerUpload(null)}
+            onUpload={(fid, fs) => handleUpload(fid, fs)}
             onNewText={() => newText(null)}
             onUploadLink={() => { setUploadLinkFolder(null); setShowUploadLinkModal(true); }}
             onOpenFile={openViewer}
@@ -2603,7 +2676,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             search={search} setSearch={setSearch} refreshTick={refreshTick}
             onBack={() => setNav({ name: 'files' })}
             onOpenFolder={(f) => setNav({ name: 'folder', id: f.id })}
-            onUpload={(fid) => triggerUpload(fid)}
+            onUpload={(fid, fs) => handleUpload(fid, fs)}
             onNewText={(fid) => newText(fid)}
             onShareFolder={(f) => setShareTarget({ folder: f })}
             onMoveFiles={(ids) => openMove({ kind: 'files', ids })}
@@ -2619,7 +2692,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onRenameFolder={(f) => setRenameFolderTarget(f)}
             onShareFolderItem={(f) => setShareTarget({ folder: f })}
             onFolderColor={setFolderColor}
-            onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner löschen?', message: `„${f.name}" und alle enthaltenen Dateien werden endgültig gelöscht.`, confirmLabel: 'Ordner löschen', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
+            onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner in den Papierkorb?', message: `„${f.name}" und alle enthaltenen Dateien werden in den Papierkorb verschoben.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner in den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onDeleteFile={async (f) => { if (!await confirmDialog({ title: 'In den Papierkorb?', message: `„${f.name}" wird in den Papierkorb verschoben. Du kannst sie dort wiederherstellen.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFile(f.id); toast('In den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             afterChange={refreshAll}
             onLabelFile={onLabelFile}
@@ -2675,7 +2748,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           onClose={() => setShowUploadLinkModal(false)} onCreated={refreshAll}/>
       )}
       {showUploadProgress && (
-        <UploadProgress items={uploads} onClose={() => { setShowUploadProgress(false); setUploads([]); }}/>
+        <UploadProgress items={uploads} onCancel={cancelUpload} onClose={() => { setShowUploadProgress(false); setUploadsSync([]); }}/>
       )}
       {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)}/>}
       {showProfile && <ProfileModal user={user} onClose={() => setShowProfile(false)} onSaved={(u) => onUserChange && onUserChange(u)}/>}

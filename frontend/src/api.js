@@ -46,7 +46,7 @@ async function request(path, opts = {}) {
 }
 
 // XHR-based upload so we can wire a real progress bar.
-function upload(path, file, extraFields = {}, onProgress) {
+function upload(path, file, extraFields = {}, onProgress, signal) {
   return new Promise((resolve, reject) => {
     const fd = new FormData();
     fd.append('file', file);
@@ -57,6 +57,10 @@ function upload(path, file, extraFields = {}, onProgress) {
     xhr.open('POST', url(path));
     const token = getToken();
     if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+    if (signal) {
+      if (signal.aborted) { xhr.abort(); return reject(Object.assign(new Error('Abgebrochen'), { code: 'aborted' })); }
+      signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    }
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
     };
@@ -69,19 +73,24 @@ function upload(path, file, extraFields = {}, onProgress) {
         reject(new Error('Upload failed (' + xhr.status + ')'));
       }
     };
+    xhr.onabort = () => reject(Object.assign(new Error('Abgebrochen'), { code: 'aborted' }));
     xhr.onerror = () => reject(new Error('Network error'));
     xhr.send(fd);
   });
 }
 
 // XHR raw-body PUT/POST for a single chunk (Blob), with progress + Bearer.
-function rawPut(path, blob, onProgress) {
+function rawPut(path, blob, onProgress, signal) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url(path));
     const token = getToken();
     if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    if (signal) {
+      if (signal.aborted) { xhr.abort(); return reject(Object.assign(new Error('Abgebrochen'), { code: 'aborted' })); }
+      signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    }
     xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
     xhr.onload = () => {
       try {
@@ -90,6 +99,7 @@ function rawPut(path, blob, onProgress) {
         else reject(Object.assign(new Error(data.error || 'Chunk failed'), { status: xhr.status, code: data.code }));
       } catch { reject(new Error('Chunk failed (' + xhr.status + ')')); }
     };
+    xhr.onabort = () => reject(Object.assign(new Error('Abgebrochen'), { code: 'aborted' }));
     xhr.onerror = () => reject(new Error('Network error'));
     xhr.send(blob);
   });
@@ -150,8 +160,8 @@ export const API = {
   pinFolder:   (id) => request('/api/folders/' + id + '/pin', { method: 'POST', body: {} }),
   labelFile:   (id, label) => request('/api/files/' + id + '/label', { method: 'POST', body: { label: label ?? null } }),
   shareSetLabel: (token, fileId, label, password) => request('/api/s/' + token + '/file/' + fileId + '/label' + (password ? '?p=' + encodeURIComponent(password) : ''), { method: 'POST', body: { label: label ?? null }, skipAuth: true }),
-  uploadFile:  (file, folderId, onProgress) =>
-    upload('/api/files', file, { folder_id: folderId }, onProgress),
+  uploadFile:  (file, folderId, onProgress, signal) =>
+    upload('/api/files', file, { folder_id: folderId }, onProgress, signal),
   deleteFile:  (id) => request('/api/files/' + id, { method: 'DELETE' }),
   fileRawUrl:  (id) => url('/api/files/' + id + '/raw'),
   thumbUrl:    (id) => url('/api/files/' + id + '/thumb') + '?token=' + (getToken() || ''),
@@ -178,7 +188,7 @@ export const API = {
   // Owner chunked/resumable upload (large files)
   chunkInit:     (body) => request('/api/files/chunk/init', { method: 'POST', body }),
   chunkStatus:   (sid) => request('/api/files/chunk/' + sid),
-  chunkAppend:   (sid, blob, onProgress) => rawPut('/api/files/chunk/' + sid, blob, onProgress),
+  chunkAppend:   (sid, blob, onProgress, signal) => rawPut('/api/files/chunk/' + sid, blob, onProgress, signal),
   chunkFinalize: (sid) => request('/api/files/chunk/' + sid + '/finalize', { method: 'POST', body: {} }),
 
   // Trash (soft delete)
