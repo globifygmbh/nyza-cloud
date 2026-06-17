@@ -684,6 +684,65 @@ export function ChangePasswordModal({ onClose }) {
 
 // ───── Profile & branding modal ─────────────────────────────────────────────
 const GB = 1024 * 1024 * 1024;
+
+function FolderTemplateSettings() {
+  const [templates, setTemplates] = useState(() => JSON.parse(localStorage.getItem('nyza.folderTemplates') || '[]'));
+  const [editId, setEditId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editFolders, setEditFolders] = useState('');
+
+  const save = () => {
+    const updated = templates.map((t) => t.id === editId ? { ...t, name: editName.trim(), folders: editFolders.split(',').map((s) => s.trim()).filter(Boolean) } : t);
+    setTemplates(updated);
+    localStorage.setItem('nyza.folderTemplates', JSON.stringify(updated));
+    setEditId(null);
+  };
+  const addNew = () => {
+    const id = Date.now().toString();
+    const updated = [...templates, { id, name: 'Neue Vorlage', folders: [] }];
+    setTemplates(updated);
+    localStorage.setItem('nyza.folderTemplates', JSON.stringify(updated));
+    setEditId(id); setEditName('Neue Vorlage'); setEditFolders('');
+  };
+  const del = (id) => {
+    const updated = templates.filter((t) => t.id !== id);
+    setTemplates(updated);
+    localStorage.setItem('nyza.folderTemplates', JSON.stringify(updated));
+    if (editId === id) setEditId(null);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {templates.map((t) => (
+        <div key={t.id} style={{ borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+          {editId === t.id ? (
+            <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Vorlagenname"
+                style={{ height: 36, padding: '0 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}/>
+              <input value={editFolders} onChange={(e) => setEditFolders(e.target.value)} placeholder="Unterordner kommagetrennt: Planung, Assets, Deliverables"
+                style={{ height: 36, padding: '0 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}/>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <Btn variant="primary" size="sm" onClick={save}>Speichern</Btn>
+                <Btn variant="ghost" size="sm" onClick={() => setEditId(null)}>Abbrechen</Btn>
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 540 }}>{t.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 2 }}>{t.folders.length > 0 ? t.folders.join(', ') : 'Keine Unterordner'}</div>
+              </div>
+              <Btn variant="ghost" size="sm" onClick={() => { setEditId(t.id); setEditName(t.name); setEditFolders(t.folders.join(', ')); }}>Bearbeiten</Btn>
+              <IconBtn size={28} title="Löschen" onClick={() => del(t.id)}>{Ic.trash(13)}</IconBtn>
+            </div>
+          )}
+        </div>
+      ))}
+      <Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={addNew}>Vorlage hinzufügen</Btn>
+    </div>
+  );
+}
+
 export function ProfileModal({ user, onClose, onSaved }) {
   const [name, setName] = useState(user.name || '');
   const [email, setEmail] = useState(user.email || '');
@@ -787,6 +846,10 @@ export function ProfileModal({ user, onClose, onSaved }) {
               </div>
               <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) pickLogo(f); e.target.value = ''; }}/>
             </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 10 }}>Ordnervorlagen</div>
+            <FolderTemplateSettings/>
           </div>
         </div>
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -956,6 +1019,34 @@ function MoreSheet({ user, theme, onTheme, onNavigate, onSecurity, onProfile, on
         {item(theme === 'dark' ? Ic.sun(18) : Ic.moon(18), theme === 'dark' ? 'Helles Design' : 'Dunkles Design', onTheme)}
         {item(Ic.lock(18), 'Sicherheit & 2FA', onSecurity)}
         {item(Ic.logout(18), 'Abmelden', onLogout, true)}
+      </Glass>
+    </div>
+  );
+}
+
+function FabSheet({ onCreateFolder, onUploadFiles, onUploadFolder, onClose }) {
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose} style={{ alignItems: 'flex-end', zIndex: 90 }}>
+      <Glass style={{ width: '100%', maxWidth: 520, borderRadius: '24px 24px 0 0', padding: 16, paddingBottom: 28 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ width: 40, height: 4, borderRadius: 2, background: 'var(--border-hi)', margin: '4px auto 14px' }}/>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', padding: '0 16px 10px' }}>Hinzufügen</div>
+        {[
+          { icon: Ic.folder(20), label: 'Ordner erstellen', sub: 'Neuen Ordner anlegen', onClick: onCreateFolder },
+          { icon: Ic.upload(20), label: 'Datei hochladen', sub: 'Dateien von diesem Gerät', onClick: onUploadFiles },
+          { icon: Ic.folderUp(20), label: 'Ordner hochladen', sub: 'Ordner inkl. Unterordner', onClick: onUploadFolder },
+        ].map(({ icon, label, sub, onClick }) => (
+          <button key={label} onClick={() => { onClick(); onClose(); }} style={{
+            display: 'flex', alignItems: 'center', gap: 16, width: '100%', padding: '14px 16px',
+            background: 'none', border: 'none', borderRadius: 'var(--r-md)', cursor: 'pointer',
+            fontFamily: 'inherit', textAlign: 'left',
+          }}>
+            <div style={{ width: 44, height: 44, borderRadius: 'var(--r-md)', background: 'var(--surface-hi)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)', flexShrink: 0 }}>{icon}</div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--fg)' }}>{label}</div>
+              <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 1 }}>{sub}</div>
+            </div>
+          </button>
+        ))}
       </Glass>
     </div>
   );
@@ -1177,6 +1268,10 @@ function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDr
           fontSize: 10, fontWeight: 600, letterSpacing: 0.4, background: 'rgba(0,0,0,0.5)', color: '#fff',
           backdropFilter: 'blur(10px)', textTransform: 'uppercase',
         }}>{folder.kind === 'gallery' ? '◇ Galerie' : '◇ Dateien'}</div>
+        {folder.pinned && (
+          <div style={{ position: 'absolute', top: 10, left: 10, color: 'var(--accent)', background: 'rgba(0,0,0,0.45)', borderRadius: 999, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}
+            title="Angepinnt">{Ic.pin(13)}</div>
+        )}
       </div>
       <div style={{ padding: '14px 16px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
@@ -2158,13 +2253,16 @@ function VersionHistoryModal({ file, onClose, onChanged }) {
   );
 }
 
-function NewFolderModal({ title = 'Neuer Ordner', onCreate, onCancel }) {
+function NewFolderModal({ title = 'Neuer Ordner', onCreate, onCancel, onClose }) {
   const [name, setName] = useState('');
   const [kind, setKind] = useState('normal');
   const [tone, setTone] = useState('violet');
+  const [templateId, setTemplateId] = useState('');
+  const [templates, setTemplates] = useState(() => JSON.parse(localStorage.getItem('nyza.folderTemplates') || '[]'));
   const inputRef = useRef(null);
   useEffect(() => { setTimeout(() => inputRef.current?.focus(), 60); }, []);
-  const submit = () => { if (name.trim()) onCreate(name.trim(), kind, tone); };
+  const handleCancel = onCancel || onClose;
+  const submit = () => { if (name.trim()) onCreate(name.trim(), kind, tone, templateId || null); };
   return (
     <div className="nyza-modal-backdrop" onClick={onCancel}>
       <Glass style={{ width: '100%', maxWidth: 480, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
@@ -2198,7 +2296,7 @@ function NewFolderModal({ title = 'Neuer Ordner', onCreate, onCancel }) {
               </button>
             ))}
           </div>
-          <div style={{ marginBottom: 20 }}>
+          <div style={{ marginBottom: templates.length > 0 ? 16 : 20 }}>
             <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-3)', marginBottom: 8 }}>Farbe</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {FOLDER_COLOR_KEYS.map((k) => (
@@ -2211,6 +2309,26 @@ function NewFolderModal({ title = 'Neuer Ordner', onCreate, onCancel }) {
               ))}
             </div>
           </div>
+          {templates.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-3)', marginBottom: 8 }}>Vorlage (optional)</div>
+              <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={{
+                width: '100%', height: 40, padding: '0 12px', borderRadius: 'var(--r-sm)',
+                background: 'var(--surface-hi)', border: '1px solid var(--border)',
+                color: 'var(--fg)', fontSize: 13, fontFamily: 'inherit', outline: 'none',
+              }}>
+                <option value="">Keine Vorlage</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name} ({t.folders.length} Unterordner)</option>
+                ))}
+              </select>
+              {templateId && (
+                <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 5 }}>
+                  Erstellt: {templates.find((t) => t.id === templateId)?.folders.join(', ')}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div className="nyza-modal-foot" style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn variant="ghost" onClick={onCancel}>Abbrechen</Btn>
@@ -2274,10 +2392,14 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const [showUploadProgress, setShowUploadProgress] = useState(false);
   const [reviewFiles, setReviewFiles] = useState(null);
   const [showMore, setShowMore] = useState(false);
+  const [showFab, setShowFab] = useState(false);
+  const [showNewFolderMobile, setShowNewFolderMobile] = useState(false);
   const isMobile = useIsMobile();
 
   const uploadInputRef = useRef(null);
   const uploadTargetFolder = useRef(null);
+  const folderUploadInputRef = useRef(null);
+  const folderUploadTargetRef = useRef(null);
 
   const loadStats = useCallback(() => { API.stats().then(setStats).catch(() => {}); }, []);
   const loadFolders = useCallback(() => { API.folders().then((d) => setFolders(d.folders || [])).catch(() => {}); }, []);
@@ -2292,6 +2414,15 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
       await API.labelFile(f.id, label);
       refreshAll();
     } catch (e) { toast(e.message, 'error'); }
+  };
+
+  const onPinFile = async (f) => {
+    try { await API.pinFile(f.id); refreshAll(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const onPinFolder = async (f) => {
+    try { await API.pinFolder(f.id); refreshAll(); }
+    catch (e) { toast(e.message, 'error'); }
   };
 
   const runUpload = async (filesArr, folderId = null) => {
@@ -2315,6 +2446,58 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   };
 
   const triggerUpload = (folderId = null) => { uploadTargetFolder.current = folderId; uploadInputRef.current?.click(); };
+
+  const runFolderUpload = async (filesArr, targetFolderId = null) => {
+    const folderMap = {};
+    const sorted = [...filesArr].sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath));
+    const dirPaths = new Set();
+    for (const f of sorted) {
+      const parts = f.webkitRelativePath.split('/');
+      for (let i = 1; i < parts.length; i++) {
+        dirPaths.add(parts.slice(0, i).join('/'));
+      }
+    }
+    const sortedDirs = [...dirPaths].sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
+    toast('Erstelle Ordnerstruktur…', 'info');
+    for (const dirPath of sortedDirs) {
+      const parts = dirPath.split('/');
+      const name = parts[parts.length - 1];
+      const parentPath = parts.slice(0, -1).join('/');
+      const parentId = parentPath ? folderMap[parentPath] : targetFolderId;
+      try {
+        const d = await API.newFolder({ name, parent_id: parentId, kind: 'normal', tone: 'violet' });
+        folderMap[dirPath] = d.folder.id;
+      } catch (e) {
+        toast(`Ordner „${name}" konnte nicht erstellt werden`, 'error');
+      }
+    }
+    const items = sorted.map((f) => ({
+      name: f.name, size: f.size, status: 'queued', pct: 0,
+      kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type === 'application/pdf' ? 'pdf' : 'doc',
+    }));
+    setUploads(items);
+    setShowUploadProgress(true);
+    for (let i = 0; i < sorted.length; i++) {
+      const f = sorted[i];
+      const parts = f.webkitRelativePath.split('/');
+      const dirPath = parts.slice(0, -1).join('/');
+      const folderId = dirPath ? folderMap[dirPath] : targetFolderId;
+      setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'uploading' } : x));
+      try {
+        await uploadOwner(f, folderId, (p) => setUploads((u) => u.map((x, j) => j === i ? { ...x, pct: p } : x)));
+        setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'done', pct: 1 } : x));
+      } catch (err) {
+        setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'error' } : x));
+        toast(err.message, 'error');
+      }
+    }
+    refreshAll();
+  };
+
+  const triggerFolderUpload = (folderId = null) => {
+    folderUploadTargetRef.current = folderId;
+    folderUploadInputRef.current?.click();
+  };
 
   const openMove = async (target) => {
     try { const d = await API.allFolders(); setAllFolders(d.folders || []); } catch { setAllFolders([]); }
@@ -2388,7 +2571,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onFolderColor={setFolderColor}
             onMoveFiles={(ids) => openMove({ kind: 'files', ids })}
             onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner löschen?', message: `„${f.name}" und alle enthaltenen Dateien werden endgültig gelöscht. Das kann nicht rückgängig gemacht werden.`, confirmLabel: 'Ordner löschen', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner gelöscht', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
-            onNewFolder={async (name, kind, tone) => { try { await API.newFolder({ name, kind, tone }); toast('Ordner erstellt', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
+            onNewFolder={async (name, kind, tone, templateId) => { try { const d = await API.newFolder({ name, kind, tone }); if (templateId) { const tpls = JSON.parse(localStorage.getItem('nyza.folderTemplates') || '[]'); const tpl = tpls.find((t) => t.id === templateId); if (tpl) { for (const sub of (tpl.folders || [])) { await API.newFolder({ name: sub, kind: 'normal', tone: 'violet', parent_id: d.folder.id }).catch(() => {}); } } } toast('Ordner erstellt', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onUpload={() => triggerUpload(null)}
             onNewText={() => newText(null)}
             onUploadLink={() => { setUploadLinkFolder(null); setShowUploadLinkModal(true); }}
@@ -2400,6 +2583,8 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onVersions={(f) => setVersionsTarget(f)}
             onDownloadFile={downloadOne}
             onDeleteFile={async (f) => { if (!await confirmDialog({ title: 'In den Papierkorb?', message: `„${f.name}" wird in den Papierkorb verschoben. Du kannst sie dort wiederherstellen.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFile(f.id); toast('In den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
+            onPinFile={onPinFile}
+            onPinFolder={onPinFolder}
           />
         )}
         {nav.name === 'favorites' && (
@@ -2434,6 +2619,8 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onDeleteFile={async (f) => { if (!await confirmDialog({ title: 'In den Papierkorb?', message: `„${f.name}" wird in den Papierkorb verschoben. Du kannst sie dort wiederherstellen.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFile(f.id); toast('In den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             afterChange={refreshAll}
             onLabelFile={onLabelFile}
+            onPinFile={onPinFile}
+            onPinFolder={onPinFolder}
           />
         )}
         {nav.name === 'shared' && (
@@ -2496,7 +2683,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
 
       {isMobile && (
         <MobileNav active={activeNav} onNavigate={(n) => { setNav(n); setSearch(''); }}
-          onUpload={() => triggerUpload(null)} onMore={() => setShowMore(true)}/>
+          onUpload={() => setShowFab(true)} onMore={() => setShowMore(true)}/>
       )}
       {showMore && (
         <MoreSheet user={user} theme={theme} onTheme={onTheme}
@@ -2505,6 +2692,35 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           onProfile={() => setShowProfile(true)}
           onLogout={() => { setToken(null); location.reload(); }}
           onClose={() => setShowMore(false)}/>
+      )}
+      {showFab && (
+        <FabSheet
+          onCreateFolder={() => setShowNewFolderMobile(true)}
+          onUploadFiles={() => triggerUpload(null)}
+          onUploadFolder={() => triggerFolderUpload(null)}
+          onClose={() => setShowFab(false)}/>
+      )}
+      {showNewFolderMobile && (
+        <NewFolderModal
+          onClose={() => setShowNewFolderMobile(false)}
+          onCancel={() => setShowNewFolderMobile(false)}
+          onCreate={async (name, kind, tone, templateId) => {
+            const fid = nav.name === 'folder' ? nav.id : null;
+            try {
+              const d = await API.newFolder({ name, kind, tone, parent_id: fid });
+              if (templateId) {
+                const templates = JSON.parse(localStorage.getItem('nyza.folderTemplates') || '[]');
+                const tmpl = templates.find((t) => t.id === templateId);
+                if (tmpl) {
+                  for (const sub of tmpl.folders) {
+                    try { await API.newFolder({ name: sub, kind: 'normal', tone: 'violet', parent_id: d.folder.id }); } catch {}
+                  }
+                }
+              }
+              toast('Ordner erstellt', 'success'); refreshAll(); setShowNewFolderMobile(false);
+            } catch (e) { toast(e.message, 'error'); }
+          }}
+        />
       )}
 
       {reviewFiles && (
@@ -2516,6 +2732,11 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
       <input ref={uploadInputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => {
         const filesArr = Array.from(e.target.files || []);
         if (filesArr.length) setReviewFiles(filesArr);
+        e.target.value = '';
+      }}/>
+      <input ref={folderUploadInputRef} type="file" multiple webkitdirectory="" style={{ display: 'none' }} onChange={(e) => {
+        const filesArr = Array.from(e.target.files || []);
+        if (filesArr.length) runFolderUpload(filesArr, folderUploadTargetRef.current);
         e.target.value = '';
       }}/>
     </div>
@@ -2575,6 +2796,7 @@ function FilesView({
   user, stats, folders, view, setView, sort, setSort, search, setSearch, refreshTick,
   onOpenFolder, onShareFolder, onRenameFolder, onMoveFolder, onFolderColor, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
   onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, onUnzip, onVersions, onDownloadFile,
+  onPinFile, onPinFolder,
 }) {
   const [recent, setRecent] = useState([]);
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -2606,7 +2828,7 @@ function FilesView({
   const fFolders = folders;
 
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
-    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolder, onColor: onFolderColor, onDelete: onDeleteFolder,
+    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolder, onColor: onFolderColor, onDelete: onDeleteFolder, onPin: onPinFolder,
   }));
   const bgCtx = (e) => {
     if (e.target.closest('[data-fid]') || e.target.closest('[data-folder-card]')) return;
@@ -2692,7 +2914,7 @@ function FilesView({
         ) : (
           <>
             <SectionHeader title="Ordner" count={fFolders.length} action={<Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn>}/>
-            {creatingFolder && <NewFolderModal onCreate={(n, k, t) => { onNewFolder(n, k, t); setCreatingFolder(false); }} onCancel={() => setCreatingFolder(false)}/>}
+            {creatingFolder && <NewFolderModal onCreate={(n, k, t, tid) => { onNewFolder(n, k, t, tid); setCreatingFolder(false); }} onCancel={() => setCreatingFolder(false)}/>}
             {fFolders.length > 0 ? (
               <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 36 }}>
                 {fFolders.map((f) => <FolderCard key={f.id} folder={f}
@@ -2789,6 +3011,7 @@ function FolderView({
   folderId, view, setView, sort, setSort, search, setSearch, refreshTick,
   onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onMoveFiles, onUploadLink, onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, afterChange,
   onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onShareFolderItem, onDeleteFolder, onFolderColor, onLabelFile,
+  onPinFile, onPinFolder,
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2834,10 +3057,11 @@ function FolderView({
       onToggleStar, onShare: onShareFile, onMove: (x) => onMoveFiles([x.id]),
       onVersions, onDelete: onDeleteFile, onLabel: onLabelFile,
       onZip: doZip, onMoveMany: () => onMoveFiles([...selected]), onDeleteMany: doBulkDelete,
+      onPin: onPinFile,
     }));
   };
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
-    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolderItem, onColor: onFolderColor, onDelete: onDeleteFolder,
+    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolderItem, onColor: onFolderColor, onDelete: onDeleteFolder, onPin: onPinFolder,
   }));
   const bgCtx = (e) => {
     if (e.target.closest('[data-fid]')) return;
