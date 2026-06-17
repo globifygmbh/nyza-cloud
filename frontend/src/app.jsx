@@ -6057,6 +6057,7 @@ function EventModal({ ev, contacts, onSave, onDelete, onClose }) {
           <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
         </div>
         <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 13, overflowY: 'auto' }}>
+          {ev.id && ev.created_by_name && <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>Erstellt von {ev.created_by_name}</div>}
           <input value={title} autoFocus onChange={(e) => setTitle(e.target.value)} placeholder={isAbsence ? 'z. B. Urlaub' : 'Titel'} style={{ ...fld, fontSize: 15 }}/>
           <div style={{ display: 'flex', gap: 8 }}>
             {[['event', 'Termin'], ['absence', 'Urlaub/Abwesenheit']].map(([k, l]) => (

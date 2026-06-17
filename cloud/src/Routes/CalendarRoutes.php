@@ -34,14 +34,16 @@ final class CalendarRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $qp = $req->getQueryParams();
-        $where = 'e.user_id = ?';
-        $params = [$uid];
+        // Shared workspace calendar: everyone sees all events.
+        $where = '1=1';
+        $params = [];
         // Overlap: event starts before window end AND ends after window start.
         if (!empty($qp['from'])) { $where .= ' AND e.ends_at >= ?';   $params[] = $qp['from'] . ' 00:00:00'; }
         if (!empty($qp['to']))   { $where .= ' AND e.starts_at <= ?'; $params[] = $qp['to'] . ' 23:59:59'; }
         $stmt = Database::pdo()->prepare(
-            'SELECT e.*, c.name AS contact_name FROM calendar_events e '
+            'SELECT e.*, c.name AS contact_name, u.name AS created_by_name FROM calendar_events e '
             . 'LEFT JOIN contacts c ON c.id = e.contact_id '
+            . 'LEFT JOIN users u ON u.id = e.user_id '
             . "WHERE $where ORDER BY e.starts_at ASC"
         );
         $stmt->execute($params);
@@ -74,8 +76,8 @@ final class CalendarRoutes
         if (array_key_exists('title', $b)) $map['title'] = mb_substr(trim((string)$b['title']), 0, 300);
         if ($map) {
             $sets = implode(', ', array_map(static fn($k) => "$k = ?", array_keys($map)));
-            Database::pdo()->prepare("UPDATE calendar_events SET $sets WHERE id = ? AND user_id = ?")
-                ->execute(array_merge(array_values($map), [$id, $uid]));
+            Database::pdo()->prepare("UPDATE calendar_events SET $sets WHERE id = ?")
+                ->execute(array_merge(array_values($map), [$id]));
         }
         return Json::ok($res, ['event' => self::shape(self::joined($uid, $id))]);
     }
@@ -85,7 +87,7 @@ final class CalendarRoutes
         $uid = (int)$req->getAttribute('uid');
         $id = (int)$args['id'];
         if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
-        Database::pdo()->prepare('DELETE FROM calendar_events WHERE id = ? AND user_id = ?')->execute([$id, $uid]);
+        Database::pdo()->prepare('DELETE FROM calendar_events WHERE id = ?')->execute([$id]);
         return Json::ok($res, ['ok' => true]);
     }
 
@@ -131,15 +133,16 @@ final class CalendarRoutes
 
     private static function fetchOne(int $uid, int $id): ?array
     {
-        $s = Database::pdo()->prepare('SELECT * FROM calendar_events WHERE id = ? AND user_id = ?');
-        $s->execute([$id, $uid]);
+        // Shared calendar: any member may load/edit/delete any event.
+        $s = Database::pdo()->prepare('SELECT * FROM calendar_events WHERE id = ?');
+        $s->execute([$id]);
         return $s->fetch() ?: null;
     }
 
     private static function joined(int $uid, int $id): array
     {
-        $s = Database::pdo()->prepare('SELECT e.*, c.name AS contact_name FROM calendar_events e LEFT JOIN contacts c ON c.id = e.contact_id WHERE e.id = ? AND e.user_id = ?');
-        $s->execute([$id, $uid]);
+        $s = Database::pdo()->prepare('SELECT e.*, c.name AS contact_name, u.name AS created_by_name FROM calendar_events e LEFT JOIN contacts c ON c.id = e.contact_id LEFT JOIN users u ON u.id = e.user_id WHERE e.id = ?');
+        $s->execute([$id]);
         return $s->fetch() ?: [];
     }
 
@@ -158,6 +161,8 @@ final class CalendarRoutes
             'contact_id'   => $r['contact_id'] !== null ? (int)$r['contact_id'] : null,
             'contact_name' => $r['contact_name'] ?? null,
             'person'       => $r['person'],
+            'created_by'   => isset($r['user_id']) ? (int)$r['user_id'] : null,
+            'created_by_name' => $r['created_by_name'] ?? null,
         ];
     }
 }
