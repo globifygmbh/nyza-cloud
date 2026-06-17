@@ -299,6 +299,10 @@ export const API = {
   uploadExpenseReceipt: (id, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/expenses/' + id + '/receipt', { method: 'POST', body: fd }); },
   deleteExpenseReceipt: (id) => request('/api/expenses/' + id + '/receipt', { method: 'DELETE' }),
   expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
+
+  // Buchhaltung · Auswertung
+  report:    (year) => request('/api/reports?year=' + year),
+  datevUrl:  (year) => url('/api/reports/datev') + '?year=' + year + '&download=1&token=' + (getToken() || ''),
   periodMarkPaid:    (id, paid_date) => request('/api/periods/' + id + '/mark-paid', { method: 'POST', body: { paid_date } }),
   periodUnmarkPaid:  (id) => request('/api/periods/' + id + '/unmark-paid', { method: 'POST', body: {} }),
   periodInvoice:     (id) => request('/api/periods/' + id + '/invoice', { method: 'POST', body: {} }),

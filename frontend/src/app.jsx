@@ -4434,6 +4434,8 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const [products, setProducts] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [exps, setExps] = useState(null);
+  const [rep, setRep] = useState(null);
+  const [repYear, setRepYear] = useState(() => new Date().getFullYear());
   const [editing, setEditing] = useState(null);
   const [prodEditing, setProdEditing] = useState(null);
   const [subEditing, setSubEditing] = useState(null);
@@ -4443,9 +4445,10 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
     if (tab === 'products') { API.products().then((d) => setProducts(d.products || [])).catch(() => setProducts([])); return; }
     if (tab === 'subscriptions') { setSubs(null); API.subscriptions().then((d) => setSubs(d.subscriptions || [])).catch(() => setSubs([])); return; }
     if (tab === 'expenses') { setExps(null); API.expenses().then((d) => setExps(d.expenses || [])).catch(() => setExps([])); return; }
+    if (tab === 'reports') { setRep(null); API.report(repYear).then((d) => setRep(d)).catch(() => setRep(null)); return; }
     setDocs(null);
     API.documents(tab).then((d) => setDocs(d.documents || [])).catch(() => setDocs([]));
-  }, [tab]);
+  }, [tab, repYear]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {}); API.products().then((d) => setProducts(d.products || [])).catch(() => {}); }, []);
 
@@ -4465,10 +4468,11 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const delExp = async (x) => { if (!await confirmDialog({ title: 'Ausgabe löschen?', message: `${x.vendor || x.category} wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteExpense(x.id); load(); } catch (e) { toast(e.message, 'error'); } };
   const toggleExpPaid = async (x) => { try { if (x.paid_at) await API.expenseUnmarkPaid(x.id); else await API.expenseMarkPaid(x.id); load(); } catch (e) { toast(e.message, 'error'); } };
 
-  const tabs = [{ id: 'invoice', label: 'Rechnungen' }, { id: 'offer', label: 'Angebote' }, { id: 'subscriptions', label: 'Abos' }, { id: 'expenses', label: 'Ausgaben' }, { id: 'products', label: 'Produkte' }];
+  const tabs = [{ id: 'invoice', label: 'Rechnungen' }, { id: 'offer', label: 'Angebote' }, { id: 'subscriptions', label: 'Abos' }, { id: 'expenses', label: 'Ausgaben' }, { id: 'reports', label: 'Auswertung' }, { id: 'products', label: 'Produkte' }];
   const newBtn = tab === 'products' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setProdEditing({})}>Produkt</Btn>
     : tab === 'subscriptions' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setSubEditing({ interval_unit: 'monthly', tax_rate: 20, active: 1 })}>Neues Abo</Btn>
     : tab === 'expenses' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setExpEditing({ category: 'Sonstiges', tax_rate: 20, deductible: 1 })}>Neue Ausgabe</Btn>
+    : tab === 'reports' ? <Btn variant="glass" size="sm" icon={Ic.download(14)} onClick={() => { window.location.href = API.datevUrl(repYear); }}>DATEV-CSV</Btn>
     : <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ type: tab })}>{tab === 'offer' ? 'Neues Angebot' : 'Neue Rechnung'}</Btn>;
 
   return (
@@ -4500,6 +4504,8 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
               ))}
             </div>
           )
+        ) : tab === 'reports' ? (
+          <AuswertungView data={rep} year={repYear} onYear={(dy) => setRepYear((y) => y + dy)}/>
         ) : tab === 'expenses' ? (
           exps === null ? (
             <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
@@ -4611,6 +4617,124 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
       {subEditing && <SubscriptionModal sub={subEditing} contacts={contacts} onSave={saveSub} onClose={() => setSubEditing(null)}/>}
       {expEditing && <ExpenseModal exp={expEditing} contacts={contacts} onSave={saveExp} onClose={() => setExpEditing(null)} onChanged={load}/>}
     </>
+  );
+}
+
+const MONTH_ABBR = ['Jän', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+
+function AuswertungView({ data, year, onYear }) {
+  const card = (label, value, sub, accent) => (
+    <div style={{ padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
+      {accent && <div style={{ position: 'absolute', inset: 0, background: 'var(--accent-grad)', opacity: 0.08 }}/>}
+      <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4, position: 'relative' }}>{label}</div>
+      <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600, letterSpacing: -0.5, position: 'relative' }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 2, position: 'relative' }}>{sub}</div>}
+    </div>
+  );
+  const pct = (r) => r + ' %';
+
+  // Quarter sums from monthly.
+  const quarters = [0, 0, 0, 0];
+  if (data) data.monthly.forEach((m) => { quarters[Math.floor((m.month - 1) / 3)] += m.profit; });
+  const maxCust = data && data.by_customer.length ? Math.max(...data.by_customer.map((c) => c.net), 1) : 1;
+  const maxMonth = data ? Math.max(1, ...data.monthly.map((m) => Math.max(m.income_net, m.expense_net))) : 1;
+
+  return (
+    <div style={{ maxWidth: 900 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+        <IconBtn size={34} title="Vorjahr" onClick={() => onYear(-1)} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronL(16)}</IconBtn>
+        <div style={{ fontSize: 18, fontWeight: 600, fontFamily: 'var(--font-display)', minWidth: 64, textAlign: 'center' }}>{year}</div>
+        <IconBtn size={34} title="Folgejahr" onClick={() => onYear(1)} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronR(16)}</IconBtn>
+        <span style={{ fontSize: 11.5, color: 'var(--fg-3)', marginLeft: 6 }}>Basis: Zahldatum (EÜR)</span>
+      </div>
+
+      {!data ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div> : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 14 }}>
+            {card('Einnahmen (netto)', fmtEUR(data.income.net), data.income.count + ' Rechnungen')}
+            {card('Ausgaben (netto)', fmtEUR(data.expense.net), data.expense.count + ' Belege')}
+            {card('Gewinn', fmtEUR(data.profit), 'vor Steuern', true)}
+            {card('USt-Zahllast', fmtEUR(data.ust_zahllast), 'USt − Vorsteuer')}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 28 }}>
+            {card('Offen', fmtEUR(data.open.total), data.open.count + ' Rechnungen')}
+            {card('Überfällig', fmtEUR(data.overdue.total), data.overdue.count + ' Rechnungen')}
+            {card('MRR', fmtEUR(data.recurring.mrr), data.recurring.active + ' aktive Abos')}
+            {card('ARR', fmtEUR(data.recurring.arr), 'hochgerechnet')}
+          </div>
+
+          {/* USt / Vorsteuer per rate */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 28 }}>
+            <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '14px 16px' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Umsatzsteuer (Einnahmen)</div>
+              {data.income_by_rate.length === 0 ? <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>Keine Daten</div> : (
+                <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+                  <thead><tr style={{ color: 'var(--fg-3)', textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 500, paddingBottom: 6 }}>Satz</th><th style={{ fontWeight: 500 }}>Netto</th><th style={{ fontWeight: 500 }}>USt</th></tr></thead>
+                  <tbody>{data.income_by_rate.map((r) => (
+                    <tr key={r.rate} style={{ fontVariantNumeric: 'tabular-nums' }}><td style={{ padding: '3px 0' }}>{pct(r.rate)}</td><td style={{ textAlign: 'right' }}>{fmtEUR(r.net)}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtEUR(r.tax)}</td></tr>
+                  ))}</tbody>
+                </table>
+              )}
+            </div>
+            <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '14px 16px' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Vorsteuer (Ausgaben)</div>
+              {data.expense_by_rate.length === 0 ? <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>Keine Daten</div> : (
+                <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
+                  <thead><tr style={{ color: 'var(--fg-3)', textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 500, paddingBottom: 6 }}>Satz</th><th style={{ fontWeight: 500 }}>Netto</th><th style={{ fontWeight: 500 }}>Vorsteuer</th></tr></thead>
+                  <tbody>{data.expense_by_rate.map((r) => (
+                    <tr key={r.rate} style={{ fontVariantNumeric: 'tabular-nums' }}><td style={{ padding: '3px 0' }}>{pct(r.rate)}{r.tax_nondeduct > 0 ? ' *' : ''}</td><td style={{ textAlign: 'right' }}>{fmtEUR(r.net)}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtEUR(r.vst)}</td></tr>
+                  ))}</tbody>
+                </table>
+              )}
+              {data.expense_by_rate.some((r) => r.tax_nondeduct > 0) && <div style={{ fontSize: 10.5, color: 'var(--fg-4)', marginTop: 8 }}>* enthält nicht abzugsfähige Beträge (nicht in Vorsteuer)</div>}
+            </div>
+          </div>
+
+          {/* Quarters */}
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Gewinn pro Quartal</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 28 }}>
+            {quarters.map((q, i) => (
+              <div key={i} style={{ padding: '12px 14px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>Q{i + 1}</div>
+                <div style={{ fontSize: 16, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: q < 0 ? '#ef4444' : 'var(--fg)' }}>{fmtEUR(q)}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Monthly bars */}
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 12 }}>Monatsverlauf (netto)</div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 130, marginBottom: 6 }}>
+            {data.monthly.map((m) => (
+              <div key={m.month} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, height: '100%', justifyContent: 'flex-end' }} title={`${MONTH_ABBR[m.month - 1]}: +${fmtEUR(m.income_net)} / −${fmtEUR(m.expense_net)}`}>
+                <div style={{ width: '100%', display: 'flex', gap: 2, alignItems: 'flex-end', height: '100%' }}>
+                  <div style={{ flex: 1, height: (m.income_net / maxMonth * 100) + '%', background: 'var(--accent)', borderRadius: '3px 3px 0 0', minHeight: m.income_net > 0 ? 2 : 0 }}/>
+                  <div style={{ flex: 1, height: (m.expense_net / maxMonth * 100) + '%', background: 'var(--fg-4)', borderRadius: '3px 3px 0 0', minHeight: m.expense_net > 0 ? 2 : 0 }}/>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 28 }}>
+            {data.monthly.map((m) => <div key={m.month} style={{ flex: 1, textAlign: 'center', fontSize: 9.5, color: 'var(--fg-4)' }}>{MONTH_ABBR[m.month - 1]}</div>)}
+          </div>
+
+          {/* Revenue per customer */}
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 12 }}>Umsatz pro Kunde (netto, bezahlt)</div>
+          {data.by_customer.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Keine bezahlten Rechnungen in {year}.</div> : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {data.by_customer.map((c, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 150, fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 0 }}>{c.name}</div>
+                  <div style={{ flex: 1, height: 18, borderRadius: 5, background: 'var(--surface-hi)', overflow: 'hidden' }}>
+                    <div style={{ width: (c.net / maxCust * 100) + '%', height: '100%', background: 'var(--accent-grad)', minWidth: 2 }}/>
+                  </div>
+                  <div style={{ width: 100, textAlign: 'right', fontSize: 12.5, fontWeight: 600, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtEUR(c.net)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

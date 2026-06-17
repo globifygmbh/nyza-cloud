@@ -23,6 +23,7 @@ use Nyza\Routes\ExpenseRoutes;
 use Nyza\Routes\FileRoutes;
 use Nyza\Routes\FolderRoutes;
 use Nyza\Routes\ProductRoutes;
+use Nyza\Routes\ReportRoutes;
 use Nyza\Routes\RoadmapRoutes;
 use Nyza\Routes\SettingsRoutes;
 use Nyza\Routes\ShareRoutes;
@@ -197,6 +198,7 @@ ExpenseRoutes::mount($app);
 SubscriptionRoutes::mount($app);
 TimeRoutes::mount($app);
 RoadmapRoutes::mount($app);
+ReportRoutes::mount($app);
 SettingsRoutes::mount($app);
 WebDavRoutes::mount($app);
 
