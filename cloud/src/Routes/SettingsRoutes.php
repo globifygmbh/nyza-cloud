@@ -19,7 +19,7 @@ use Slim\Routing\RouteCollectorProxy;
  */
 final class SettingsRoutes
 {
-    private const ALLOWED_NS = ['company'];
+    private const ALLOWED_NS = ['company', 'notifications'];
     private const MAX_BYTES = 256 * 1024;
 
     public static function mount(App $app): void

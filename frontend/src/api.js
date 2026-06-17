@@ -277,6 +277,12 @@ export const API = {
   updateRoadmapTask:(id, tid, body) => request('/api/roadmap/' + id + '/tasks/' + tid, { method: 'PATCH', body }),
   deleteRoadmapTask:(id, tid) => request('/api/roadmap/' + id + '/tasks/' + tid, { method: 'DELETE' }),
 
+  // Push notifications
+  pushKey:        () => request('/api/push/key'),
+  pushSubscribe:  (body) => request('/api/push/subscribe', { method: 'POST', body }),
+  pushUnsubscribe:(endpoint) => request('/api/push/unsubscribe', { method: 'POST', body: { endpoint } }),
+  pushTest:       () => request('/api/push/test', { method: 'POST', body: {} }),
+
   // Admin · user management
   adminUsers:      () => request('/api/admin/users'),
   adminCreateUser: (body) => request('/api/admin/users', { method: 'POST', body }),

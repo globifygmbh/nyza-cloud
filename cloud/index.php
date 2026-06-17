@@ -27,6 +27,7 @@ use Nyza\Routes\FolderRoutes;
 use Nyza\Routes\ImportRoutes;
 use Nyza\Routes\LedgerRoutes;
 use Nyza\Routes\ProductRoutes;
+use Nyza\Routes\PushRoutes;
 use Nyza\Routes\ReminderRoutes;
 use Nyza\Routes\ReportRoutes;
 use Nyza\Routes\RoadmapRoutes;
@@ -146,7 +147,7 @@ $app->get('/sw.js', function ($req, $res) use ($pwaBase) {
     // falls back to cache only when offline. API + media are always network-only.
     $scope = ($pwaBase ?: '') . '/';
     $js = <<<JS
-const CACHE = 'nyza-v4';
+const CACHE = 'nyza-v5';
 const SCOPE = '{$scope}';
 self.addEventListener('install', (e) => self.skipWaiting());
 self.addEventListener('activate', (e) => {
@@ -181,6 +182,22 @@ self.addEventListener('fetch', (e) => {
     }
   })());
 });
+self.addEventListener('push', (e) => {
+  const d = e.data ? e.data.json() : {};
+  e.waitUntil(self.registration.showNotification(d.title || 'Nyza Cloud', {
+    body: d.body || '',
+    icon: SCOPE+'icon.svg',
+    badge: SCOPE+'icon.svg',
+    data: { url: d.url || SCOPE }
+  }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(clients.matchAll({type:'window'}).then(cs => {
+    for (const c of cs) { if ('focus' in c) return c.focus(); }
+    return clients.openWindow(e.notification.data?.url || SCOPE);
+  }));
+});
 JS;
     $res->getBody()->write($js);
     return $res
@@ -210,6 +227,7 @@ ReminderRoutes::mount($app);
 ImportRoutes::mount($app);
 LedgerRoutes::mount($app);
 SettingsRoutes::mount($app);
+PushRoutes::mount($app);
 WebDavRoutes::mount($app);
 
 /** Asset / SPA fallback for all non-API GETs. */

@@ -4480,6 +4480,84 @@ function RoadmapStepModal({ step, onSave, onClose }) {
 // ───── Einstellungen app ────────────────────────────────────────────────────
 const LEGAL_FORMS = ['Einzelunternehmen', 'GmbH', 'OG', 'KG', 'AG', 'Sonstige'];
 
+function urlB64ToUint8Array(base64) {
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+  const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+const NOTIF_TYPES = [
+  { k: 'calendar', label: 'Kalender-Erinnerungen', desc: 'Kurz bevor ein Termin beginnt' },
+  { k: 'task_due', label: 'Aufgaben fällig', desc: 'Wenn eine Aufgabe fällig wird' },
+  { k: 'invoices', label: 'Offene Rechnungen', desc: 'Überfällige Rechnungen' },
+  { k: 'expenses', label: 'Offene Belege', desc: 'Unbezahlte Ausgaben' },
+];
+
+function NotificationsSection() {
+  const [perm, setPerm] = useState(() => (typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'));
+  const [subscribed, setSubscribed] = useState(false);
+  const [prefs, setPrefs] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const supported = typeof Notification !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window;
+
+  useEffect(() => {
+    API.getSettings('notifications').then((d) => setPrefs(d.settings || {})).catch(() => setPrefs({}));
+    if (supported) navigator.serviceWorker.ready.then((reg) => reg.pushManager.getSubscription()).then((s) => setSubscribed(!!s)).catch(() => {});
+  }, []);
+
+  const enable = async () => {
+    setBusy(true);
+    try {
+      const p = await Notification.requestPermission();
+      setPerm(p);
+      if (p !== 'granted') { toast('Benachrichtigungen nicht erlaubt', 'error'); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const { public_key } = await API.pushKey();
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(public_key) });
+      const j = sub.toJSON();
+      await API.pushSubscribe({ endpoint: j.endpoint, keys: j.keys });
+      setSubscribed(true);
+      // sensible defaults on first enable
+      if (prefs && Object.keys(prefs).length === 0) { const d = { calendar: true, task_due: true, invoices: true, expenses: false }; setPrefs(d); await API.saveSettings('notifications', d); }
+      toast('Benachrichtigungen aktiviert', 'success');
+    } catch (e) { toast(e.message || 'Fehlgeschlagen', 'error'); } finally { setBusy(false); }
+  };
+  const disable = async () => {
+    setBusy(true);
+    try { const reg = await navigator.serviceWorker.ready; const s = await reg.pushManager.getSubscription(); if (s) { await API.pushUnsubscribe(s.endpoint).catch(() => {}); await s.unsubscribe(); } setSubscribed(false); toast('Deaktiviert', 'success'); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const togglePref = async (k) => { const next = { ...prefs, [k]: !prefs[k] }; setPrefs(next); try { await API.saveSettings('notifications', next); } catch (e) { toast(e.message, 'error'); } };
+
+  return (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '16px 18px' }}>
+      {!supported ? (
+        <div style={{ fontSize: 13, color: 'var(--fg-3)' }}>Dieses Gerät/dieser Browser unterstützt keine Push-Benachrichtigungen. Auf dem iPhone: Seite über „Teilen → Zum Home-Bildschirm" installieren, dann hier aktivieren (iOS 16.4+).</div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: subscribed ? 14 : 0 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Push-Benachrichtigungen</div>
+              <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 2 }}>{subscribed ? 'Auf diesem Gerät aktiv' : 'Auf diesem Gerät aktivieren (auch iOS-Homescreen-App)'}</div>
+            </div>
+            {subscribed
+              ? <div style={{ display: 'flex', gap: 8 }}><Btn variant="glass" size="sm" disabled={busy} onClick={() => API.pushTest().then(() => toast('Test gesendet', 'success')).catch((e) => toast(e.message, 'error'))}>Test</Btn><Btn variant="ghost" size="sm" disabled={busy} onClick={disable}>Aus</Btn></div>
+              : <Btn variant="primary" size="sm" disabled={busy} icon={busy ? Ic.loader(14) : Ic.bolt(14)} onClick={enable}>Aktivieren</Btn>}
+          </div>
+          {subscribed && prefs && (
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {NOTIF_TYPES.map((t) => <ShareToggleRow key={t.k} icon={Ic.bolt} title={t.label} desc={t.desc} on={!!prefs[t.k]} onToggle={() => togglePref(t.k)}/>)}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function UserAdminSection({ currentUser }) {
   const [users, setUsers] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -4616,6 +4694,9 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
               </button>
             ))}
           </div>
+
+          <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Benachrichtigungen</div>
+          <div style={{ marginBottom: 28 }}><NotificationsSection/></div>
 
           {isAdmin && (<>
             <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Benutzerverwaltung · Admin</div>

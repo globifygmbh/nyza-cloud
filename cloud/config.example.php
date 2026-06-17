@@ -37,6 +37,16 @@ return [
     'jwt_secret' => 'CHANGE_ME_use_a_random_64_char_string_at_least_long_enough',
     'jwt_ttl'    => 60 * 60 * 24 * 30,    // 30 Tage in Sekunden
 
+    // ───── Push-Benachrichtigungen: Cron-Token ───────────────────────────────
+    // Geheimer Token für den Scheduler-Endpunkt /api/cron. Der Server-Cronjob
+    // ruft alle paar Minuten   …/api/cron?token=<DIESER WERT>   auf und sendet
+    // fällige Erinnerungen (Termine, Aufgaben, überfällige Rechnungen/Belege).
+    // Generieren z.B.:  php -r "echo bin2hex(random_bytes(24));"
+    // Wird hier KEIN Token gesetzt, generiert die App beim ersten /api/cron-
+    // Aufruf automatisch eins und legt es in der Tabelle app_kv (k='cron_token')
+    // ab — dann diesen Wert dort auslesen.
+    // 'cron_token' => 'CHANGE_ME_random_token',
+
     // ───── Speicher ──────────────────────────────────────────────────────────
     // Wo Datei-Blobs landen (relativ zum nyza-Ordner oder absoluter Pfad).
     // Empfohlen: ein Pfad AUSSERHALB des Webroots, falls möglich.
