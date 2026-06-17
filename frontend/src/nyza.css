@@ -144,6 +144,11 @@ input, textarea {
 .nyza-masonry > div:hover .gallery-label-btns { opacity: 1 !important; }
 @media (hover: none) { .gallery-label-btns { opacity: 1 !important; } }
 
+/* Owner gallery kebab — reveal on hover (desktop), always shown on touch */
+.gallery-kebab { opacity: 0; transition: opacity .18s; }
+.nyza-masonry > div:hover .gallery-kebab { opacity: 1; }
+@media (hover: none) { .gallery-kebab { opacity: 1; } }
+
 /* Non-blocking upload widget (Google-Drive style, bottom-right) */
 .nyza-upload-widget { position: fixed; right: 24px; bottom: 24px; width: 380px; max-width: calc(100vw - 32px); z-index: 95; animation: slideUp .25s cubic-bezier(.2,.8,.2,1); }
 @media (max-width: 760px) { .nyza-upload-widget { right: 8px; left: 8px; bottom: calc(92px + env(safe-area-inset-bottom)); width: auto; } }

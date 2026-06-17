@@ -83,9 +83,9 @@ final class FolderRoutes
         $folder = self::fetchOne($uid, $id);
         if (!$folder) return Json::err($res, 'Not found', 404);
 
-        $files = Database::pdo()->prepare('SELECT * FROM files WHERE user_id = ? AND folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
+        $files = Database::pdo()->prepare('SELECT * FROM files WHERE user_id = ? AND folder_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, created_at DESC');
         $files->execute([$uid, $id]);
-        $sub = Database::pdo()->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id = ?');
+        $sub = Database::pdo()->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id = ? ORDER BY pinned DESC, updated_at DESC');
         $sub->execute([$uid, $id]);
         return Json::ok($res, [
             'folder' => $folder,

@@ -884,8 +884,8 @@ function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, on
   const items = [
     { id: 'files',    label: 'Meine Dateien', icon: Ic.home,   count: stats?.files },
     { id: 'favorites',label: 'Favoriten',     icon: Ic.star },
-    { id: 'shared',   label: 'Geteilt',       icon: Ic.share,  count: stats?.shares },
-    { id: 'links',    label: 'Upload-Links',  icon: Ic.link,   count: stats?.upload_links, badge: 'NEU' },
+    { id: 'links',    label: 'Links',         icon: Ic.link,   count: ((stats?.shares || 0) + (stats?.upload_links || 0)) || null },
+    { id: 'apps',     label: 'Apps',          icon: Ic.grid,   badge: 'NEU' },
     { id: 'activity', label: 'Aktivität',     icon: Ic.clock },
     { id: 'trash',    label: 'Papierkorb',    icon: Ic.trash,  count: stats?.trash || null },
   ];
@@ -962,9 +962,9 @@ function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, on
 function MobileNav({ active, onNavigate, onUpload, onMore }) {
   const items = [
     { id: 'files', label: 'Dateien', icon: Ic.home },
-    { id: 'shared', label: 'Geteilt', icon: Ic.share },
-    { id: '__upload__' },
     { id: 'links', label: 'Links', icon: Ic.link },
+    { id: '__upload__' },
+    { id: 'apps', label: 'Apps', icon: Ic.grid },
     { id: '__more__', label: 'Mehr', icon: Ic.more },
   ];
   return (
@@ -1268,7 +1268,7 @@ function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDr
           fontSize: 10, fontWeight: 600, letterSpacing: 0.4, background: 'rgba(0,0,0,0.5)', color: '#fff',
           backdropFilter: 'blur(10px)', textTransform: 'uppercase',
         }}>{folder.kind === 'gallery' ? '◇ Galerie' : '◇ Dateien'}</div>
-        {folder.pinned && (
+        {!!folder.pinned && (
           <div style={{ position: 'absolute', top: 10, left: 10, color: 'var(--accent)', background: 'rgba(0,0,0,0.45)', borderRadius: 999, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}
             title="Angepinnt">{Ic.pin(13)}</div>
         )}
@@ -1353,7 +1353,7 @@ function FileTile({ file, selected, selecting, onActivate, onContext, onToggleSe
           className="file-checkbox">
           {selected && Ic.check(13)}
         </div>
-        {file.pinned && !selected && (
+        {!!file.pinned && !selected && (
           <div style={{ position: 'absolute', top: 8, left: 8, color: 'var(--accent)', background: 'rgba(0,0,0,0.45)', borderRadius: 999, width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}
             title="Angepinnt">{Ic.pin(11)}</div>
         )}
@@ -2545,7 +2545,10 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
     catch (e) { toast(e.message, 'error'); }
   };
 
-  const activeNav = nav.name === 'folder' ? 'files' : nav.name;
+  const activeNav = nav.name === 'folder' ? 'files'
+    : nav.name === 'shared' ? 'links'
+    : nav.name === 'app-tasks' ? 'apps'
+    : nav.name;
 
   return (
     <div style={{ display: 'flex', height: '100%', position: 'relative', zIndex: 1 }}>
@@ -2623,13 +2626,17 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onPinFolder={onPinFolder}
           />
         )}
-        {nav.name === 'shared' && (
-          <SharesView refreshTick={refreshTick} basePath={basePath} afterChange={refreshAll}/>
-        )}
-        {nav.name === 'links' && (
-          <LinksView refreshTick={refreshTick} basePath={basePath}
+        {(nav.name === 'links' || nav.name === 'shared') && (
+          <LinksHub refreshTick={refreshTick} basePath={basePath}
+            initialTab={nav.name === 'shared' ? 'shared' : 'shared'}
             onCreate={() => { setUploadLinkFolder(null); setShowUploadLinkModal(true); }}
             afterChange={refreshAll}/>
+        )}
+        {nav.name === 'apps' && (
+          <AppsView onOpenApp={(id) => setNav({ name: 'app-' + id })}/>
+        )}
+        {nav.name === 'app-tasks' && (
+          <TasksApp onBack={() => setNav({ name: 'apps' })}/>
         )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
@@ -2952,18 +2959,28 @@ function FilesView({
 const LABEL_COLORS = { red: '#ef4444', yellow: '#eab308', green: '#22c55e' };
 const LABEL_NAMES  = { red: 'Überarbeiten', yellow: 'Auswahl', green: 'Freigegeben' };
 
-function GalleryOwnerView({ files, onOpen, onLabel }) {
+// Parse a MySQL 'Y-m-d H:i:s' (or ISO) string into a Date safely across browsers.
+function parsePhotoDate(s) {
+  if (!s) return null;
+  const d = new Date(String(s).replace(' ', 'T'));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function GalleryOwnerView({ files, onOpen, onLabel, onContext }) {
   const media = files.filter((f) => f.kind === 'image' || f.kind === 'video');
   const others = files.filter((f) => f.kind !== 'image' && f.kind !== 'video');
 
-  // Group by month+year
+  // Group by capture month/year — prefer the photo's EXIF date (taken_at),
+  // fall back to the upload date. Sorted newest first.
+  const dateOf = (f) => parsePhotoDate(f.taken_at) || parsePhotoDate(f.created_at) || new Date(0);
+  const sorted = [...media].sort((a, b) => dateOf(b).getTime() - dateOf(a).getTime());
   const groups = [];
   const seen = {};
-  for (const f of media) {
-    const d = new Date(f.created_at || Date.now());
+  for (const f of sorted) {
+    const d = dateOf(f);
     const key = `${d.getFullYear()}-${d.getMonth()}`;
-    if (!seen[key]) { seen[key] = true; groups.push({ label: d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }), files: [] }); }
-    groups[groups.length - 1].files.push(f);
+    if (!seen[key]) { seen[key] = groups.length; groups.push({ label: d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }), files: [] }); }
+    groups[seen[key]].files.push(f);
   }
 
   return (
@@ -2972,15 +2989,25 @@ function GalleryOwnerView({ files, onOpen, onLabel }) {
         <div key={g.label} style={{ marginBottom: 36 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
             <span>{g.label}</span>
+            <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>{g.files.length}</span>
             <div style={{ flex: 1, height: 1, background: 'var(--border)' }}/>
           </div>
           <div className="nyza-masonry">
             {g.files.map((f) => (
-              <div key={f.id} onClick={() => onOpen(f)} style={{ cursor: 'pointer', position: 'relative' }}>
+              <div key={f.id} onClick={() => onOpen(f)}
+                onContextMenu={onContext ? (e) => { e.preventDefault(); e.stopPropagation(); onContext(f, e); } : undefined}
+                style={{ cursor: 'pointer', position: 'relative' }}>
                 {f.kind === 'image'
                   ? <img src={API.thumbUrl(f.id)} alt={f.name} loading="lazy" style={{ width: '100%', display: 'block', borderRadius: 'var(--r-md)' }}/>
                   : <video src={`${API.fileRawUrl(f.id)}?token=${getToken()}#t=0.1`} muted preload="metadata" style={{ width: '100%', display: 'block', borderRadius: 'var(--r-md)', pointerEvents: 'none' }}/>
                 }
+                {onContext && (
+                  <span className="gallery-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); onContext(f, { clientX: b.right, clientY: b.bottom, preventDefault() {}, stopPropagation() {} }); }}
+                    style={{ position: 'absolute', top: 8, left: 8, width: 28, height: 28, borderRadius: 999, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.more(16)}</span>
+                )}
+                {!!f.pinned && (
+                  <span style={{ position: 'absolute', bottom: 8, left: 8, width: 24, height: 24, borderRadius: 999, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Angepinnt">{Ic.pin(12)}</span>
+                )}
                 {f.kind === 'video' && (
                   <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', borderRadius: 'var(--r-md)' }}>
                     <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -3125,7 +3152,7 @@ function FolderView({
         )}
 
         {folder.kind === 'gallery' ? (
-          <GalleryOwnerView files={files} token={null} onOpen={(f) => onOpenFile(f, files)} onLabel={onLabelFile}/>
+          <GalleryOwnerView files={files} token={null} onOpen={(f) => onOpenFile(f, files)} onLabel={onLabelFile} onContext={(f, e) => fileCtx(f, e)}/>
         ) : files.length > 0 ? (
           view === 'grid'
             ? <FileGrid files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onDragFiles={() => {}} onContext={fileCtx} selectMode={selectMode}/>
@@ -3142,7 +3169,7 @@ function FolderView({
 }
 
 // ───── Shares view ─────────────────────────────────────────────────────────
-function SharesView({ refreshTick, basePath, afterChange }) {
+function SharesView({ refreshTick, basePath, afterChange, embedded }) {
   const [shares, setShares] = useState(null);
   const load = useCallback(() => { API.shares().then((d) => setShares(d.shares || [])).catch(() => setShares([])); }, []);
   useEffect(() => { load(); }, [load, refreshTick]);
@@ -3150,10 +3177,8 @@ function SharesView({ refreshTick, basePath, afterChange }) {
   const del = async (id) => { if (!await confirmDialog({ title: 'Share-Link löschen?', message: 'Der Link wird sofort ungültig — niemand kann ihn mehr öffnen.', confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteShare(id); toast('Gelöscht', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
   const copy = (token) => { navigator.clipboard?.writeText(location.origin + (basePath || '') + '/s/' + token); toast('Link kopiert', 'success'); };
 
-  return (
-    <>
-      <TopBar crumbs={['Geteilt']}/>
-      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>
+  const body = (
+      <>
         <SectionHeader title="Geteilte Links" count={shares ? shares.length : null}/>
         {shares === null ? (
           <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
@@ -3185,13 +3210,20 @@ function SharesView({ refreshTick, basePath, afterChange }) {
             ))}
           </div>
         )}
-      </div>
+      </>
+  );
+
+  if (embedded) return body;
+  return (
+    <>
+      <TopBar crumbs={['Geteilt']}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>{body}</div>
     </>
   );
 }
 
 // ───── Upload-Links view ───────────────────────────────────────────────────
-function LinksView({ refreshTick, basePath, onCreate, afterChange }) {
+function LinksView({ refreshTick, basePath, onCreate, afterChange, embedded }) {
   const [links, setLinks] = useState(null);
   const load = useCallback(() => { API.uploadLinks().then((d) => setLinks(d.upload_links || [])).catch(() => setLinks([])); }, []);
   useEffect(() => { load(); }, [load, refreshTick]);
@@ -3199,10 +3231,8 @@ function LinksView({ refreshTick, basePath, onCreate, afterChange }) {
   const del = async (id) => { if (!await confirmDialog({ title: 'Upload-Link löschen?', message: 'Externe können über diesen Link dann keine Dateien mehr hochladen.', confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteUploadLink(id); toast('Gelöscht', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
   const copy = (token) => { navigator.clipboard?.writeText(location.origin + (basePath || '') + '/u/' + token); toast('Link kopiert', 'success'); };
 
-  return (
-    <>
-      <TopBar crumbs={['Upload-Links']} right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={onCreate}>Neuer Upload-Link</Btn>}/>
-      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>
+  const body = (
+      <>
         <SectionHeader title="Upload-Links" count={links ? links.length : null}/>
         {links === null ? (
           <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
@@ -3231,8 +3261,324 @@ function LinksView({ refreshTick, basePath, onCreate, afterChange }) {
             ))}
           </div>
         )}
+      </>
+  );
+
+  if (embedded) return body;
+  return (
+    <>
+      <TopBar crumbs={['Upload-Links']} right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={onCreate}>Neuer Upload-Link</Btn>}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>{body}</div>
+    </>
+  );
+}
+
+// ───── Links hub — Geteilt + Upload-Links unter einem Menüpunkt ─────────────
+function LinksHub({ refreshTick, basePath, onCreate, afterChange, initialTab = 'shared' }) {
+  const [tab, setTab] = useState(initialTab);
+  const tabs = [
+    { id: 'shared', label: 'Geteilt', icon: Ic.share },
+    { id: 'links',  label: 'Upload-Links', icon: Ic.inbox },
+  ];
+  return (
+    <>
+      <TopBar crumbs={['Links']}
+        right={tab === 'links'
+          ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={onCreate}>Neuer Upload-Link</Btn>
+          : null}
+      />
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 60px' }}>
+        <div style={{ display: 'inline-flex', gap: 4, padding: 4, marginBottom: 22, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+          {tabs.map((t) => {
+            const on = tab === t.id;
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 7, height: 34, padding: '0 16px',
+                borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 540,
+                background: on ? 'var(--accent-grad)' : 'transparent', color: on ? '#fff' : 'var(--fg-2)',
+                boxShadow: on ? '0 4px 12px -4px var(--accent-glow)' : 'none', transition: 'all .18s',
+              }}>{t.icon(14)}{t.label}</button>
+            );
+          })}
+        </div>
+        {tab === 'shared'
+          ? <SharesView embedded refreshTick={refreshTick} basePath={basePath} afterChange={afterChange}/>
+          : <LinksView embedded refreshTick={refreshTick} basePath={basePath} onCreate={onCreate} afterChange={afterChange}/>}
       </div>
     </>
+  );
+}
+
+// ───── Apps launcher — Handy-Style Kacheln ──────────────────────────────────
+function AppsView({ onOpenApp }) {
+  const live = [
+    { id: 'tasks', label: 'Tasks', desc: 'Aufgaben & To-dos', icon: Ic.checkSquare(26), grad: 'linear-gradient(135deg, oklch(0.72 0.18 282), oklch(0.64 0.17 248))' },
+  ];
+  const soon = [
+    { id: 'roadmap',    label: 'Roadmap',      desc: 'Planung & Meilensteine', icon: Ic.bolt(26),    grad: 'linear-gradient(135deg, oklch(0.74 0.18 30), oklch(0.66 0.2 360))' },
+    { id: 'times',      label: 'Zeiten',       desc: 'Zeiterfassung',          icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.74 0.16 200), oklch(0.66 0.16 230))' },
+    { id: 'accounting', label: 'Buchhaltung',  desc: 'Rechnungen & Belege',    icon: Ic.archive(26), grad: 'linear-gradient(135deg, oklch(0.74 0.17 155), oklch(0.68 0.15 175))' },
+    { id: 'calendar',   label: 'Kalender',     desc: 'Termine & Events',       icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.72 0.2 350), oklch(0.66 0.2 320))' },
+    { id: 'contacts',   label: 'Kontakte',     desc: 'Adressbuch',             icon: Ic.users(26),   grad: 'linear-gradient(135deg, oklch(0.7 0.16 240), oklch(0.66 0.16 210))' },
+    { id: 'settings',   label: 'Einstellungen',desc: 'Konfiguration',          icon: Ic.cog(26),     grad: 'linear-gradient(135deg, oklch(0.6 0.02 260), oklch(0.5 0.02 260))' },
+  ];
+  const Tile = ({ a, disabled }) => (
+    <button disabled={disabled} onClick={disabled ? undefined : () => onOpenApp(a.id)} style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '6px 4px',
+      background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', fontFamily: 'inherit',
+      opacity: disabled ? 0.5 : 1, position: 'relative',
+    }}
+    onMouseEnter={(e) => { if (!disabled) e.currentTarget.firstChild.style.transform = 'translateY(-3px)'; }}
+    onMouseLeave={(e) => { e.currentTarget.firstChild.style.transform = 'translateY(0)'; }}>
+      <div style={{
+        width: 68, height: 68, borderRadius: 20, background: a.grad, color: '#fff',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+        boxShadow: '0 1px 0 rgba(255,255,255,0.3) inset, 0 10px 24px -8px rgba(0,0,0,0.4)',
+        transition: 'transform .22s cubic-bezier(.2,.8,.2,1)', position: 'relative',
+      }}>
+        {a.icon}
+        {disabled && (
+          <span style={{ position: 'absolute', top: -6, right: -6, fontSize: 8.5, fontWeight: 700, letterSpacing: 0.4, padding: '2px 6px', borderRadius: 999, background: 'var(--surface)', color: 'var(--fg-3)', border: '1px solid var(--border-hi)', textTransform: 'uppercase' }}>Bald</span>
+        )}
+      </div>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 13, fontWeight: 540, color: 'var(--fg)' }}>{a.label}</div>
+        <div style={{ fontSize: 10.5, color: 'var(--fg-3)', marginTop: 2 }}>{a.desc}</div>
+      </div>
+    </button>
+  );
+  return (
+    <>
+      <TopBar crumbs={['Apps']}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px' }}>
+        <SectionHeader title="Apps"/>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 22, marginBottom: 40 }}>
+          {live.map((a) => <Tile key={a.id} a={a}/>)}
+        </div>
+        <SectionHeader title="In Entwicklung"/>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 22 }}>
+          {soon.map((a) => <Tile key={a.id} a={a} disabled/>)}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ───── Tasks app — Asana-style sections ─────────────────────────────────────
+const TASK_PRIO = {
+  0: { label: 'Niedrig', color: 'var(--fg-3)', dot: 'oklch(0.6 0.02 260)' },
+  1: { label: 'Normal',  color: 'var(--accent)', dot: 'oklch(0.66 0.18 250)' },
+  2: { label: 'Hoch',    color: '#ef4444', dot: '#ef4444' },
+};
+function taskDayDiff(due) {
+  if (!due) return null;
+  const d = new Date(due + 'T00:00:00');
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  return Math.round((d.getTime() - now.getTime()) / 86400000);
+}
+function fmtDue(due) {
+  if (!due) return null;
+  const diff = taskDayDiff(due);
+  if (diff === 0) return 'Heute';
+  if (diff === 1) return 'Morgen';
+  if (diff === -1) return 'Gestern';
+  const d = new Date(due + 'T00:00:00');
+  return d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: d.getFullYear() !== new Date().getFullYear() ? '2-digit' : undefined });
+}
+
+function TasksApp({ onBack }) {
+  const [tasks, setTasks] = useState(null);
+  const [archived, setArchived] = useState(null);
+  const [showArchive, setShowArchive] = useState(false);
+  const [editing, setEditing] = useState(null); // task object or {} for new
+
+  const load = useCallback(() => {
+    API.tasks().then((d) => setTasks(d.tasks || [])).catch(() => setTasks([]));
+  }, []);
+  const loadArchive = useCallback(() => {
+    API.tasksArchived().then((d) => setArchived(d.tasks || [])).catch(() => setArchived([]));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (showArchive) loadArchive(); }, [showArchive, loadArchive]);
+
+  const complete = async (t) => { try { await API.taskDone(t.id); load(); } catch (e) { toast(e.message, 'error'); } };
+  const restore = async (t) => { try { await API.taskRestore(t.id); loadArchive(); load(); } catch (e) { toast(e.message, 'error'); } };
+  const del = async (t) => {
+    if (!await confirmDialog({ title: 'Aufgabe löschen?', message: `„${t.title}" wird endgültig gelöscht.`, confirmLabel: 'Löschen', danger: true })) return;
+    try { await API.deleteTask(t.id); load(); if (showArchive) loadArchive(); } catch (e) { toast(e.message, 'error'); }
+  };
+  const save = async (data) => {
+    try {
+      if (data.id) await API.updateTask(data.id, { title: data.title, notes: data.notes, due_date: data.due_date, priority: data.priority });
+      else await API.newTask({ title: data.title, notes: data.notes, due_date: data.due_date, priority: data.priority });
+      setEditing(null); load();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  // Bucket active tasks into the Asana-style sections.
+  const buckets = { overdue: [], today: [], week: [], later: [], none: [] };
+  for (const t of (tasks || [])) {
+    const diff = taskDayDiff(t.due_date);
+    if (diff === null) buckets.none.push(t);
+    else if (diff < 0) buckets.overdue.push(t);
+    else if (diff === 0) buckets.today.push(t);
+    else if (diff <= 7) buckets.week.push(t);
+    else buckets.later.push(t);
+  }
+  const sections = [
+    { id: 'overdue', label: 'Überfällig', color: '#ef4444', items: buckets.overdue },
+    { id: 'today',   label: 'Heute fällig', color: 'var(--accent)', items: buckets.today },
+    { id: 'week',    label: 'Nächste 7 Tage', color: 'var(--fg-2)', items: buckets.week },
+    { id: 'later',   label: 'Später', color: 'var(--fg-2)', items: buckets.later },
+    { id: 'none',    label: 'Ohne Fälligkeit', color: 'var(--fg-3)', items: buckets.none },
+  ].filter((s) => s.items.length > 0);
+
+  const Row = ({ t, archivedRow }) => {
+    const prio = TASK_PRIO[t.priority] || TASK_PRIO[1];
+    const overdue = !archivedRow && taskDayDiff(t.due_date) < 0;
+    return (
+      <div className="nyza-listrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
+        onClick={() => !archivedRow && setEditing(t)}>
+        {archivedRow ? (
+          <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--surface-hi)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--success)', flexShrink: 0 }}>{Ic.check(13)}</div>
+        ) : (
+          <button onClick={(e) => { e.stopPropagation(); complete(t); }} title="Erledigt"
+            style={{ width: 22, height: 22, borderRadius: '50%', border: '2px solid var(--border-hi)', background: 'transparent', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'transparent', transition: 'all .15s' }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-hi)'; e.currentTarget.style.color = 'transparent'; }}>
+            {Ic.check(12)}
+          </button>
+        )}
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: prio.dot, flexShrink: 0 }} title={'Priorität: ' + prio.label}/>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: archivedRow ? 'line-through' : 'none', color: archivedRow ? 'var(--fg-3)' : 'var(--fg)' }}>{t.title}</div>
+          {t.notes && <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.notes}</div>}
+        </div>
+        {t.due_date && (
+          <span style={{ fontSize: 12, fontWeight: 500, color: overdue ? '#ef4444' : 'var(--fg-3)', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            {Ic.clock(12)}{fmtDue(t.due_date)}
+          </span>
+        )}
+        {archivedRow ? (
+          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+            <IconBtn size={30} title="Wiederherstellen" onClick={(e) => { e.stopPropagation?.(); restore(t); }}>{Ic.rotate(14)}</IconBtn>
+            <IconBtn size={30} title="Löschen" onClick={(e) => { e.stopPropagation?.(); del(t); }}>{Ic.trash(14)}</IconBtn>
+          </div>
+        ) : (
+          <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
+            { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => setEditing(t) },
+            { label: 'Erledigt', icon: Ic.check(15), onClick: () => complete(t) },
+            { separator: true },
+            { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => del(t) },
+          ]); }}
+            style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Tasks']}
+        right={
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn variant="glass" size="sm" icon={Ic.archive(14)} onClick={() => setShowArchive((s) => !s)}>{showArchive ? 'Aktuelle' : 'Archiv'}</Btn>
+            <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ priority: 1 })}>Neue Aufgabe</Btn>
+          </div>
+        }
+      />
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        {showArchive ? (
+          <>
+            <SectionHeader title="Archiv" count={archived ? archived.length : null}/>
+            <div style={{ fontSize: 12, color: 'var(--fg-3)', marginBottom: 16, marginTop: -8 }}>Erledigte Aufgaben werden nach 7 Tagen automatisch gelöscht.</div>
+            {archived === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+              : archived.length === 0 ? <EmptyHint icon={Ic.archive(40)} title="Archiv ist leer" desc="Abgehakte Aufgaben landen hier."/>
+              : <div style={{ display: 'grid', gap: 8, maxWidth: 820 }}>{archived.map((t) => <Row key={t.id} t={t} archivedRow/>)}</div>}
+          </>
+        ) : tasks === null ? (
+          <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+        ) : tasks.length === 0 ? (
+          <EmptyHint icon={Ic.checkSquare(40)} title="Keine Aufgaben" desc="Lege deine erste Aufgabe an und behalte den Überblick."
+            actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({ priority: 1 })}>Neue Aufgabe</Btn>}/>
+        ) : (
+          <div style={{ maxWidth: 820 }}>
+            {sections.map((s) => (
+              <div key={s.id} style={{ marginBottom: 28 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color }}/>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>{s.label}</span>
+                  <span style={{ fontSize: 12, color: 'var(--fg-4)' }}>{s.items.length}</span>
+                  <div style={{ flex: 1, height: 1, background: 'var(--border)' }}/>
+                </div>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {s.items.map((t) => <Row key={t.id} t={t}/>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {editing && <TaskEditModal task={editing} onSave={save} onClose={() => setEditing(null)}/>}
+    </>
+  );
+}
+
+function TaskEditModal({ task, onSave, onClose }) {
+  const [title, setTitle] = useState(task.title || '');
+  const [notes, setNotes] = useState(task.notes || '');
+  const [due, setDue] = useState(task.due_date || '');
+  const [priority, setPriority] = useState(task.priority ?? 1);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!title.trim()) { toast('Titel erforderlich', 'error'); return; }
+    setBusy(true);
+    await onSave({ id: task.id, title: title.trim(), notes: notes.trim() || null, due_date: due || null, priority });
+    setBusy(false);
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 460, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.checkSquare(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{task.id ? 'Aufgabe bearbeiten' : 'Neue Aufgabe'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Titel</span>
+            <input value={title} autoFocus onChange={(e) => setTitle(e.target.value)} placeholder="Was ist zu tun?"
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) submit(); }}
+              style={{ height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)' }}/>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Notiz</span>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Details (optional)" rows={3}
+              style={{ padding: '10px 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', resize: 'vertical' }}/>
+          </label>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Fälligkeit</span>
+              <input type="date" value={due} onChange={(e) => setDue(e.target.value)}
+                style={{ height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit' }}/>
+            </label>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Priorität</span>
+              <select value={priority} onChange={(e) => setPriority(Number(e.target.value))}
+                style={{ height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer' }}>
+                <option value={0}>Niedrig</option>
+                <option value={1}>Normal</option>
+                <option value={2}>Hoch</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
   );
 }
 

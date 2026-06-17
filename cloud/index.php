@@ -20,6 +20,7 @@ use Nyza\Routes\AuthRoutes;
 use Nyza\Routes\FileRoutes;
 use Nyza\Routes\FolderRoutes;
 use Nyza\Routes\ShareRoutes;
+use Nyza\Routes\TaskRoutes;
 use Nyza\Routes\UploadLinkRoutes;
 use Nyza\Routes\WebDavRoutes;
 use Nyza\SetupWizard;
@@ -131,7 +132,7 @@ $app->get('/sw.js', function ($req, $res) use ($pwaBase) {
     // falls back to cache only when offline. API + media are always network-only.
     $scope = ($pwaBase ?: '') . '/';
     $js = <<<JS
-const CACHE = 'nyza-v3';
+const CACHE = 'nyza-v4';
 const SCOPE = '{$scope}';
 self.addEventListener('install', (e) => self.skipWaiting());
 self.addEventListener('activate', (e) => {
@@ -180,6 +181,7 @@ FileRoutes::mount($app);
 ShareRoutes::mount($app);
 UploadLinkRoutes::mount($app);
 ActivityRoutes::mount($app);
+TaskRoutes::mount($app);
 WebDavRoutes::mount($app);
 
 /** Asset / SPA fallback for all non-API GETs. */

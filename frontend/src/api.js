@@ -227,4 +227,13 @@ export const API = {
   // Activity / stats
   activity: () => request('/api/activity'),
   stats:    () => request('/api/stats'),
+
+  // Apps · Tasks
+  tasks:         () => request('/api/tasks'),
+  tasksArchived: () => request('/api/tasks/archived'),
+  newTask:       (body) => request('/api/tasks', { method: 'POST', body }),
+  updateTask:    (id, body) => request('/api/tasks/' + id, { method: 'PATCH', body }),
+  taskDone:      (id) => request('/api/tasks/' + id + '/done', { method: 'POST', body: {} }),
+  taskRestore:   (id) => request('/api/tasks/' + id + '/restore', { method: 'POST', body: {} }),
+  deleteTask:    (id) => request('/api/tasks/' + id, { method: 'DELETE' }),
 };

@@ -834,15 +834,42 @@ final class FileRoutes
         $pdo = Database::pdo();
         $kind = Storage::kindFromMime($mime);
         $hue = (crc32($name) % 360);
+        // Pull the photo's real capture date from EXIF so galleries group by
+        // when the shot was taken, not when it landed on the server.
+        $takenAt = self::extractTakenAt(Storage::abs($rel), $mime);
         $pdo->prepare(
-            'INSERT INTO files (user_id, folder_id, name, storage_path, mime_type, size, kind, hue, upload_link_id, uploader_name) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        )->execute([$uid, $folder, $name, $rel, $mime, $size, $kind, $hue, $linkId, $uploaderName]);
+            'INSERT INTO files (user_id, folder_id, name, storage_path, mime_type, size, kind, hue, upload_link_id, uploader_name, taken_at) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([$uid, $folder, $name, $rel, $mime, $size, $kind, $hue, $linkId, $uploaderName, $takenAt]);
         $id = (int)$pdo->lastInsertId();
         $pdo->prepare('UPDATE users SET storage_used = storage_used + ? WHERE id = ?')->execute([$size, $uid]);
         $pdo->prepare("INSERT INTO activity (user_id, kind, payload) VALUES (?, 'file_uploaded', ?)")
             ->execute([$uid, json_encode(['file_id' => $id, 'name' => $name, 'size' => $size])]);
         return $id;
+    }
+
+    /**
+     * Read the original capture timestamp from a JPEG/TIFF's EXIF block and
+     * normalise it to 'Y-m-d H:i:s'. Returns null when the ext is missing, the
+     * file isn't EXIF-bearing, or no usable date tag is present.
+     */
+    private static function extractTakenAt(string $abs, string $mime): ?string
+    {
+        if (!function_exists('exif_read_data')) return null;
+        if (!in_array(strtolower($mime), ['image/jpeg', 'image/tiff'], true)) return null;
+        if (!is_file($abs)) return null;
+        try {
+            $exif = @exif_read_data($abs);
+        } catch (\Throwable $e) {
+            return null;
+        }
+        if (!is_array($exif)) return null;
+        $raw = $exif['DateTimeOriginal'] ?? $exif['DateTimeDigitized'] ?? $exif['DateTime'] ?? null;
+        if (!is_string($raw) || $raw === '') return null;
+        // EXIF dates are "YYYY:MM:DD HH:MM:SS"; tolerate already-normalised too.
+        $ts = strtotime(str_replace(':', '-', substr($raw, 0, 10)) . substr($raw, 10));
+        if ($ts === false || $ts <= 0) return null;
+        return date('Y-m-d H:i:s', $ts);
     }
 
     private static function hardDelete(int $uid, array $f): void
