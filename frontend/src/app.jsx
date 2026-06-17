@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import QRCode from 'qrcode';
-import { API, BASE, getToken, setToken } from './api.js';
+import { API, BASE, getToken, setToken, getCompany, setCompany } from './api.js';
 import {
   Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
   Toggle, CircularProgress, humanSize, timeAgo, ACCENTS, applyAccent,
@@ -2601,13 +2601,16 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const uploadTargetFolder = useRef(null);
   const folderUploadInputRef = useRef(null);
   const folderUploadTargetRef = useRef(null);
-  // Upload queue: items uploaded strictly one after another (no flicker), each
-  // cancelable. Refs mirror state so the async worker reads the latest list.
+  // Upload queue: uploadsRef is the SYNCHRONOUS source of truth (mutated
+  // immediately); the React state is just a mirror for rendering. (Using the
+  // state updater to set the ref was async → the worker read a stale empty list
+  // and uploads stuck at 0%.)
   const uploadsRef = useRef([]);
   const uploadWorking = useRef(false);
   const uploadCtrls = useRef({});
   const uploadIdRef = useRef(0);
-  const setUploadsSync = (updater) => setUploads((prev) => { const next = typeof updater === 'function' ? updater(prev) : updater; uploadsRef.current = next; return next; });
+  const syncUploadsUI = () => setUploads(uploadsRef.current.slice());
+  const patchUpload = (id, patch) => { uploadsRef.current = uploadsRef.current.map((x) => x.id === id ? { ...x, ...patch } : x); syncUploadsUI(); };
   const fileKind = (f) => f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type === 'application/pdf' ? 'pdf' : 'doc';
 
   const loadStats = useCallback(() => { API.stats().then(setStats).catch(() => {}); }, []);
@@ -2641,7 +2644,8 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
       kind: fileKind(j.file), file: j.file, folderId: j.folderId ?? null, mode: j.mode || null,
     }));
     if (!items.length) return;
-    setUploadsSync((u) => [...u, ...items]);
+    uploadsRef.current = [...uploadsRef.current, ...items];
+    syncUploadsUI();
     setShowUploadProgress(true);
     pumpUploads();
   };
@@ -2649,30 +2653,32 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const pumpUploads = async () => {
     if (uploadWorking.current) return;
     uploadWorking.current = true;
-    for (;;) {
-      const next = uploadsRef.current.find((x) => x.status === 'queued');
-      if (!next) break;
-      const ctrl = new AbortController();
-      uploadCtrls.current[next.id] = ctrl;
-      setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, status: 'uploading' } : x));
-      try {
-        await uploadOwner(next.file, next.folderId, (p) => setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, pct: p } : x)), ctrl.signal, next.mode);
-        setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, status: 'done', pct: 1, file: null } : x));
-        refreshAll();
-      } catch (err) {
-        if (err && err.code === 'aborted') setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, status: 'canceled', file: null } : x));
-        else { setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, status: 'error', file: null } : x)); toast(err.message, 'error'); }
-      } finally { delete uploadCtrls.current[next.id]; }
-    }
-    uploadWorking.current = false;
+    try {
+      for (;;) {
+        const next = uploadsRef.current.find((x) => x.status === 'queued');
+        if (!next) break;
+        const ctrl = new AbortController();
+        uploadCtrls.current[next.id] = ctrl;
+        patchUpload(next.id, { status: 'uploading' });
+        try {
+          await uploadOwner(next.file, next.folderId, (p) => patchUpload(next.id, { pct: p }), ctrl.signal, next.mode);
+          patchUpload(next.id, { status: 'done', pct: 1, file: null });
+          refreshAll();
+        } catch (err) {
+          if (err && err.code === 'aborted') patchUpload(next.id, { status: 'canceled', file: null });
+          else { patchUpload(next.id, { status: 'error', file: null }); toast(err.message, 'error'); }
+        } finally { delete uploadCtrls.current[next.id]; }
+      }
+    } finally { uploadWorking.current = false; }
   };
 
   const cancelUpload = (id) => {
     const it = uploadsRef.current.find((x) => x.id === id);
     if (!it) return;
-    if (it.status === 'queued') setUploadsSync((u) => u.map((x) => x.id === id ? { ...x, status: 'canceled', file: null } : x));
+    if (it.status === 'queued') patchUpload(id, { status: 'canceled', file: null });
     else if (it.status === 'uploading' && uploadCtrls.current[id]) uploadCtrls.current[id].abort();
   };
+  const clearUploads = () => { uploadsRef.current = []; syncUploadsUI(); };
 
   // Back-compat shim for existing callers.
   const runUpload = (filesArr, folderId = null) => enqueueUploads(filesArr.map((f) => ({ file: f, folderId })));
@@ -2911,7 +2917,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           onClose={() => setShowUploadLinkModal(false)} onCreated={refreshAll}/>
       )}
       {showUploadProgress && (
-        <UploadProgress items={uploads} onCancel={cancelUpload} onClose={() => { setShowUploadProgress(false); setUploadsSync([]); }}/>
+        <UploadProgress items={uploads} onCancel={cancelUpload} onClose={() => { setShowUploadProgress(false); clearUploads(); }}/>
       )}
       {showPasswordModal && <ChangePasswordModal onClose={() => setShowPasswordModal(false)}/>}
       {showProfile && <ProfileModal user={user} onClose={() => setShowProfile(false)} onSaved={(u) => onUserChange && onUserChange(u)}/>}
@@ -4728,6 +4734,78 @@ function CronSection() {
   );
 }
 
+function CompaniesAdminSection({ onChanged }) {
+  const [list, setList] = useState(null);
+  const [name, setName] = useState('');
+  const [membersFor, setMembersFor] = useState(null);
+  const load = () => API.companies().then((d) => setList(d.companies || [])).catch(() => setList([]));
+  useEffect(() => { load(); }, []);
+  const create = async () => { if (!name.trim()) return; try { await API.createCompany(name.trim()); setName(''); load(); onChanged && onChanged(); } catch (e) { toast(e.message, 'error'); } };
+  const rename = async (co) => { const n = window.prompt('Firma umbenennen', co.name); if (!n || !n.trim()) return; try { await API.renameCompany(co.id, n.trim()); load(); onChanged && onChanged(); } catch (e) { toast(e.message, 'error'); } };
+  const del = async (co) => { if (!await confirmDialog({ title: 'Firma löschen?', message: `„${co.name}" wird gelöscht. Geht nur, wenn keine Buchungen mehr dran hängen.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteCompany(co.id); load(); onChanged && onChanged(); } catch (e) { toast(e.message, 'error'); } };
+  const fld = { height: 40, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', flex: 1 };
+  return (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '16px 18px' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Neue Firma (z. B. Globify GmbH)" onKeyDown={(e) => { if (e.key === 'Enter') create(); }} style={fld}/>
+        <Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={create}>Anlegen</Btn>
+      </div>
+      {list === null ? <div style={{ color: 'var(--fg-3)' }}>{Ic.loader(18)}</div> : (
+        <div style={{ display: 'grid', gap: 6 }}>
+          {list.map((co) => (
+            <div key={co.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)' }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 540 }}>{co.name}</span>
+              <Btn variant="glass" size="sm" icon={Ic.users(13)} onClick={() => setMembersFor(co)}>Mitglieder</Btn>
+              <span onClick={() => rename(co)} title="Umbenennen" style={{ cursor: 'pointer', color: 'var(--fg-3)', display: 'inline-flex' }}>{Ic.fileGen(15)}</span>
+              <span onClick={() => del(co)} title="Löschen" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex' }}>{Ic.trash(15)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {membersFor && <CompanyMembersModal company={membersFor} onClose={() => setMembersFor(null)}/>}
+    </div>
+  );
+}
+
+function CompanyMembersModal({ company, onClose }) {
+  const [members, setMembers] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [sel, setSel] = useState('');
+  const load = () => API.companyMembers(company.id).then((d) => setMembers(d.members || [])).catch(() => setMembers([]));
+  useEffect(() => { load(); API.users().then((d) => setUsers(d.users || [])).catch(() => {}); }, []);
+  const add = async () => { if (!sel) return; try { await API.addCompanyMember(company.id, Number(sel)); setSel(''); load(); } catch (e) { toast(e.message, 'error'); } };
+  const rm = async (uid) => { try { await API.removeCompanyMember(company.id, uid); load(); } catch (e) { toast(e.message, 'error'); } };
+  const memberIds = new Set((members || []).map((m) => m.user_id));
+  const avail = users.filter((u) => !memberIds.has(u.id));
+  const fld = { height: 40, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', flex: 1, cursor: 'pointer' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 420, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Mitglieder · {company.name}</h2>
+          <IconBtn size={30} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <select value={sel} onChange={(e) => setSel(e.target.value)} style={fld}><option value="">Mitglied hinzufügen…</option>{avail.map((u) => <option key={u.id} value={String(u.id)}>{u.name || u.email}</option>)}</select>
+            <Btn variant="primary" size="md" disabled={!sel} icon={Ic.plus(14)} onClick={add}>Hinzu</Btn>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {members === null ? <div style={{ color: 'var(--fg-3)', fontSize: 13 }}>{Ic.loader(16)}</div>
+              : members.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Noch keine Mitglieder.</div>
+              : members.map((m) => (
+                  <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)' }}>
+                    <span style={{ flex: 1, fontSize: 13 }}>{m.name || m.email}</span>
+                    <span onClick={() => rm(m.user_id)} title="Entfernen" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex' }}>{Ic.close(14)}</span>
+                  </div>
+                ))}
+          </div>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
 function UserAdminSection({ currentUser }) {
   const [users, setUsers] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -4820,13 +4898,24 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   const [c, setC] = useState(null);
   const [busy, setBusy] = useState(false);
   const isAdmin = user?.role === 'admin';
-  useEffect(() => { API.getSettings('company').then((d) => setC(d.settings || {})).catch(() => setC({})); }, []);
+  const [companies, setCompanies] = useState([]);
+  const [profileCompany, setProfileCompany] = useState(() => getCompany());
+
+  useEffect(() => {
+    API.companies().then((d) => { setCompanies(d.companies || []); if (!profileCompany && d.active) setProfileCompany(String(d.active)); }).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!profileCompany) { setC({}); return; }
+    setC(null);
+    API.companyProfile(profileCompany).then((d) => setC(d.profile || {})).catch(() => setC({}));
+  }, [profileCompany]);
   const set = (k, v) => setC((s) => ({ ...s, [k]: v }));
   const accountingMode = (c?.legal_form === 'GmbH' || c?.legal_form === 'AG') ? 'double_entry' : 'single_entry';
 
   const save = async () => {
+    if (!profileCompany) { toast('Keine Firma gewählt', 'error'); return; }
     setBusy(true);
-    try { await API.saveSettings('company', { ...c, accounting_mode: accountingMode }); toast('Gespeichert', 'success'); }
+    try { await API.saveCompanyProfile(profileCompany, { ...c, accounting_mode: accountingMode }); toast('Gespeichert', 'success'); }
     catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
   };
 
@@ -4871,14 +4960,20 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
           {isAdmin && (<>
             <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Benutzerverwaltung · Admin</div>
             <div style={{ marginBottom: 28 }}><UserAdminSection currentUser={user}/></div>
+            <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Firmen (Mandanten) · Admin</div>
+            <div style={{ marginBottom: 28 }}><CompaniesAdminSection onChanged={() => API.companies().then((d) => setCompanies(d.companies || [])).catch(() => {})}/></div>
             <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Cron-Jobs · Admin</div>
             <div style={{ marginBottom: 28 }}><CronSection/></div>
           </>)}
 
           {/* Firma & Rechnungen */}
-          <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-            Buchhaltung · Firmenprofil
-            <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'var(--surface-hi)', color: 'var(--fg-3)', letterSpacing: 0.3 }}>für Rechnungen</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase' }}>Buchhaltung · Firmenprofil</span>
+            {companies.length > 1 && (
+              <select value={profileCompany} onChange={(e) => setProfileCompany(e.target.value)} style={{ height: 28, padding: '0 8px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer' }}>
+                {companies.map((co) => <option key={co.id} value={String(co.id)}>{co.name}</option>)}
+              </select>
+            )}
           </div>
 
           {c === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div> : (
@@ -4962,6 +5057,8 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const [prodEditing, setProdEditing] = useState(null);
   const [subEditing, setSubEditing] = useState(null);
   const [expEditing, setExpEditing] = useState(null);
+  const [companies, setCompanies] = useState([]);
+  const [activeCompany, setActiveCompany] = useState(() => getCompany());
 
   const load = useCallback(() => {
     if (tab === 'products') { API.products().then((d) => setProducts(d.products || [])).catch(() => setProducts([])); return; }
@@ -4970,13 +5067,17 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
     if (tab === 'reports') { setRep(null); API.report(repYear, periodOpts(repPeriod)).then((d) => setRep(d)).catch(() => setRep(null)); return; }
     setDocs(null);
     API.documents(tab).then((d) => setDocs(d.documents || [])).catch(() => setDocs([]));
-  }, [tab, repYear, repPeriod]);
+  }, [tab, repYear, repPeriod, activeCompany]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    API.companies().then((d) => { setCompanies(d.companies || []); const a = getCompany() || (d.active ? String(d.active) : ''); if (a) { setCompany(a); setActiveCompany((prev) => prev !== a ? a : prev); } }).catch(() => {});
+  }, []);
   useEffect(() => {
     API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {});
     API.products().then((d) => setProducts(d.products || [])).catch(() => {});
-    API.getSettings('company').then((d) => { const lf = (d.settings || {}).legal_form; setDoubleEntry((d.settings || {}).accounting_mode === 'double_entry' || lf === 'GmbH' || lf === 'AG'); }).catch(() => {});
-  }, []);
+    if (activeCompany) API.companyProfile(activeCompany).then((d) => { const p = d.profile || {}; setDoubleEntry(p.accounting_mode === 'double_entry' || p.legal_form === 'GmbH' || p.legal_form === 'AG'); }).catch(() => {});
+  }, [activeCompany]);
+  const switchCompany = (id) => { setCompany(id); setActiveCompany(id); };
 
   const openDoc = async (id) => { try { const d = await API.document(id); setEditing(d.document); } catch (e) { toast(e.message, 'error'); } };
   const saveDoc = async (data) => { try { let r; if (data.id) r = await API.updateDocument(data.id, data); else r = await API.newDocument(data); setEditing(null); load(); return r; } catch (e) { toast(e.message, 'error'); } };
@@ -5007,7 +5108,14 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
 
   return (
     <>
-      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Buchhaltung']} right={newBtn}/>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Buchhaltung']} right={<div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        {companies.length > 1 && (
+          <select value={activeCompany} onChange={(e) => switchCompany(e.target.value)} title="Firma" style={{ height: 32, padding: '0 10px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 12.5, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer', maxWidth: 180 }}>
+            {companies.map((c) => <option key={c.id} value={String(c.id)}>{c.name}</option>)}
+          </select>
+        )}
+        {newBtn}
+      </div>}/>
       <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
         <div className="no-scrollbar" style={{ overflowX: 'auto', marginBottom: 22, maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
           <div style={{ display: 'inline-flex', gap: 4, padding: 4, width: 'max-content', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>

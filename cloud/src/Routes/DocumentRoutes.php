@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Nyza\Routes;
 
+use Nyza\CompanyContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -43,11 +44,12 @@ final class DocumentRoutes
     public static function list(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $qp = $req->getQueryParams();
         $pdo = Database::pdo();
 
-        $where = 'd.user_id = ?';
-        $params = [$uid];
+        $where = 'd.company_id = ?';
+        $params = [$cid];
         if (!empty($qp['type']) && in_array($qp['type'], self::TYPES, true)) {
             $where .= ' AND d.type = ?';
             $params[] = $qp['type'];
@@ -61,7 +63,7 @@ final class DocumentRoutes
         );
         $stmt->execute($params);
 
-        $termDays = self::paymentTermDays($uid);
+        $termDays = CompanyContext::paymentTermDays($cid);
         $out = array_map(fn(array $r) => self::shapeHeader($r, $termDays), $stmt->fetchAll());
         return Json::ok($res, ['documents' => $out]);
     }
@@ -70,15 +72,17 @@ final class DocumentRoutes
     public static function show(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $d = self::fetchOne($uid, (int)$args['id']);
+        $cid = CompanyContext::active($req, $uid);
+        $d = self::fetchOne($cid, (int)$args['id']);
         if (!$d) return Json::err($res, 'Not found', 404);
-        return Json::ok($res, ['document' => self::shapeFull($uid, $d)]);
+        return Json::ok($res, ['document' => self::shapeFull($uid, $cid, $d)]);
     }
 
     // ───── Create ────────────────────────────────────────────────────────────
     public static function create(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $b = (array) $req->getParsedBody();
 
         $type = (string)($b['type'] ?? 'invoice');
@@ -99,13 +103,13 @@ final class DocumentRoutes
         $pdo = Database::pdo();
         $pdo->beginTransaction();
         try {
-            $number = self::nextNumber($uid, $type === 'offer' ? 'offer' : 'invoice', $type === 'offer' ? 'AN-' : 'RE-');
+            $number = self::nextNumber($cid, $type === 'offer' ? 'offer' : 'invoice', $type === 'offer' ? 'AN-' : 'RE-');
             $pdo->prepare(
-                'INSERT INTO documents (user_id, type, number, contact_id, client_snapshot, doc_date, delivery_date, '
+                'INSERT INTO documents (user_id, company_id, type, number, contact_id, client_snapshot, doc_date, delivery_date, '
                 . 'intro_text, footer_text, notes, net, tax, gross) '
-                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             )->execute([
-                $uid, $type, $number, $contactId, json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                $uid, $cid, $type, $number, $contactId, json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 $docDate, $deliveryDate, $intro, $footer, $notes,
                 $totals['net'], $totals['tax'], $totals['gross'],
             ]);
@@ -117,16 +121,17 @@ final class DocumentRoutes
             throw $e;
         }
 
-        $d = self::fetchOne($uid, $docId);
-        return Json::ok($res, ['document' => self::shapeFull($uid, $d)], 201);
+        $d = self::fetchOne($cid, $docId);
+        return Json::ok($res, ['document' => self::shapeFull($uid, $cid, $d)], 201);
     }
 
     // ───── Update ────────────────────────────────────────────────────────────
     public static function update(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        $d = self::fetchOne($uid, $id);
+        $d = self::fetchOne($cid, $id);
         if (!$d) return Json::err($res, 'Not found', 404);
 
         $b = (array) $req->getParsedBody();
@@ -172,8 +177,8 @@ final class DocumentRoutes
                 $sets[] = 'gross = ?'; $params[] = $totals['gross'];
             }
             if ($sets) {
-                $params[] = $id; $params[] = $uid;
-                $pdo->prepare('UPDATE documents SET ' . implode(', ', $sets) . ' WHERE id = ? AND user_id = ?')
+                $params[] = $id; $params[] = $cid;
+                $pdo->prepare('UPDATE documents SET ' . implode(', ', $sets) . ' WHERE id = ? AND company_id = ?')
                     ->execute($params);
             }
             $pdo->commit();
@@ -182,16 +187,17 @@ final class DocumentRoutes
             throw $e;
         }
 
-        return Json::ok($res, ['document' => self::shapeFull($uid, self::fetchOne($uid, $id))]);
+        return Json::ok($res, ['document' => self::shapeFull($uid, $cid, self::fetchOne($cid, $id))]);
     }
 
     // ───── Delete ────────────────────────────────────────────────────────────
     public static function delete(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
-        Database::pdo()->prepare('DELETE FROM documents WHERE id = ? AND user_id = ?')->execute([$id, $uid]);
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
+        Database::pdo()->prepare('DELETE FROM documents WHERE id = ? AND company_id = ?')->execute([$id, $cid]);
         return Json::ok($res, ['ok' => true]);
     }
 
@@ -199,35 +205,38 @@ final class DocumentRoutes
     public static function markPaid(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        $d = self::fetchOne($uid, $id);
+        $d = self::fetchOne($cid, $id);
         if (!$d) return Json::err($res, 'Not found', 404);
         if ($d['type'] === 'invoice') {
             $b = (array) $req->getParsedBody();
             $date = self::parseDate($b['paid_date'] ?? null);
             $paidAt = $date !== null ? $date . ' 00:00:00' : date('Y-m-d H:i:s');
-            Database::pdo()->prepare('UPDATE documents SET paid_at = ? WHERE id = ? AND user_id = ?')
-                ->execute([$paidAt, $id, $uid]);
+            Database::pdo()->prepare('UPDATE documents SET paid_at = ? WHERE id = ? AND company_id = ?')
+                ->execute([$paidAt, $id, $cid]);
         }
-        return Json::ok($res, ['document' => self::shapeFull($uid, self::fetchOne($uid, $id))]);
+        return Json::ok($res, ['document' => self::shapeFull($uid, $cid, self::fetchOne($cid, $id))]);
     }
 
     public static function unmarkPaid(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
-        Database::pdo()->prepare('UPDATE documents SET paid_at = NULL WHERE id = ? AND user_id = ?')
-            ->execute([$id, $uid]);
-        return Json::ok($res, ['document' => self::shapeFull($uid, self::fetchOne($uid, $id))]);
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
+        Database::pdo()->prepare('UPDATE documents SET paid_at = NULL WHERE id = ? AND company_id = ?')
+            ->execute([$id, $cid]);
+        return Json::ok($res, ['document' => self::shapeFull($uid, $cid, self::fetchOne($cid, $id))]);
     }
 
     // ───── Convert offer → invoice ───────────────────────────────────────────
     public static function convert(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        $offer = self::fetchOne($uid, $id);
+        $offer = self::fetchOne($cid, $id);
         if (!$offer) return Json::err($res, 'Not found', 404);
         if ($offer['type'] !== 'offer') return Json::err($res, 'Nur Angebote können umgewandelt werden', 422);
 
@@ -237,13 +246,13 @@ final class DocumentRoutes
 
         $pdo->beginTransaction();
         try {
-            $number = self::nextNumber($uid, 'invoice', 'RE-');
+            $number = self::nextNumber($cid, 'invoice', 'RE-');
             $pdo->prepare(
-                'INSERT INTO documents (user_id, type, number, contact_id, client_snapshot, doc_date, delivery_date, '
+                'INSERT INTO documents (user_id, company_id, type, number, contact_id, client_snapshot, doc_date, delivery_date, '
                 . 'intro_text, footer_text, notes, net, tax, gross, converted_from_offer_id) '
-                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             )->execute([
-                $uid, 'invoice', $number, $offer['contact_id'], $offer['client_snapshot'],
+                $uid, $cid, 'invoice', $number, $offer['contact_id'], $offer['client_snapshot'],
                 date('Y-m-d'), $offer['delivery_date'], $offer['intro_text'], $offer['footer_text'], $offer['notes'],
                 $totals['net'], $totals['tax'], $totals['gross'], $id,
             ]);
@@ -257,26 +266,27 @@ final class DocumentRoutes
                 'tax_rate'       => $it['tax_rate'],
             ], $items);
             self::insertItems($newId, $copy);
-            $pdo->prepare('UPDATE documents SET converted_invoice_id = ?, accepted_at = ? WHERE id = ? AND user_id = ?')
-                ->execute([$newId, date('Y-m-d H:i:s'), $id, $uid]);
+            $pdo->prepare('UPDATE documents SET converted_invoice_id = ?, accepted_at = ? WHERE id = ? AND company_id = ?')
+                ->execute([$newId, date('Y-m-d H:i:s'), $id, $cid]);
             $pdo->commit();
         } catch (\Throwable $e) {
             $pdo->rollBack();
             throw $e;
         }
 
-        return Json::ok($res, ['document' => self::shapeFull($uid, self::fetchOne($uid, $newId))], 201);
+        return Json::ok($res, ['document' => self::shapeFull($uid, $cid, self::fetchOne($cid, $newId))], 201);
     }
 
     // ───── PDF ───────────────────────────────────────────────────────────────
     public static function pdf(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        $d = self::fetchOne($uid, $id);
+        $d = self::fetchOne($cid, $id);
         if (!$d) return Json::err($res, 'Not found', 404);
 
-        $pdf = self::renderPdfBytes($uid, $d);
+        $pdf = self::renderPdfBytes($uid, $cid, $d);
 
         $download = !empty($req->getQueryParams()['download']);
         $filename = $d['number'] . '.pdf';
@@ -295,9 +305,9 @@ final class DocumentRoutes
      * Render the document to PDF bytes via Dompdf. Shared by the streaming pdf()
      * endpoint and the archive() action so both produce byte-identical output.
      */
-    private static function renderPdfBytes(int $uid, array $doc): string
+    private static function renderPdfBytes(int $uid, int $cid, array $doc): string
     {
-        $company = self::companySettings($uid);
+        $company = CompanyContext::profile($cid);
         $items = self::loadItems((int)$doc['id']);
         $html = self::renderHtml($uid, $doc, $items, $company);
 
@@ -322,11 +332,12 @@ final class DocumentRoutes
     public static function archive(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        $d = self::fetchOne($uid, $id);
+        $d = self::fetchOne($cid, $id);
         if (!$d) return Json::err($res, 'Not found', 404);
 
-        $bytes = self::renderPdfBytes($uid, $d);
+        $bytes = self::renderPdfBytes($uid, $cid, $d);
 
         $year = self::archiveYear($d['doc_date'] ?? null);
         $sub = $d['type'] === 'offer' ? 'Angebote' : 'Rechnungen';
@@ -341,8 +352,8 @@ final class DocumentRoutes
         }
 
         $fileId = self::insertArchiveFile($uid, $yearId, $name, $rel, strlen($bytes));
-        Database::pdo()->prepare('UPDATE documents SET archived_file_id = ? WHERE id = ? AND user_id = ?')
-            ->execute([$fileId, $id, $uid]);
+        Database::pdo()->prepare('UPDATE documents SET archived_file_id = ? WHERE id = ? AND company_id = ?')
+            ->execute([$fileId, $id, $cid]);
 
         return Json::ok($res, ['file_id' => $fileId, 'folder_id' => $yearId], 201);
     }
@@ -403,15 +414,15 @@ final class DocumentRoutes
      * fires only when no row exists yet (giving 1000), and the UPDATE branch
      * fires on every later call (giving value+1). Wrapped in the caller's txn.
      */
-    private static function nextNumber(int $uid, string $name, string $prefix): string
+    private static function nextNumber(int $cid, string $name, string $prefix): string
     {
         $pdo = Database::pdo();
         $pdo->prepare(
-            'INSERT INTO counters (user_id, name, value) VALUES (?, ?, 1000) '
+            'INSERT INTO counters (company_id, name, value) VALUES (?, ?, 1000) '
             . 'ON DUPLICATE KEY UPDATE value = value + 1'
-        )->execute([$uid, $name]);
-        $stmt = $pdo->prepare('SELECT value FROM counters WHERE user_id = ? AND name = ?');
-        $stmt->execute([$uid, $name]);
+        )->execute([$cid, $name]);
+        $stmt = $pdo->prepare('SELECT value FROM counters WHERE company_id = ? AND name = ?');
+        $stmt->execute([$cid, $name]);
         $value = (int)$stmt->fetch()['value'];
         return $prefix . $value;
     }
@@ -421,7 +432,7 @@ final class DocumentRoutes
      * billing engine (period → invoice). Opens its own transaction only if the
      * caller hasn't already started one.
      */
-    public static function createInvoice(int $uid, ?int $contactId, array $rawItems, array $meta = []): int
+    public static function createInvoice(int $uid, int $companyId, ?int $contactId, array $rawItems, array $meta = []): int
     {
         $items = self::normalizeItems($rawItems);
         $totals = self::computeTotals($items);
@@ -430,12 +441,12 @@ final class DocumentRoutes
         $ownTxn = !$pdo->inTransaction();
         if ($ownTxn) $pdo->beginTransaction();
         try {
-            $number = self::nextNumber($uid, 'invoice', 'RE-');
+            $number = self::nextNumber($companyId, 'invoice', 'RE-');
             $pdo->prepare(
-                'INSERT INTO documents (user_id, type, number, contact_id, client_snapshot, doc_date, delivery_date, '
-                . 'intro_text, footer_text, notes, net, tax, gross) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO documents (user_id, company_id, type, number, contact_id, client_snapshot, doc_date, delivery_date, '
+                . 'intro_text, footer_text, notes, net, tax, gross) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             )->execute([
-                $uid, 'invoice', $number, $contactId,
+                $uid, $companyId, 'invoice', $number, $contactId,
                 json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 $meta['doc_date'] ?? date('Y-m-d'), $meta['delivery_date'] ?? null,
                 $meta['intro_text'] ?? null, $meta['footer_text'] ?? null, $meta['notes'] ?? null,
@@ -565,19 +576,19 @@ final class DocumentRoutes
     }
 
     /** Full shape for show/create/update — includes items with line_net. */
-    private static function shapeFull(int $uid, array $r): array
+    private static function shapeFull(int $uid, int $cid, array $r): array
     {
         // Resolve contact_name fresh (the row came from fetchOne without a join).
         $contactName = null;
         if ($r['contact_id'] !== null) {
-            $s = Database::pdo()->prepare('SELECT name FROM contacts WHERE id = ? AND user_id = ?');
-            $s->execute([(int)$r['contact_id'], $uid]);
+            $s = Database::pdo()->prepare('SELECT name FROM contacts WHERE id = ?');
+            $s->execute([(int)$r['contact_id']]);
             $cr = $s->fetch();
             $contactName = $cr ? $cr['name'] : null;
         }
         $r['contact_name'] = $contactName;
 
-        $base = self::shapeHeader($r, self::paymentTermDays($uid));
+        $base = self::shapeHeader($r, CompanyContext::paymentTermDays($cid));
         $items = array_map(static function (array $it): array {
             $lineNet = round((float)$it['quantity'] * (float)$it['unit_price_net'], 2);
             return [
@@ -623,25 +634,6 @@ final class DocumentRoutes
         return 'open';
     }
 
-    // ───── Settings helpers ──────────────────────────────────────────────────
-    private static function companySettings(int $uid): array
-    {
-        $s = Database::pdo()->prepare('SELECT data FROM app_settings WHERE user_id = ? AND ns = ?');
-        $s->execute([$uid, 'company']);
-        $row = $s->fetch();
-        if (!$row || $row['data'] === null) return [];
-        $d = json_decode((string)$row['data'], true);
-        return is_array($d) ? $d : [];
-    }
-
-    private static function paymentTermDays(int $uid): int
-    {
-        $c = self::companySettings($uid);
-        $v = $c['payment_term_days'] ?? null;
-        if ($v === null || $v === '' || (int)$v <= 0) return 14;
-        return (int)$v;
-    }
-
     // ───── small parsers ─────────────────────────────────────────────────────
     private static function parseDate($v): ?string
     {
@@ -658,10 +650,10 @@ final class DocumentRoutes
         return $v === '' ? null : $v;
     }
 
-    private static function fetchOne(int $uid, int $id): ?array
+    private static function fetchOne(int $cid, int $id): ?array
     {
-        $stmt = Database::pdo()->prepare('SELECT * FROM documents WHERE id = ? AND user_id = ?');
-        $stmt->execute([$id, $uid]);
+        $stmt = Database::pdo()->prepare('SELECT * FROM documents WHERE id = ? AND company_id = ?');
+        $stmt->execute([$id, $cid]);
         $d = $stmt->fetch();
         return $d ?: null;
     }

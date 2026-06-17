@@ -10,6 +10,13 @@ const ledgerQ = (year, opts = {}) => '?year=' + year + (opts.month ? '&month=' +
 export function getToken() {
   return localStorage.getItem('nyza.token') || null;
 }
+export function getCompany() {
+  return localStorage.getItem('nyza.company') || '';
+}
+export function setCompany(id) {
+  if (id) localStorage.setItem('nyza.company', String(id));
+  else localStorage.removeItem('nyza.company');
+}
 export function setToken(t) {
   if (t) localStorage.setItem('nyza.token', t);
   else localStorage.removeItem('nyza.token');
@@ -23,6 +30,8 @@ async function request(path, opts = {}) {
   }
   const token = getToken();
   if (token && !opts.skipAuth) headers['Authorization'] = 'Bearer ' + token;
+  const company = getCompany();
+  if (company && !opts.skipAuth) headers['X-Company-Id'] = company;
 
   const res = await fetch(url(path), { ...opts, headers });
   const ct = res.headers.get('Content-Type') || '';
@@ -297,6 +306,17 @@ export const API = {
   adminDeleteUser: (id) => request('/api/admin/users/' + id, { method: 'DELETE' }),
   adminCron:       () => request('/api/admin/cron'),
 
+  // Multi-company (Mandanten)
+  companies:        () => request('/api/companies'),
+  createCompany:    (name) => request('/api/companies', { method: 'POST', body: { name } }),
+  renameCompany:    (id, name) => request('/api/companies/' + id, { method: 'PATCH', body: { name } }),
+  deleteCompany:    (id) => request('/api/companies/' + id, { method: 'DELETE' }),
+  companyProfile:   (id) => request('/api/companies/' + id + '/profile'),
+  saveCompanyProfile:(id, profile) => request('/api/companies/' + id + '/profile', { method: 'PUT', body: profile }),
+  companyMembers:   (id) => request('/api/companies/' + id + '/members'),
+  addCompanyMember: (id, user_id) => request('/api/companies/' + id + '/members', { method: 'POST', body: { user_id } }),
+  removeCompanyMember:(id, userId) => request('/api/companies/' + id + '/members/' + userId, { method: 'DELETE' }),
+
   // App settings (namespaced JSON store)
   getSettings:  (ns) => request('/api/settings/' + ns),
   saveSettings: (ns, body) => request('/api/settings/' + ns, { method: 'PUT', body }),
@@ -341,7 +361,7 @@ export const API = {
 
   // Buchhaltung · Auswertung
   report:    (year, opts = {}) => request('/api/reports?year=' + year + (opts.month ? '&month=' + opts.month : '') + (opts.quarter ? '&quarter=' + opts.quarter : '')),
-  datevUrl:  (year, opts = {}) => url('/api/reports/datev') + '?year=' + year + (opts.month ? '&month=' + opts.month : '') + (opts.quarter ? '&quarter=' + opts.quarter : '') + '&download=1&token=' + (getToken() || ''),
+  datevUrl:  (year, opts = {}) => url('/api/reports/datev') + '?year=' + year + (opts.month ? '&month=' + opts.month : '') + (opts.quarter ? '&quarter=' + opts.quarter : '') + '&download=1&token=' + (getToken() || '') + (getCompany() ? '&company_id=' + getCompany() : ''),
   importParse:  (file) => { const fd = new FormData(); fd.append('file', file); return request('/api/import/parse', { method: 'POST', body: fd }); },
   importCommit: (records) => request('/api/import/commit', { method: 'POST', body: { records } }),
 
@@ -355,7 +375,7 @@ export const API = {
   ledgerBalanceSheet:(year) => request('/api/ledger/balance-sheet?year=' + year),
   newLedgerEntry:    (body) => request('/api/ledger/entries', { method: 'POST', body }),
   deleteLedgerEntry: (id) => request('/api/ledger/entries/' + id, { method: 'DELETE' }),
-  ledgerDatevUrl:    (year, opts = {}) => url('/api/ledger/datev') + ledgerQ(year, opts) + '&download=1&token=' + (getToken() || ''),
+  ledgerDatevUrl:    (year, opts = {}) => url('/api/ledger/datev') + ledgerQ(year, opts) + '&download=1&token=' + (getToken() || '') + (getCompany() ? '&company_id=' + getCompany() : ''),
   periodMarkPaid:    (id, paid_date) => request('/api/periods/' + id + '/mark-paid', { method: 'POST', body: { paid_date } }),
   periodUnmarkPaid:  (id) => request('/api/periods/' + id + '/unmark-paid', { method: 'POST', body: {} }),
   periodInvoice:     (id) => request('/api/periods/' + id + '/invoice', { method: 'POST', body: {} }),

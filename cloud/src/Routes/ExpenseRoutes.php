@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Nyza\Routes;
 
+use Nyza\CompanyContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -39,9 +40,10 @@ final class ExpenseRoutes
     public static function list(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $qp = $req->getQueryParams();
-        $where = 'e.user_id = ?';
-        $params = [$uid];
+        $where = 'e.company_id = ?';
+        $params = [$cid];
         if (!empty($qp['from']))     { $where .= ' AND e.exp_date >= ?'; $params[] = (string)$qp['from']; }
         if (!empty($qp['to']))       { $where .= ' AND e.exp_date <= ?'; $params[] = (string)$qp['to']; }
         if (!empty($qp['category'])) { $where .= ' AND e.category = ?';  $params[] = (string)$qp['category']; }
@@ -57,73 +59,79 @@ final class ExpenseRoutes
     public static function create(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $b = (array) $req->getParsedBody();
         $f = self::fields($b, true);
         Database::pdo()->prepare(
-            'INSERT INTO expenses (user_id, contact_id, exp_date, vendor, description, category, net, tax_rate, tax, gross, deductible, paid_at) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO expenses (user_id, company_id, contact_id, exp_date, vendor, description, category, net, tax_rate, tax, gross, deductible, paid_at) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )->execute([
-            $uid, $f['contact_id'], $f['exp_date'], $f['vendor'], $f['description'], $f['category'],
+            $uid, $cid, $f['contact_id'], $f['exp_date'], $f['vendor'], $f['description'], $f['category'],
             $f['net'], $f['tax_rate'], $f['tax'], $f['gross'], $f['deductible'], $f['paid_at'],
         ]);
         $id = (int)Database::pdo()->lastInsertId();
-        return Json::ok($res, ['expense' => self::shape(self::joined($uid, $id))], 201);
+        return Json::ok($res, ['expense' => self::shape(self::joined($cid, $id))], 201);
     }
 
     public static function update(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        $cur = self::fetchOne($uid, $id);
+        $cur = self::fetchOne($cid, $id);
         if (!$cur) return Json::err($res, 'Not found', 404);
         $b = (array) $req->getParsedBody();
         // Recompute money if any money-relevant field is present.
         $f = self::fields($b, false, $cur);
         if ($f) {
             $sets = implode(', ', array_map(static fn($k) => "$k = ?", array_keys($f)));
-            Database::pdo()->prepare("UPDATE expenses SET $sets WHERE id = ? AND user_id = ?")
-                ->execute(array_merge(array_values($f), [$id, $uid]));
+            Database::pdo()->prepare("UPDATE expenses SET $sets WHERE id = ? AND company_id = ?")
+                ->execute(array_merge(array_values($f), [$id, $cid]));
         }
-        return Json::ok($res, ['expense' => self::shape(self::joined($uid, $id))]);
+        return Json::ok($res, ['expense' => self::shape(self::joined($cid, $id))]);
     }
 
     public static function delete(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        $cur = self::fetchOne($uid, $id);
+        $cur = self::fetchOne($cid, $id);
         if (!$cur) return Json::err($res, 'Not found', 404);
         if (!empty($cur['receipt_path'])) Storage::deleteRel($cur['receipt_path']);
-        Database::pdo()->prepare('DELETE FROM expenses WHERE id = ? AND user_id = ?')->execute([$id, $uid]);
+        Database::pdo()->prepare('DELETE FROM expenses WHERE id = ? AND company_id = ?')->execute([$id, $cid]);
         return Json::ok($res, ['ok' => true]);
     }
 
     public static function markPaid(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
         $b = (array) $req->getParsedBody();
         $date = self::parseDate($b['paid_date'] ?? null);
         $paidAt = $date !== null ? $date . ' 00:00:00' : date('Y-m-d H:i:s');
-        Database::pdo()->prepare('UPDATE expenses SET paid_at = ? WHERE id = ? AND user_id = ?')->execute([$paidAt, $id, $uid]);
-        return Json::ok($res, ['expense' => self::shape(self::joined($uid, $id))]);
+        Database::pdo()->prepare('UPDATE expenses SET paid_at = ? WHERE id = ? AND company_id = ?')->execute([$paidAt, $id, $cid]);
+        return Json::ok($res, ['expense' => self::shape(self::joined($cid, $id))]);
     }
 
     public static function unmarkPaid(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
-        Database::pdo()->prepare('UPDATE expenses SET paid_at = NULL WHERE id = ? AND user_id = ?')->execute([$id, $uid]);
-        return Json::ok($res, ['expense' => self::shape(self::joined($uid, $id))]);
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
+        Database::pdo()->prepare('UPDATE expenses SET paid_at = NULL WHERE id = ? AND company_id = ?')->execute([$id, $cid]);
+        return Json::ok($res, ['expense' => self::shape(self::joined($cid, $id))]);
     }
 
     public static function uploadReceipt(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        $cur = self::fetchOne($uid, $id);
+        $cur = self::fetchOne($cid, $id);
         if (!$cur) return Json::err($res, 'Not found', 404);
         $file = $req->getUploadedFiles()['file'] ?? null;
         if (!$file || $file->getError() !== UPLOAD_ERR_OK) return Json::err($res, 'Keine Datei', 422);
@@ -134,16 +142,17 @@ final class ExpenseRoutes
         if (!empty($cur['receipt_path'])) Storage::deleteRel($cur['receipt_path']);
         $rel = Storage::relPath($uid, $name);
         $file->moveTo(Storage::abs($rel));
-        Database::pdo()->prepare('UPDATE expenses SET receipt_path = ?, receipt_name = ?, receipt_mime = ? WHERE id = ? AND user_id = ?')
-            ->execute([$rel, mb_substr($name, 0, 255), mb_substr($mime, 0, 100), $id, $uid]);
-        return Json::ok($res, ['expense' => self::shape(self::joined($uid, $id))]);
+        Database::pdo()->prepare('UPDATE expenses SET receipt_path = ?, receipt_name = ?, receipt_mime = ? WHERE id = ? AND company_id = ?')
+            ->execute([$rel, mb_substr($name, 0, 255), mb_substr($mime, 0, 100), $id, $cid]);
+        return Json::ok($res, ['expense' => self::shape(self::joined($cid, $id))]);
     }
 
     public static function getReceipt(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        $cur = self::fetchOne($uid, $id);
+        $cur = self::fetchOne($cid, $id);
         if (!$cur || empty($cur['receipt_path'])) return Json::err($res, 'Not found', 404);
         $abs = Storage::abs($cur['receipt_path']);
         if (!is_file($abs)) return Json::err($res, 'Not found', 404);
@@ -163,13 +172,14 @@ final class ExpenseRoutes
     public static function deleteReceipt(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        $cur = self::fetchOne($uid, $id);
+        $cur = self::fetchOne($cid, $id);
         if (!$cur) return Json::err($res, 'Not found', 404);
         if (!empty($cur['receipt_path'])) Storage::deleteRel($cur['receipt_path']);
-        Database::pdo()->prepare('UPDATE expenses SET receipt_path = NULL, receipt_name = NULL, receipt_mime = NULL WHERE id = ? AND user_id = ?')
-            ->execute([$id, $uid]);
-        return Json::ok($res, ['expense' => self::shape(self::joined($uid, $id))]);
+        Database::pdo()->prepare('UPDATE expenses SET receipt_path = NULL, receipt_name = NULL, receipt_mime = NULL WHERE id = ? AND company_id = ?')
+            ->execute([$id, $cid]);
+        return Json::ok($res, ['expense' => self::shape(self::joined($cid, $id))]);
     }
 
     // ───── helpers ───────────────────────────────────────────────────────────
@@ -222,17 +232,17 @@ final class ExpenseRoutes
         return preg_match('/^\d{4}-\d{2}-\d{2}/', $v) ? substr($v, 0, 10) : null;
     }
 
-    private static function fetchOne(int $uid, int $id): ?array
+    private static function fetchOne(int $cid, int $id): ?array
     {
-        $s = Database::pdo()->prepare('SELECT * FROM expenses WHERE id = ? AND user_id = ?');
-        $s->execute([$id, $uid]);
+        $s = Database::pdo()->prepare('SELECT * FROM expenses WHERE id = ? AND company_id = ?');
+        $s->execute([$id, $cid]);
         return $s->fetch() ?: null;
     }
 
-    private static function joined(int $uid, int $id): array
+    private static function joined(int $cid, int $id): array
     {
-        $s = Database::pdo()->prepare('SELECT e.*, c.name AS contact_name FROM expenses e LEFT JOIN contacts c ON c.id = e.contact_id WHERE e.id = ? AND e.user_id = ?');
-        $s->execute([$id, $uid]);
+        $s = Database::pdo()->prepare('SELECT e.*, c.name AS contact_name FROM expenses e LEFT JOIN contacts c ON c.id = e.contact_id WHERE e.id = ? AND e.company_id = ?');
+        $s->execute([$id, $cid]);
         return $s->fetch() ?: [];
     }
 

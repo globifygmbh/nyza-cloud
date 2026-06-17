@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Nyza\Routes;
 
+use Nyza\CompanyContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -41,19 +42,20 @@ final class SubscriptionRoutes
     public static function list(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $pdo = Database::pdo();
         // Keep one open period per active subscription before listing.
-        $all = $pdo->prepare('SELECT * FROM subscriptions WHERE user_id = ?');
-        $all->execute([$uid]);
+        $all = $pdo->prepare('SELECT * FROM subscriptions WHERE company_id = ?');
+        $all->execute([$cid]);
         $subs = $all->fetchAll();
         foreach ($subs as $s) { if ((int)$s['active'] === 1) self::ensureCurrentPeriod($s); }
 
         $stmt = $pdo->prepare(
             'SELECT s.*, c.name AS contact_name FROM subscriptions s '
-            . 'LEFT JOIN contacts c ON c.id = s.contact_id WHERE s.user_id = ? '
+            . 'LEFT JOIN contacts c ON c.id = s.contact_id WHERE s.company_id = ? '
             . 'ORDER BY s.active DESC, s.name ASC'
         );
-        $stmt->execute([$uid]);
+        $stmt->execute([$cid]);
         $out = array_map([self::class, 'shape'], $stmt->fetchAll());
         return Json::ok($res, ['subscriptions' => $out]);
     }
@@ -61,6 +63,7 @@ final class SubscriptionRoutes
     public static function create(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $b = (array) $req->getParsedBody();
         $name = trim((string)($b['name'] ?? ''));
         if ($name === '') return Json::err($res, 'Name erforderlich', 422);
@@ -68,92 +71,98 @@ final class SubscriptionRoutes
         $f = self::fields($b, true);
         $pdo = Database::pdo();
         $pdo->prepare(
-            'INSERT INTO subscriptions (user_id, contact_id, name, description, interval_unit, net_price, tax_rate, active, start_date) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        )->execute([$uid, $f['contact_id'], mb_substr($name, 0, 255), $f['description'], $f['interval_unit'], $f['net_price'], $f['tax_rate'], $f['active'], $f['start_date']]);
+            'INSERT INTO subscriptions (user_id, company_id, contact_id, name, description, interval_unit, net_price, tax_rate, active, start_date) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([$uid, $cid, $f['contact_id'], mb_substr($name, 0, 255), $f['description'], $f['interval_unit'], $f['net_price'], $f['tax_rate'], $f['active'], $f['start_date']]);
         $id = (int)$pdo->lastInsertId();
-        $row = self::fetchOne($uid, $id);
+        $row = self::fetchOne($cid, $id);
         if ((int)$row['active'] === 1) self::ensureCurrentPeriod($row);
-        return Json::ok($res, ['subscription' => self::shape(self::joined($uid, $id))], 201);
+        return Json::ok($res, ['subscription' => self::shape(self::joined($cid, $id))], 201);
     }
 
     public static function update(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
         $b = (array) $req->getParsedBody();
         if (array_key_exists('name', $b) && trim((string)$b['name']) === '') return Json::err($res, 'Name erforderlich', 422);
 
         $map = self::fields($b, false);
         if ($map) {
             $sets = implode(', ', array_map(static fn($k) => "$k = ?", array_keys($map)));
-            $params = array_merge(array_values($map), [$id, $uid]);
-            Database::pdo()->prepare("UPDATE subscriptions SET $sets WHERE id = ? AND user_id = ?")->execute($params);
+            $params = array_merge(array_values($map), [$id, $cid]);
+            Database::pdo()->prepare("UPDATE subscriptions SET $sets WHERE id = ? AND company_id = ?")->execute($params);
         }
-        $row = self::fetchOne($uid, $id);
+        $row = self::fetchOne($cid, $id);
         if ((int)$row['active'] === 1) self::ensureCurrentPeriod($row);
-        return Json::ok($res, ['subscription' => self::shape(self::joined($uid, $id))]);
+        return Json::ok($res, ['subscription' => self::shape(self::joined($cid, $id))]);
     }
 
     public static function delete(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
-        Database::pdo()->prepare('DELETE FROM subscriptions WHERE id = ? AND user_id = ?')->execute([$id, $uid]);
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
+        Database::pdo()->prepare('DELETE FROM subscriptions WHERE id = ? AND company_id = ?')->execute([$id, $cid]);
         return Json::ok($res, ['ok' => true]);
     }
 
     public static function periods(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
-        $stmt = Database::pdo()->prepare('SELECT * FROM subscription_periods WHERE subscription_id = ? AND user_id = ? ORDER BY due_date DESC, id DESC');
-        $stmt->execute([$id, $uid]);
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
+        $stmt = Database::pdo()->prepare('SELECT * FROM subscription_periods WHERE subscription_id = ? AND company_id = ? ORDER BY due_date DESC, id DESC');
+        $stmt->execute([$id, $cid]);
         return Json::ok($res, ['periods' => array_map([self::class, 'shapePeriod'], $stmt->fetchAll())]);
     }
 
     public static function periodMarkPaid(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $p = self::fetchPeriod($uid, (int)$args['id']);
+        $cid = CompanyContext::active($req, $uid);
+        $p = self::fetchPeriod($cid, (int)$args['id']);
         if (!$p) return Json::err($res, 'Not found', 404);
         $b = (array) $req->getParsedBody();
         $date = self::parseDate($b['paid_date'] ?? null);
         $paidAt = $date !== null ? $date . ' 00:00:00' : date('Y-m-d H:i:s');
-        Database::pdo()->prepare('UPDATE subscription_periods SET paid_at = ? WHERE id = ? AND user_id = ?')
-            ->execute([$paidAt, (int)$p['id'], $uid]);
+        Database::pdo()->prepare('UPDATE subscription_periods SET paid_at = ? WHERE id = ? AND company_id = ?')
+            ->execute([$paidAt, (int)$p['id'], $cid]);
         // Paying the open period rolls the cycle forward.
-        $sub = self::fetchOne($uid, (int)$p['subscription_id']);
+        $sub = self::fetchOne($cid, (int)$p['subscription_id']);
         if ($sub && (int)$sub['active'] === 1) self::ensureCurrentPeriod($sub);
-        return Json::ok($res, ['period' => self::shapePeriod(self::fetchPeriod($uid, (int)$p['id']))]);
+        return Json::ok($res, ['period' => self::shapePeriod(self::fetchPeriod($cid, (int)$p['id']))]);
     }
 
     public static function periodUnmarkPaid(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $p = self::fetchPeriod($uid, (int)$args['id']);
+        $cid = CompanyContext::active($req, $uid);
+        $p = self::fetchPeriod($cid, (int)$args['id']);
         if (!$p) return Json::err($res, 'Not found', 404);
-        Database::pdo()->prepare('UPDATE subscription_periods SET paid_at = NULL WHERE id = ? AND user_id = ?')
-            ->execute([(int)$p['id'], $uid]);
-        return Json::ok($res, ['period' => self::shapePeriod(self::fetchPeriod($uid, (int)$p['id']))]);
+        Database::pdo()->prepare('UPDATE subscription_periods SET paid_at = NULL WHERE id = ? AND company_id = ?')
+            ->execute([(int)$p['id'], $cid]);
+        return Json::ok($res, ['period' => self::shapePeriod(self::fetchPeriod($cid, (int)$p['id']))]);
     }
 
     public static function periodInvoice(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $p = self::fetchPeriod($uid, (int)$args['id']);
+        $cid = CompanyContext::active($req, $uid);
+        $p = self::fetchPeriod($cid, (int)$args['id']);
         if (!$p) return Json::err($res, 'Not found', 404);
-        $sub = self::fetchOne($uid, (int)$p['subscription_id']);
+        $sub = self::fetchOne($cid, (int)$p['subscription_id']);
         $name = $sub ? $sub['name'] : 'Leistung';
         $period = self::deDate($p['due_date']);
-        $docId = DocumentRoutes::createInvoice($uid, $p['contact_id'] !== null ? (int)$p['contact_id'] : null, [
+        $docId = DocumentRoutes::createInvoice($uid, $cid, $p['contact_id'] !== null ? (int)$p['contact_id'] : null, [
             ['description' => $name . ' — Abrechnung ' . $period, 'quantity' => 1, 'unit' => 'Pausch.', 'unit_price_net' => (float)$p['net_price'], 'tax_rate' => (float)$p['tax_rate']],
         ]);
-        Database::pdo()->prepare('UPDATE subscription_periods SET invoice_id = ? WHERE id = ? AND user_id = ?')
-            ->execute([$docId, (int)$p['id'], $uid]);
+        Database::pdo()->prepare('UPDATE subscription_periods SET invoice_id = ? WHERE id = ? AND company_id = ?')
+            ->execute([$docId, (int)$p['id'], $cid]);
         return Json::ok($res, ['invoice_id' => $docId], 201);
     }
 

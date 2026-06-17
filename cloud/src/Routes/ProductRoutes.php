@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Nyza\Routes;
 
+use Nyza\CompanyContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -30,14 +31,16 @@ final class ProductRoutes
     public static function list(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $stmt = Database::pdo()->prepare('SELECT * FROM products WHERE user_id = ? ORDER BY name ASC');
-        $stmt->execute([$uid]);
+        $cid = CompanyContext::active($req, $uid);
+        $stmt = Database::pdo()->prepare('SELECT * FROM products WHERE company_id = ? ORDER BY name ASC');
+        $stmt->execute([$cid]);
         return Json::ok($res, ['products' => array_map([self::class, 'shape'], $stmt->fetchAll())]);
     }
 
     public static function create(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $b = (array) $req->getParsedBody();
         $name = trim((string)($b['name'] ?? ''));
         if ($name === '') return Json::err($res, 'Name erforderlich', 422);
@@ -50,19 +53,20 @@ final class ProductRoutes
         $type = isset($b['type']) && trim((string)$b['type']) !== '' ? (string)$b['type'] : 'service';
 
         $stmt = Database::pdo()->prepare(
-            'INSERT INTO products (user_id, name, description, unit, unit_price_net, tax_rate, type) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO products (user_id, company_id, name, description, unit, unit_price_net, tax_rate, type) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         );
-        $stmt->execute([$uid, $name, $description, $unit, $unitPrice, $taxRate, $type]);
+        $stmt->execute([$uid, $cid, $name, $description, $unit, $unitPrice, $taxRate, $type]);
         $id = (int)Database::pdo()->lastInsertId();
-        return Json::ok($res, ['product' => self::shape(self::fetchOne($uid, $id))], 201);
+        return Json::ok($res, ['product' => self::shape(self::fetchOne($cid, $id))], 201);
     }
 
     public static function update(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
 
         $b = (array) $req->getParsedBody();
         $sets = [];
@@ -93,26 +97,27 @@ final class ProductRoutes
         }
 
         if ($sets) {
-            $params[] = $id; $params[] = $uid;
-            Database::pdo()->prepare('UPDATE products SET ' . implode(', ', $sets) . ' WHERE id = ? AND user_id = ?')
+            $params[] = $id; $params[] = $cid;
+            Database::pdo()->prepare('UPDATE products SET ' . implode(', ', $sets) . ' WHERE id = ? AND company_id = ?')
                 ->execute($params);
         }
-        return Json::ok($res, ['product' => self::shape(self::fetchOne($uid, $id))]);
+        return Json::ok($res, ['product' => self::shape(self::fetchOne($cid, $id))]);
     }
 
     public static function delete(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
-        Database::pdo()->prepare('DELETE FROM products WHERE id = ? AND user_id = ?')->execute([$id, $uid]);
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
+        Database::pdo()->prepare('DELETE FROM products WHERE id = ? AND company_id = ?')->execute([$id, $cid]);
         return Json::ok($res, ['ok' => true]);
     }
 
-    private static function fetchOne(int $uid, int $id): ?array
+    private static function fetchOne(int $cid, int $id): ?array
     {
-        $stmt = Database::pdo()->prepare('SELECT * FROM products WHERE id = ? AND user_id = ?');
-        $stmt->execute([$id, $uid]);
+        $stmt = Database::pdo()->prepare('SELECT * FROM products WHERE id = ? AND company_id = ?');
+        $stmt->execute([$id, $cid]);
         $p = $stmt->fetch();
         return $p ?: null;
     }
