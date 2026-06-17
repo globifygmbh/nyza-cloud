@@ -1,6 +1,6 @@
 // Authenticated app shell + screens.
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import QRCode from 'qrcode';
 import { API, BASE, getToken, setToken } from './api.js';
 import {
@@ -10,6 +10,9 @@ import {
 import { toast } from './toast.jsx';
 import { confirmDialog, openContextMenu } from './overlays.jsx';
 import { uploadOwner } from './uploads.js';
+
+// Heavy CodeMirror editor — only fetched when a text file is actually opened.
+const CodeEditor = lazy(() => import('./editor.jsx'));
 
 // Track viewport for mobile-responsive chrome.
 function useIsMobile() {
@@ -134,13 +137,11 @@ function TextPane({ fileId, src, name, editable, onSave }) {
         <div className="nyza-md" style={{ flex: 1, overflow: 'auto', padding: '20px 26px' }}
           dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}/>
       ) : (
-        <textarea value={content} readOnly={!editable} spellCheck={false}
-          onChange={(e) => setContent(e.target.value)}
-          style={{
-            flex: 1, width: '100%', resize: 'none', border: 0, outline: 0, padding: '16px 18px',
-            background: 'transparent', color: 'var(--fg)', fontFamily: 'var(--font-mono)',
-            fontSize: 13, lineHeight: 1.6, tabSize: 2,
-          }}/>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <Suspense fallback={<div style={{ padding: 18, color: 'var(--fg-3)' }}>{Ic.loader(20)}</div>}>
+            <CodeEditor value={content} name={name} editable={editable} onChange={(v) => setContent(v)}/>
+          </Suspense>
+        </div>
       )}
       {hist !== null && (
         <div className="nyza-modal-backdrop" onClick={() => setHist(null)} style={{ zIndex: 210 }}>
