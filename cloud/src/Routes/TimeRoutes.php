@@ -38,13 +38,16 @@ final class TimeRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $qp = $req->getQueryParams();
+        // Members may view another member's entries via ?user_id; default = self.
+        $target = !empty($qp['user_id']) ? (int)$qp['user_id'] : $uid;
         $where = 't.user_id = ?';
-        $params = [$uid];
+        $params = [$target];
         if (!empty($qp['from'])) { $where .= ' AND DATE(t.started_at) >= ?'; $params[] = (string)$qp['from']; }
         if (!empty($qp['to']))   { $where .= ' AND DATE(t.started_at) <= ?'; $params[] = (string)$qp['to']; }
         $stmt = Database::pdo()->prepare(
-            'SELECT t.*, c.name AS contact_name FROM time_entries t '
+            'SELECT t.*, c.name AS contact_name, u.name AS user_name FROM time_entries t '
             . 'LEFT JOIN contacts c ON c.id = t.contact_id '
+            . 'LEFT JOIN users u ON u.id = t.user_id '
             . "WHERE $where ORDER BY t.started_at DESC LIMIT 500"
         );
         $stmt->execute($params);
@@ -215,6 +218,8 @@ final class TimeRoutes
             'duration'     => $dur,
             'running'      => $end === null,
             'invoice_id'   => isset($r['invoice_id']) && $r['invoice_id'] !== null ? (int)$r['invoice_id'] : null,
+            'user_id'      => isset($r['user_id']) ? (int)$r['user_id'] : null,
+            'user_name'    => $r['user_name'] ?? null,
         ];
     }
 

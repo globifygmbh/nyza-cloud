@@ -35,8 +35,17 @@ final class AuthRoutes
         $app->post('/api/auth/2fa/disable',     [self::class, 'twoFactorDisable'])->add(new AuthMiddleware());
         $app->post('/api/auth/2fa/recovery-codes', [self::class, 'twoFactorRecoveryCodes'])->add(new AuthMiddleware());
         $app->get('/api/auth/logins',           [self::class, 'loginHistory'])->add(new AuthMiddleware());
+        $app->get('/api/users',                 [self::class, 'workspaceUsers'])->add(new AuthMiddleware());
         // Public: serve a user's logo for share/upload-page branding.
         $app->get('/api/branding/logo/{uid}',   [self::class, 'serveLogo']);
+    }
+
+    /** Workspace member list for assignment/filter dropdowns (any member). */
+    public static function workspaceUsers(Request $req, Response $res): Response
+    {
+        $stmt = Database::pdo()->query('SELECT id, name, email FROM users WHERE active = 1 ORDER BY name ASC, email ASC');
+        $users = array_map(static fn($u) => ['id' => (int)$u['id'], 'name' => $u['name'], 'email' => $u['email']], $stmt->fetchAll());
+        return Json::ok($res, ['users' => $users]);
     }
 
     private static function logLogin(Request $req, ?int $uid, string $email, bool $ok, string $reason): void

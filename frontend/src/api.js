@@ -243,7 +243,8 @@ export const API = {
   stats:    () => request('/api/stats'),
 
   // Apps · Tasks
-  tasks:         () => request('/api/tasks'),
+  tasks:         (opts = {}) => { const qs = []; if (opts.assignee) qs.push('assignee=' + opts.assignee); if (opts.owner) qs.push('owner=' + opts.owner); if (opts.mine) qs.push('mine=1'); return request('/api/tasks' + (qs.length ? '?' + qs.join('&') : '')); },
+  users:         () => request('/api/users'),
   tasksArchived: () => request('/api/tasks/archived'),
   newTask:       (body) => request('/api/tasks', { method: 'POST', body }),
   updateTask:    (id, body) => request('/api/tasks/' + id, { method: 'PATCH', body }),
@@ -258,7 +259,7 @@ export const API = {
   deleteContact: (id) => request('/api/contacts/' + id, { method: 'DELETE' }),
 
   // Apps · Zeiten (time tracking)
-  timeEntries:   (opts = {}) => { const qs = []; if (opts.from) qs.push('from=' + opts.from); if (opts.to) qs.push('to=' + opts.to); return request('/api/time' + (qs.length ? '?' + qs.join('&') : '')); },
+  timeEntries:   (opts = {}) => { const qs = []; if (opts.from) qs.push('from=' + opts.from); if (opts.to) qs.push('to=' + opts.to); if (opts.user_id) qs.push('user_id=' + opts.user_id); return request('/api/time' + (qs.length ? '?' + qs.join('&') : '')); },
   timeRunning:   () => request('/api/time/running'),
   timeStart:     (body) => request('/api/time/start', { method: 'POST', body }),
   timeStop:      (id) => request('/api/time/' + id + '/stop', { method: 'POST', body: {} }),

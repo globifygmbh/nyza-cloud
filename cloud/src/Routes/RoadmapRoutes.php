@@ -37,10 +37,11 @@ final class RoadmapRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $pdo = Database::pdo();
+        // Shared roadmap: all members see/edit it.
         $steps = $pdo->prepare(
-            'SELECT * FROM roadmap_steps WHERE user_id = ? ORDER BY (date IS NULL), date ASC, sort_order ASC, id ASC'
+            'SELECT s.*, u.name AS created_by_name FROM roadmap_steps s LEFT JOIN users u ON u.id = s.user_id ORDER BY (s.date IS NULL), s.date ASC, s.sort_order ASC, s.id ASC'
         );
-        $steps->execute([$uid]);
+        $steps->execute([]);
         $rows = $steps->fetchAll();
         if (!$rows) return Json::ok($res, ['steps' => []]);
 
@@ -90,7 +91,7 @@ final class RoadmapRoutes
             $sets[] = 'completed = ?'; $params[] = $done ? 1 : 0;
             $sets[] = 'completed_at = ' . ($done ? 'CURRENT_TIMESTAMP' : 'NULL');
         }
-        if ($sets) { $params[] = $id; $params[] = $uid; Database::pdo()->prepare('UPDATE roadmap_steps SET ' . implode(', ', $sets) . ' WHERE id = ? AND user_id = ?')->execute($params); }
+        if ($sets) { $params[] = $id; Database::pdo()->prepare('UPDATE roadmap_steps SET ' . implode(', ', $sets) . ' WHERE id = ?')->execute($params); }
         return Json::ok($res, ['step' => self::shape(self::fetchStep($uid, $id), self::tasksFor($id))]);
     }
 
@@ -99,7 +100,7 @@ final class RoadmapRoutes
         $uid = (int)$req->getAttribute('uid');
         $id = (int)$args['id'];
         if (!self::fetchStep($uid, $id)) return Json::err($res, 'Not found', 404);
-        Database::pdo()->prepare('DELETE FROM roadmap_steps WHERE id = ? AND user_id = ?')->execute([$id, $uid]);
+        Database::pdo()->prepare('DELETE FROM roadmap_steps WHERE id = ?')->execute([$id]);
         return Json::ok($res, ['ok' => true]);
     }
 
@@ -129,7 +130,7 @@ final class RoadmapRoutes
             $sets[] = 'completed = ?'; $params[] = $done ? 1 : 0;
             $sets[] = 'completed_at = ' . ($done ? 'CURRENT_TIMESTAMP' : 'NULL');
         }
-        if ($sets) { $params[] = $tid; $params[] = $id; $params[] = $uid; Database::pdo()->prepare('UPDATE roadmap_tasks SET ' . implode(', ', $sets) . ' WHERE id = ? AND step_id = ? AND user_id = ?')->execute($params); }
+        if ($sets) { $params[] = $tid; $params[] = $id; Database::pdo()->prepare('UPDATE roadmap_tasks SET ' . implode(', ', $sets) . ' WHERE id = ? AND step_id = ?')->execute($params); }
         return Json::ok($res, ['step' => self::shape(self::fetchStep($uid, $id), self::tasksFor($id))]);
     }
 
@@ -138,7 +139,7 @@ final class RoadmapRoutes
         $uid = (int)$req->getAttribute('uid');
         $id = (int)$args['id']; $tid = (int)$args['tid'];
         if (!self::fetchStep($uid, $id)) return Json::err($res, 'Not found', 404);
-        Database::pdo()->prepare('DELETE FROM roadmap_tasks WHERE id = ? AND step_id = ? AND user_id = ?')->execute([$tid, $id, $uid]);
+        Database::pdo()->prepare('DELETE FROM roadmap_tasks WHERE id = ? AND step_id = ?')->execute([$tid, $id]);
         return Json::ok($res, ['step' => self::shape(self::fetchStep($uid, $id), self::tasksFor($id))]);
     }
 
@@ -157,8 +158,8 @@ final class RoadmapRoutes
 
     private static function fetchStep(int $uid, int $id): ?array
     {
-        $s = Database::pdo()->prepare('SELECT * FROM roadmap_steps WHERE id = ? AND user_id = ?');
-        $s->execute([$id, $uid]);
+        $s = Database::pdo()->prepare('SELECT s.*, u.name AS created_by_name FROM roadmap_steps s LEFT JOIN users u ON u.id = s.user_id WHERE s.id = ?');
+        $s->execute([$id]);
         return $s->fetch() ?: null;
     }
 
@@ -186,6 +187,8 @@ final class RoadmapRoutes
             'completed'    => (int)$r['completed'],
             'completed_at' => $r['completed_at'],
             'created_at'   => $r['created_at'],
+            'created_by'   => isset($r['user_id']) ? (int)$r['user_id'] : null,
+            'created_by_name' => $r['created_by_name'] ?? null,
             'tasks'        => $items,
             'progress'     => ['total' => $total, 'done' => $done, 'percent' => $total ? (int)round($done / $total * 100) : 0],
         ];

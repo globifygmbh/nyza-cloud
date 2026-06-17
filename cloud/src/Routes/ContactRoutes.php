@@ -37,15 +37,16 @@ final class ContactRoutes
         $qp = $req->getQueryParams();
         $pdo = Database::pdo();
 
-        $where = 'user_id = ?';
-        $params = [$uid];
-        if (isset($qp['customers'])) { $where .= ' AND is_customer = 1'; }
+        // Shared workspace: all members see all contacts.
+        $where = '1=1';
+        $params = [];
+        if (isset($qp['customers'])) { $where .= ' AND c.is_customer = 1'; }
         if (!empty($qp['q'])) {
             $like = '%' . str_replace(['%', '_'], ['\%', '\_'], (string)$qp['q']) . '%';
-            $where .= " AND (name LIKE ? ESCAPE '\\\\' OR email LIKE ? ESCAPE '\\\\' OR contact_person LIKE ? ESCAPE '\\\\')";
+            $where .= " AND (c.name LIKE ? ESCAPE '\\\\' OR c.email LIKE ? ESCAPE '\\\\' OR c.contact_person LIKE ? ESCAPE '\\\\')";
             $params[] = $like; $params[] = $like; $params[] = $like;
         }
-        $stmt = $pdo->prepare("SELECT * FROM contacts WHERE $where ORDER BY is_customer DESC, name ASC");
+        $stmt = $pdo->prepare("SELECT c.*, u.name AS created_by_name FROM contacts c LEFT JOIN users u ON u.id = c.user_id WHERE $where ORDER BY c.is_customer DESC, c.name ASC");
         $stmt->execute($params);
         return Json::ok($res, ['contacts' => array_map([self::class, 'shape'], $stmt->fetchAll())]);
     }
@@ -90,8 +91,8 @@ final class ContactRoutes
         if (!$f) return Json::ok($res, ['contact' => self::shape(self::fetchOne($uid, $id))]);
 
         $sets = implode(', ', array_map(static fn($c) => "$c = ?", array_keys($f)));
-        $params = array_merge(array_values($f), [$id, $uid]);
-        Database::pdo()->prepare("UPDATE contacts SET $sets WHERE id = ? AND user_id = ?")->execute($params);
+        $params = array_merge(array_values($f), [$id]);
+        Database::pdo()->prepare("UPDATE contacts SET $sets WHERE id = ?")->execute($params);
         return Json::ok($res, ['contact' => self::shape(self::fetchOne($uid, $id))]);
     }
 
@@ -100,7 +101,7 @@ final class ContactRoutes
         $uid = (int)$req->getAttribute('uid');
         $id = (int)$args['id'];
         if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
-        Database::pdo()->prepare('DELETE FROM contacts WHERE id = ? AND user_id = ?')->execute([$id, $uid]);
+        Database::pdo()->prepare('DELETE FROM contacts WHERE id = ?')->execute([$id]);
         return Json::ok($res, ['ok' => true]);
     }
 
@@ -138,8 +139,8 @@ final class ContactRoutes
 
     private static function fetchOne(int $uid, int $id): ?array
     {
-        $stmt = Database::pdo()->prepare('SELECT * FROM contacts WHERE id = ? AND user_id = ?');
-        $stmt->execute([$id, $uid]);
+        $stmt = Database::pdo()->prepare('SELECT c.*, u.name AS created_by_name FROM contacts c LEFT JOIN users u ON u.id = c.user_id WHERE c.id = ?');
+        $stmt->execute([$id]);
         $c = $stmt->fetch();
         return $c ?: null;
     }
@@ -160,6 +161,8 @@ final class ContactRoutes
             'vat_id'         => $r['vat_id'],
             'is_customer'    => (int)$r['is_customer'],
             'notes'          => $r['notes'],
+            'created_by'     => isset($r['user_id']) ? (int)$r['user_id'] : null,
+            'created_by_name'=> $r['created_by_name'] ?? null,
             'created_at'     => $r['created_at'],
         ];
     }

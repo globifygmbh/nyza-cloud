@@ -3592,10 +3592,14 @@ function TasksApp({ onBack }) {
   const [archived, setArchived] = useState(null);
   const [showArchive, setShowArchive] = useState(false);
   const [editing, setEditing] = useState(null); // task object or {} for new
+  const [users, setUsers] = useState([]);
+  const [filter, setFilter] = useState('all'); // all | mine | <userId>
 
+  useEffect(() => { API.users().then((d) => setUsers(d.users || [])).catch(() => {}); }, []);
   const load = useCallback(() => {
-    API.tasks().then((d) => setTasks(d.tasks || [])).catch(() => setTasks([]));
-  }, []);
+    const opts = filter === 'mine' ? { mine: 1 } : (filter !== 'all' ? { assignee: filter } : {});
+    API.tasks(opts).then((d) => setTasks(d.tasks || [])).catch(() => setTasks([]));
+  }, [filter]);
   const loadArchive = useCallback(() => {
     API.tasksArchived().then((d) => setArchived(d.tasks || [])).catch(() => setArchived([]));
   }, []);
@@ -3610,8 +3614,8 @@ function TasksApp({ onBack }) {
   };
   const save = async (data) => {
     try {
-      if (data.id) await API.updateTask(data.id, { title: data.title, notes: data.notes, due_date: data.due_date, due_time: data.due_time, priority: data.priority });
-      else await API.newTask({ title: data.title, notes: data.notes, due_date: data.due_date, due_time: data.due_time, priority: data.priority });
+      if (data.id) await API.updateTask(data.id, { title: data.title, notes: data.notes, due_date: data.due_date, due_time: data.due_time, priority: data.priority, assignee_id: data.assignee_id });
+      else await API.newTask({ title: data.title, notes: data.notes, due_date: data.due_date, due_time: data.due_time, priority: data.priority, assignee_id: data.assignee_id });
       setEditing(null); load();
     } catch (e) { toast(e.message, 'error'); }
   };
@@ -3655,6 +3659,7 @@ function TasksApp({ onBack }) {
           <div style={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: archivedRow ? 'line-through' : 'none', color: archivedRow ? 'var(--fg-3)' : 'var(--fg)' }}>{t.title}</div>
           {t.notes && <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.notes}</div>}
         </div>
+        {t.assignee_name && <span title={'Zugewiesen: ' + t.assignee_name} style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--accent-grad)', color: '#fff', fontSize: 10, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{(t.assignee_name || '?').slice(0, 1).toUpperCase()}</span>}
         {t.due_date && (
           <span style={{ fontSize: 12, fontWeight: 500, color: overdue ? '#ef4444' : 'var(--fg-3)', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             {Ic.clock(12)}{fmtDue(t)}
@@ -3682,7 +3687,14 @@ function TasksApp({ onBack }) {
     <>
       <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Tasks']}
         right={
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {!showArchive && users.length > 0 && (
+              <select value={filter} onChange={(e) => setFilter(e.target.value)} title="Filter" style={{ height: 32, padding: '0 10px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 12.5, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer' }}>
+                <option value="all">Alle</option>
+                <option value="mine">Meine</option>
+                {users.map((u) => <option key={u.id} value={String(u.id)}>{u.name || u.email}</option>)}
+              </select>
+            )}
             <Btn variant="glass" size="sm" icon={Ic.archive(14)} onClick={() => setShowArchive((s) => !s)}>{showArchive ? 'Aktuelle' : 'Archiv'}</Btn>
             <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ priority: 1 })}>Neue Aufgabe</Btn>
           </div>
@@ -3720,22 +3732,23 @@ function TasksApp({ onBack }) {
           </div>
         )}
       </div>
-      {editing && <TaskEditModal task={editing} onSave={save} onClose={() => setEditing(null)}/>}
+      {editing && <TaskEditModal task={editing} users={users} onSave={save} onClose={() => setEditing(null)}/>}
     </>
   );
 }
 
-function TaskEditModal({ task, onSave, onClose }) {
+function TaskEditModal({ task, users = [], onSave, onClose }) {
   const [title, setTitle] = useState(task.title || '');
   const [notes, setNotes] = useState(task.notes || '');
   const [due, setDue] = useState(task.due_date || '');
   const [time, setTime] = useState(task.due_time ? task.due_time.slice(0, 5) : '');
   const [priority, setPriority] = useState(task.priority ?? 1);
+  const [assignee, setAssignee] = useState(task.assignee_id ? String(task.assignee_id) : '');
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     if (!title.trim()) { toast('Titel erforderlich', 'error'); return; }
     setBusy(true);
-    await onSave({ id: task.id, title: title.trim(), notes: notes.trim() || null, due_date: due || null, due_time: due ? (time || null) : null, priority });
+    await onSave({ id: task.id, title: title.trim(), notes: notes.trim() || null, due_date: due || null, due_time: due ? (time || null) : null, priority, assignee_id: assignee || null });
     setBusy(false);
   };
   return (
@@ -3779,6 +3792,16 @@ function TaskEditModal({ task, onSave, onClose }) {
               </select>
             </label>
           </div>
+          {users.length > 0 && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Zugewiesen an</span>
+              <select value={assignee} onChange={(e) => setAssignee(e.target.value)}
+                style={{ height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer' }}>
+                <option value="">— niemand —</option>
+                {users.map((u) => <option key={u.id} value={String(u.id)}>{u.name || u.email}</option>)}
+              </select>
+            </label>
+          )}
         </div>
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
@@ -3996,13 +4019,18 @@ function ZeitenApp({ onBack }) {
   const [modal, setModal] = useState(null); // {} new | entry edit
   const [invoiceModal, setInvoiceModal] = useState(false);
   const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
+  const [users, setUsers] = useState([]);
+  const [viewUser, setViewUser] = useState(''); // '' = own; else another member's id (read-only)
+  const readOnly = viewUser !== '';
 
   const load = useCallback(() => {
     const from = ymdOf(weekStart), to = ymdOf(addDays(weekStart, 6));
-    API.timeEntries({ from, to }).then((d) => setEntries(d.entries || [])).catch(() => setEntries([]));
+    API.timeEntries({ from, to, user_id: viewUser || undefined }).then((d) => setEntries(d.entries || [])).catch(() => setEntries([]));
+    if (viewUser) { setRunning(null); return; }
     API.timeRunning().then((d) => setRunning(d.entry || null)).catch(() => {});
-  }, [weekStart]);
-  useEffect(() => { load(); API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {}); }, [load]);
+  }, [weekStart, viewUser]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {}); API.users().then((d) => setUsers(d.users || [])).catch(() => {}); }, []);
   // Tick once a second while a timer runs so the elapsed display stays live.
   useEffect(() => { if (!running) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [running]);
 
@@ -4044,13 +4072,20 @@ function ZeitenApp({ onBack }) {
   return (
     <>
       <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Zeiten']}
-        right={<div style={{ display: 'flex', gap: 8 }}>
-          <Btn variant="glass" size="sm" icon={Ic.fileGen(14)} onClick={() => setInvoiceModal(true)}>Rechnung</Btn>
-          <Btn variant="glass" size="sm" icon={Ic.plus(14)} onClick={() => setModal({})}>Manuell</Btn>
+        right={<div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {users.length > 0 && (
+            <select value={viewUser} onChange={(e) => setViewUser(e.target.value)} title="Wessen Zeiten" style={{ height: 32, padding: '0 10px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 12.5, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer' }}>
+              <option value="">Meine Zeiten</option>
+              {users.map((u) => <option key={u.id} value={String(u.id)}>{u.name || u.email}</option>)}
+            </select>
+          )}
+          {!readOnly && <Btn variant="glass" size="sm" icon={Ic.fileGen(14)} onClick={() => setInvoiceModal(true)}>Rechnung</Btn>}
+          {!readOnly && <Btn variant="glass" size="sm" icon={Ic.plus(14)} onClick={() => setModal({})}>Manuell</Btn>}
         </div>}/>
       <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        {readOnly && <div style={{ maxWidth: 860, marginBottom: 14, padding: '10px 14px', borderRadius: 'var(--r-md)', background: 'var(--surface-hi)', border: '1px solid var(--border)', fontSize: 13, color: 'var(--fg-2)' }}>Ansicht der Zeiten von <strong>{(users.find((u) => String(u.id) === viewUser) || {}).name || 'Mitglied'}</strong> — nur lesen.</div>}
         {/* Live tracker */}
-        <Glass style={{ borderRadius: 'var(--r-lg)', padding: 18, marginBottom: 8, maxWidth: 860 }}>
+        {!readOnly && <Glass style={{ borderRadius: 'var(--r-lg)', padding: 18, marginBottom: 8, maxWidth: 860 }}>
           {running ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 34, fontWeight: 600, letterSpacing: -1, fontVariantNumeric: 'tabular-nums', color: 'var(--accent)', minWidth: 150 }}>{fmtClock(liveElapsed)}</div>
@@ -4073,8 +4108,8 @@ function ZeitenApp({ onBack }) {
               <Btn variant="primary" size="lg" icon={<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1l9 6-9 6z"/></svg>} onClick={start}>Start</Btn>
             </div>
           )}
-        </Glass>
-        <div style={{ fontSize: 12, color: 'var(--fg-3)', margin: '0 0 14px', maxWidth: 860 }}>Heute erfasst: <strong style={{ color: 'var(--fg-2)' }}>{fmtDur(todayTotal)}</strong></div>
+        </Glass>}
+        <div style={{ fontSize: 12, color: 'var(--fg-3)', margin: '0 0 14px', maxWidth: 860 }}>{readOnly ? 'Heute' : 'Heute erfasst'}: <strong style={{ color: 'var(--fg-2)' }}>{fmtDur(todayTotal)}</strong></div>
 
         {/* Week switcher */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, maxWidth: 860, flexWrap: 'wrap' }}>
@@ -4105,19 +4140,19 @@ function ZeitenApp({ onBack }) {
                 </div>
                 <div style={{ display: 'grid', gap: 8 }}>
                   {g.items.map((en) => (
-                    <div key={en.id} className="nyza-listrow" onClick={() => setModal(en)}
-                      style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                    <div key={en.id} className="nyza-listrow" onClick={() => { if (!readOnly) setModal(en); }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: readOnly ? 'default' : 'pointer' }}>
                       <div style={{ fontSize: 12, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0, width: 96 }}>{fmtHM(en.started_at)}–{fmtHM(en.ended_at)}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{en.task || 'Ohne Aufgabe'}</div>
                         {(en.contact_name || en.note) && <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{[en.contact_name, en.note].filter(Boolean).join(' · ')}</div>}
                       </div>
                       <div style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtDur(en.duration)}</div>
-                      <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
+                      {!readOnly && <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
                         { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => setModal(en) },
                         { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => del(en) },
                       ]); }}
-                        style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
+                        style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>}
                     </div>
                   ))}
                 </div>
