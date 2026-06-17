@@ -21,6 +21,7 @@ use Nyza\Routes\ContactRoutes;
 use Nyza\Routes\FileRoutes;
 use Nyza\Routes\FolderRoutes;
 use Nyza\Routes\RoadmapRoutes;
+use Nyza\Routes\SettingsRoutes;
 use Nyza\Routes\ShareRoutes;
 use Nyza\Routes\TaskRoutes;
 use Nyza\Routes\TimeRoutes;
@@ -188,6 +189,7 @@ TaskRoutes::mount($app);
 ContactRoutes::mount($app);
 TimeRoutes::mount($app);
 RoadmapRoutes::mount($app);
+SettingsRoutes::mount($app);
 WebDavRoutes::mount($app);
 
 /** Asset / SPA fallback for all non-API GETs. */

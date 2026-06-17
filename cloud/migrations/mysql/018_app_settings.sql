@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS app_settings (
+    user_id    BIGINT UNSIGNED NOT NULL,
+    ns         VARCHAR(64)     NOT NULL,
+    data       MEDIUMTEXT      NULL,
+    updated_at TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, ns),
+    CONSTRAINT fk_appsettings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;

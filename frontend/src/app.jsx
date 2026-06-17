@@ -2647,6 +2647,10 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-roadmap' && (
           <RoadmapApp onBack={() => setNav({ name: 'apps' })}/>
         )}
+        {nav.name === 'app-settings' && (
+          <SettingsApp onBack={() => setNav({ name: 'apps' })}
+            onProfile={() => setShowProfile(true)} onSecurity={() => setShowSecurity(true)}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -3325,11 +3329,11 @@ function AppsView({ onOpenApp }) {
     { id: 'contacts', label: 'Kontakte', desc: 'Kunden & Adressen',  icon: Ic.users(26),      grad: 'linear-gradient(135deg, oklch(0.7 0.16 240), oklch(0.66 0.16 210))' },
     { id: 'times',    label: 'Zeiten',   desc: 'Zeiterfassung',      icon: Ic.clock(26),      grad: 'linear-gradient(135deg, oklch(0.74 0.16 200), oklch(0.66 0.16 230))' },
     { id: 'roadmap',  label: 'Roadmap',  desc: 'Planung & Meilensteine', icon: Ic.bolt(26),   grad: 'linear-gradient(135deg, oklch(0.74 0.18 30), oklch(0.66 0.2 360))' },
+    { id: 'settings', label: 'Einstellungen', desc: 'Konfiguration',     icon: Ic.cog(26),    grad: 'linear-gradient(135deg, oklch(0.6 0.02 260), oklch(0.5 0.02 260))' },
   ];
   const soon = [
     { id: 'accounting', label: 'Buchhaltung',  desc: 'Rechnungen & Belege',    icon: Ic.archive(26), grad: 'linear-gradient(135deg, oklch(0.74 0.17 155), oklch(0.68 0.15 175))' },
     { id: 'calendar',   label: 'Kalender',     desc: 'Termine & Events',       icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.72 0.2 350), oklch(0.66 0.2 320))' },
-    { id: 'settings',   label: 'Einstellungen',desc: 'Konfiguration',          icon: Ic.cog(26),     grad: 'linear-gradient(135deg, oklch(0.6 0.02 260), oklch(0.5 0.02 260))' },
   ];
   const Tile = ({ a, disabled }) => (
     <button disabled={disabled} onClick={disabled ? undefined : () => onOpenApp(a.id)} style={{
@@ -4161,6 +4165,116 @@ function RoadmapStepModal({ step, onSave, onClose }) {
         </div>
       </Glass>
     </div>
+  );
+}
+
+// ───── Einstellungen app ────────────────────────────────────────────────────
+const LEGAL_FORMS = ['Einzelunternehmen', 'GmbH', 'OG', 'KG', 'AG', 'Sonstige'];
+
+function SettingsApp({ onBack, onProfile, onSecurity }) {
+  const [c, setC] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { API.getSettings('company').then((d) => setC(d.settings || {})).catch(() => setC({})); }, []);
+  const set = (k, v) => setC((s) => ({ ...s, [k]: v }));
+  const accountingMode = (c?.legal_form === 'GmbH' || c?.legal_form === 'AG') ? 'double_entry' : 'single_entry';
+
+  const save = async () => {
+    setBusy(true);
+    try { await API.saveSettings('company', { ...c, accounting_mode: accountingMode }); toast('Gespeichert', 'success'); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  // Plain render helpers (NOT components) so inputs keep focus across keystrokes.
+  const field = (label, k, opts = {}) => (
+    <label key={k} style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
+      <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>{label}</span>
+      {opts.area
+        ? <textarea value={c[k] || ''} onChange={(e) => set(k, e.target.value)} placeholder={opts.ph} rows={2} style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/>
+        : <input type={opts.type || 'text'} value={c[k] || ''} onChange={(e) => set(k, e.target.value)} placeholder={opts.ph} style={fld}/>}
+    </label>
+  );
+  const row = (...kids) => <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>{kids}</div>;
+  const card = (title, kids) => (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '18px 20px', marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 14 }}>{title}</div>
+      {kids}
+    </div>
+  );
+
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Einstellungen']}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        <div style={{ maxWidth: 760 }}>
+          {/* Konto */}
+          <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Konto</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, marginBottom: 28 }}>
+            {[{ label: 'Profil & Branding', desc: 'Name, Logo, Akzentfarbe, Speicher, Vorlagen', icon: Ic.cog(18), onClick: onProfile },
+              { label: 'Sicherheit & 2FA', desc: 'Passwort & Zwei-Faktor', icon: Ic.lock(18), onClick: onSecurity }].map((it) => (
+              <button key={it.label} onClick={it.onClick} style={{ textAlign: 'left', display: 'flex', gap: 12, alignItems: 'flex-start', padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer', fontFamily: 'inherit' }}>
+                <div style={{ width: 34, height: 34, borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{it.icon}</div>
+                <div><div style={{ fontSize: 13.5, fontWeight: 540 }}>{it.label}</div><div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{it.desc}</div></div>
+              </button>
+            ))}
+          </div>
+
+          {/* Firma & Rechnungen */}
+          <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+            Buchhaltung · Firmenprofil
+            <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'var(--surface-hi)', color: 'var(--fg-3)', letterSpacing: 0.3 }}>für Rechnungen</span>
+          </div>
+
+          {c === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div> : (
+            <>
+              {card('Unternehmen', <>
+                {row(
+                  <label key="lf" style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 160 }}>
+                    <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Rechtsform</span>
+                    <select value={c.legal_form || 'Einzelunternehmen'} onChange={(e) => set('legal_form', e.target.value)} style={{ ...fld, cursor: 'pointer' }}>
+                      {LEGAL_FORMS.map((lf) => <option key={lf} value={lf}>{lf}</option>)}
+                    </select>
+                  </label>,
+                  field('Geschäftsjahr-Beginn', 'fiscal_year_start', { ph: '01-01' })
+                )}
+                <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 12, marginTop: -4 }}>
+                  Buchhaltungsmodus: <strong style={{ color: 'var(--fg-2)' }}>{accountingMode === 'double_entry' ? 'Doppelte Buchhaltung (EKR07)' : 'Einnahmen-Ausgaben-Rechnung'}</strong> — automatisch aus der Rechtsform.
+                </div>
+                {row(field('Firmenname (rechtlich)', 'legal_name', { ph: 'Globify GmbH' }), field('Markenname', 'brand_name', { ph: 'Nyza' }))}
+                {row(field('Inhaber / Geschäftsführer', 'owner', { ph: 'Vor- und Nachname' }))}
+                {row(field('UID / USt-IdNr.', 'uid', { ph: 'ATU…' }), field('Steuernummer', 'tax_number', {}), field('Firmenbuchnr.', 'firmenbuch_nr', { ph: 'FN …' }))}
+              </>)}
+
+              {card('Adresse & Kontakt', <>
+                {row(field('Straße', 'street', { ph: 'Straße 1' }))}
+                {row(field('PLZ', 'zip', { ph: '1010' }), field('Ort', 'city', { ph: 'Wien' }), field('Land', 'country', { ph: 'Österreich' }))}
+                {row(field('E-Mail', 'email', { type: 'email', ph: 'office@…' }), field('Telefon', 'phone', { ph: '+43 …' }), field('Website', 'website', { ph: 'www…' }))}
+              </>)}
+
+              {card('Bankverbindung', <>
+                {row(field('Bank', 'bank_name', { ph: 'Bankname' }), field('Kontoinhaber', 'account_holder', {}))}
+                {row(field('IBAN', 'iban', { ph: 'AT…' }), field('BIC', 'bic', {}))}
+              </>)}
+
+              {card('Rechnungen & Angebote', <>
+                {row(field('Zahlungsziel (Tage)', 'payment_term_days', { type: 'number', ph: '14' }), field('Unterschrift / Name', 'signature_name', { ph: 'z. B. Geschäftsführer' }))}
+                {row(field('Einleitung Angebot', 'offer_intro', { ph: 'Sehr geehrte…', area: true }), field('Einleitung Rechnung', 'invoice_intro', { ph: 'Sehr geehrte…', area: true }))}
+                {row(field('Fußtext Angebot', 'offer_footer', { ph: 'Gültigkeitshinweis', area: true }), field('Fußtext Rechnung', 'invoice_footer', { ph: 'Zahlungshinweis', area: true }))}
+                {row(field('Grußformel', 'closing', { ph: 'Mit freundlichen Grüßen', area: true }))}
+              </>)}
+
+              {card('Mahnwesen', <>
+                {row(field('Gebühr 1. Mahnung (€)', 'reminder_fee_1', { type: 'number', ph: '0' }), field('Gebühr 2. Mahnung (€)', 'reminder_fee_2', { type: 'number', ph: '10' }), field('Gebühr 3. Mahnung (€)', 'reminder_fee_3', { type: 'number', ph: '20' }))}
+              </>)}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, position: 'sticky', bottom: 0, padding: '12px 0', background: 'linear-gradient(transparent, var(--bg) 40%)' }}>
+                <Btn variant="primary" disabled={busy} onClick={save} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 

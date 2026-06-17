@@ -260,4 +260,8 @@ export const API = {
   addRoadmapTask:   (id, title) => request('/api/roadmap/' + id + '/tasks', { method: 'POST', body: { title } }),
   updateRoadmapTask:(id, tid, body) => request('/api/roadmap/' + id + '/tasks/' + tid, { method: 'PATCH', body }),
   deleteRoadmapTask:(id, tid) => request('/api/roadmap/' + id + '/tasks/' + tid, { method: 'DELETE' }),
+
+  // App settings (namespaced JSON store)
+  getSettings:  (ns) => request('/api/settings/' + ns),
+  saveSettings: (ns, body) => request('/api/settings/' + ns, { method: 'PUT', body }),
 };
