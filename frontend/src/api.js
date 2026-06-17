@@ -251,4 +251,13 @@ export const API = {
   newTimeEntry:  (body) => request('/api/time', { method: 'POST', body }),
   updateTimeEntry: (id, body) => request('/api/time/' + id, { method: 'PATCH', body }),
   deleteTimeEntry: (id) => request('/api/time/' + id, { method: 'DELETE' }),
+
+  // Apps · Roadmap
+  roadmap:          () => request('/api/roadmap'),
+  newRoadmapStep:   (body) => request('/api/roadmap', { method: 'POST', body }),
+  updateRoadmapStep:(id, body) => request('/api/roadmap/' + id, { method: 'PATCH', body }),
+  deleteRoadmapStep:(id) => request('/api/roadmap/' + id, { method: 'DELETE' }),
+  addRoadmapTask:   (id, title) => request('/api/roadmap/' + id + '/tasks', { method: 'POST', body: { title } }),
+  updateRoadmapTask:(id, tid, body) => request('/api/roadmap/' + id + '/tasks/' + tid, { method: 'PATCH', body }),
+  deleteRoadmapTask:(id, tid) => request('/api/roadmap/' + id + '/tasks/' + tid, { method: 'DELETE' }),
 };

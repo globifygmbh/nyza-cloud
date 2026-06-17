@@ -2644,6 +2644,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-times' && (
           <ZeitenApp onBack={() => setNav({ name: 'apps' })}/>
         )}
+        {nav.name === 'app-roadmap' && (
+          <RoadmapApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -3321,9 +3324,9 @@ function AppsView({ onOpenApp }) {
     { id: 'tasks',    label: 'Tasks',    desc: 'Aufgaben & To-dos', icon: Ic.checkSquare(26), grad: 'linear-gradient(135deg, oklch(0.72 0.18 282), oklch(0.64 0.17 248))' },
     { id: 'contacts', label: 'Kontakte', desc: 'Kunden & Adressen',  icon: Ic.users(26),      grad: 'linear-gradient(135deg, oklch(0.7 0.16 240), oklch(0.66 0.16 210))' },
     { id: 'times',    label: 'Zeiten',   desc: 'Zeiterfassung',      icon: Ic.clock(26),      grad: 'linear-gradient(135deg, oklch(0.74 0.16 200), oklch(0.66 0.16 230))' },
+    { id: 'roadmap',  label: 'Roadmap',  desc: 'Planung & Meilensteine', icon: Ic.bolt(26),   grad: 'linear-gradient(135deg, oklch(0.74 0.18 30), oklch(0.66 0.2 360))' },
   ];
   const soon = [
-    { id: 'roadmap',    label: 'Roadmap',      desc: 'Planung & Meilensteine', icon: Ic.bolt(26),    grad: 'linear-gradient(135deg, oklch(0.74 0.18 30), oklch(0.66 0.2 360))' },
     { id: 'accounting', label: 'Buchhaltung',  desc: 'Rechnungen & Belege',    icon: Ic.archive(26), grad: 'linear-gradient(135deg, oklch(0.74 0.17 155), oklch(0.68 0.15 175))' },
     { id: 'calendar',   label: 'Kalender',     desc: 'Termine & Events',       icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.72 0.2 350), oklch(0.66 0.2 320))' },
     { id: 'settings',   label: 'Einstellungen',desc: 'Konfiguration',          icon: Ic.cog(26),     grad: 'linear-gradient(135deg, oklch(0.6 0.02 260), oklch(0.5 0.02 260))' },
@@ -3968,6 +3971,188 @@ function TimeEntryModal({ entry, contacts, onSave, onClose }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Notiz</span>
             <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Notiz (optional)" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/>
+          </div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+// ───── Roadmap app ──────────────────────────────────────────────────────────
+function RoadmapApp({ onBack }) {
+  const [steps, setSteps] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [adding, setAdding] = useState(null); // step id with open add-task input
+  const [addText, setAddText] = useState('');
+
+  const load = useCallback(() => { API.roadmap().then((d) => setSteps(d.steps || [])).catch(() => setSteps([])); }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async (data) => {
+    try { if (data.id) await API.updateRoadmapStep(data.id, data); else await API.newRoadmapStep(data); setEditing(null); load(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const del = async (s) => { if (!await confirmDialog({ title: 'Schritt löschen?', message: `„${s.title}" inkl. Aufgaben wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteRoadmapStep(s.id); load(); } catch (e) { toast(e.message, 'error'); } };
+  const toggleStep = async (s) => { try { await API.updateRoadmapStep(s.id, { completed: s.completed ? 0 : 1 }); load(); } catch (e) { toast(e.message, 'error'); } };
+  const toggleTask = async (s, t) => { try { await API.updateRoadmapTask(s.id, t.id, { completed: t.completed ? 0 : 1 }); load(); } catch (e) { toast(e.message, 'error'); } };
+  const delTask = async (s, t) => { try { await API.deleteRoadmapTask(s.id, t.id); load(); } catch (e) { toast(e.message, 'error'); } };
+  const addTask = async (s) => { const t = addText.trim(); if (!t) { setAdding(null); return; } try { await API.addRoadmapTask(s.id, t); setAddText(''); load(); } catch (e) { toast(e.message, 'error'); } };
+
+  const list = steps || [];
+  const totalSteps = list.length;
+  const doneSteps = list.filter((s) => s.completed).length;
+  const allTasks = list.reduce((a, s) => a + s.progress.total, 0);
+  const doneTasks = list.reduce((a, s) => a + s.progress.done, 0);
+  const overall = totalSteps ? Math.round(doneSteps / totalSteps * 100) : 0;
+  const activeIdx = list.findIndex((s) => !s.completed);
+
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Roadmap']}
+        right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ color: 'violet' })}>Neuer Schritt</Btn>}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        {steps === null ? (
+          <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+        ) : list.length === 0 ? (
+          <EmptyHint icon={Ic.bolt(40)} title="Noch keine Roadmap" desc="Lege Schritte mit Datum, Labels und Aufgaben an."
+            actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({ color: 'violet' })}>Neuer Schritt</Btn>}/>
+        ) : (
+          <div style={{ maxWidth: 820 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 28 }}>
+              {[{ l: 'Schritte', v: totalSteps, s: doneSteps + ' erledigt' }, { l: 'Aufgaben', v: doneTasks + '/' + allTasks, s: 'erledigt' }, { l: 'Fortschritt', v: overall + '%', s: doneSteps + ' von ' + totalSteps, accent: true }].map((c, i) => (
+                <div key={i} style={{ padding: '14px 18px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
+                  {c.accent && <div style={{ position: 'absolute', inset: 0, background: 'var(--accent-grad)', opacity: 0.08 }}/>}
+                  <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 4, position: 'relative' }}>{c.l}</div>
+                  <div style={{ fontSize: 22, fontFamily: 'var(--font-display)', fontWeight: 600, letterSpacing: -0.6, position: 'relative' }}>{c.v}</div>
+                  <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 2, position: 'relative' }}>{c.s}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {list.map((s, i) => {
+                const dot = folderDot(s.color);
+                const active = i === activeIdx;
+                return (
+                  <div key={s.id} style={{
+                    position: 'relative', borderRadius: 'var(--r-lg)', background: 'var(--surface)',
+                    border: '1px solid ' + (active ? 'color-mix(in oklab, ' + dot + ' 50%, var(--border))' : 'var(--border)'),
+                    padding: '16px 18px 16px 20px', overflow: 'hidden',
+                    boxShadow: active ? '0 0 0 1px ' + dot + ', 0 8px 30px -12px ' + dot : '0 1px 0 var(--inner-hi) inset',
+                    opacity: s.completed ? 0.72 : 1,
+                  }}>
+                    <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, background: dot }}/>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                      <button onClick={() => toggleStep(s)} title={s.completed ? 'Wieder offen' : 'Abschließen'}
+                        style={{ marginTop: 1, width: 24, height: 24, borderRadius: '50%', flexShrink: 0, cursor: 'pointer',
+                          border: '2px solid ' + (s.completed ? 'transparent' : dot),
+                          background: s.completed ? dot : 'transparent', color: '#fff',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {!!s.completed && Ic.check(13)}
+                      </button>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 15.5, fontWeight: 600, letterSpacing: -0.2, textDecoration: s.completed ? 'line-through' : 'none' }}>{s.title}</span>
+                          {s.date && <span style={{ fontSize: 11, color: 'var(--fg-3)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>{Ic.clock(11)}{new Date(s.date + 'T00:00:00').toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' })}</span>}
+                          {active && <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.4, padding: '2px 7px', borderRadius: 999, background: dot, color: '#fff', textTransform: 'uppercase' }}>Aktiv</span>}
+                        </div>
+                        {s.labels.length > 0 && (
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                            {s.labels.map((l, j) => <span key={j} style={{ fontSize: 10.5, fontWeight: 540, padding: '2px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + dot + ' 16%, transparent)', color: dot }}>{l}</span>)}
+                          </div>
+                        )}
+                        {s.description && <div style={{ fontSize: 13, color: 'var(--fg-2)', marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{s.description}</div>}
+
+                        {s.progress.total > 0 && (
+                          <div style={{ marginTop: 12 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                              <div style={{ flex: 1, height: 5, borderRadius: 3, background: 'var(--surface-hi)', overflow: 'hidden' }}>
+                                <div style={{ width: s.progress.percent + '%', height: '100%', background: dot }}/>
+                              </div>
+                              <span style={{ fontSize: 11, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums' }}>{s.progress.done}/{s.progress.total}</span>
+                            </div>
+                          </div>
+                        )}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+                          {s.tasks.map((t) => (
+                            <div key={t.id} className="rm-task" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                              <button onClick={() => toggleTask(s, t)} style={{ width: 18, height: 18, borderRadius: 5, flexShrink: 0, cursor: 'pointer', border: '1.5px solid ' + (t.completed ? 'transparent' : 'var(--border-hi)'), background: t.completed ? dot : 'transparent', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{!!t.completed && Ic.check(11)}</button>
+                              <span style={{ flex: 1, fontSize: 13, color: t.completed ? 'var(--fg-3)' : 'var(--fg)', textDecoration: t.completed ? 'line-through' : 'none' }}>{t.title}</span>
+                              <span className="rm-task-del" onClick={() => delTask(s, t)} title="Löschen" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex' }}>{Ic.close(13)}</span>
+                            </div>
+                          ))}
+                          {adding === s.id ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                              <input autoFocus value={addText} onChange={(e) => setAddText(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') addTask(s); if (e.key === 'Escape') { setAdding(null); setAddText(''); } }}
+                                onBlur={() => addTask(s)} placeholder="Aufgabe…"
+                                style={{ flex: 1, height: 32, padding: '0 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', fontFamily: 'inherit' }}/>
+                            </div>
+                          ) : (
+                            <button onClick={() => { setAdding(s.id); setAddText(''); }} style={{ alignSelf: 'flex-start', marginTop: 2, display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, color: 'var(--fg-3)', padding: '2px 0' }}>{Ic.plus(12)} Aufgabe</button>
+                          )}
+                        </div>
+                      </div>
+                      <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
+                        { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => setEditing(s) },
+                        { label: s.completed ? 'Wieder offen' : 'Abschließen', icon: Ic.check(15), onClick: () => toggleStep(s) },
+                        { separator: true },
+                        { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => del(s) },
+                      ]); }}
+                        style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+      {editing && <RoadmapStepModal step={editing} onSave={save} onClose={() => setEditing(null)}/>}
+    </>
+  );
+}
+
+function RoadmapStepModal({ step, onSave, onClose }) {
+  const [title, setTitle] = useState(step.title || '');
+  const [description, setDescription] = useState(step.description || '');
+  const [date, setDate] = useState(step.date || '');
+  const [labels, setLabels] = useState((step.labels || []).join(', '));
+  const [color, setColor] = useState(step.color || 'violet');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!title.trim()) { toast('Titel erforderlich', 'error'); return; }
+    setBusy(true);
+    await onSave({ id: step.id, title: title.trim(), description: description.trim() || null, date: date || null, labels, color });
+    setBusy(false);
+  };
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 480, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.bolt(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{step.id ? 'Schritt bearbeiten' : 'Neuer Schritt'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Titel</span><input value={title} autoFocus onChange={(e) => setTitle(e.target.value)} placeholder="Phase / Meilenstein" style={fld}/></div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Beschreibung</span><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="Optional" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/></div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Datum</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={fld}/></div>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Labels</span><input value={labels} onChange={(e) => setLabels(e.target.value)} placeholder="Web, Design" style={fld}/></div>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 8 }}>Farbe</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {FOLDER_SWATCHES.map((sw) => (
+                <button key={sw.key} title={sw.label} onClick={() => setColor(sw.key)} style={{ width: 26, height: 26, borderRadius: '50%', cursor: 'pointer', background: sw.dot, border: color === sw.key ? '2px solid var(--fg)' : '2px solid transparent', boxShadow: color === sw.key ? '0 0 0 2px var(--bg)' : 'none' }}/>
+              ))}
+            </div>
           </div>
         </div>
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
