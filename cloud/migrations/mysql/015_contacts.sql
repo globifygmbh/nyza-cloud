@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS contacts (
+    id             BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id        BIGINT UNSIGNED NOT NULL,
+    kind           VARCHAR(12)     NOT NULL DEFAULT 'person',
+    name           VARCHAR(255)    NOT NULL,
+    contact_person VARCHAR(255)    NULL,
+    email          VARCHAR(255)    NULL,
+    phone          VARCHAR(64)     NULL,
+    street         VARCHAR(255)    NULL,
+    zip            VARCHAR(32)     NULL,
+    city           VARCHAR(128)    NULL,
+    country        VARCHAR(128)    NULL,
+    vat_id         VARCHAR(64)     NULL,
+    is_customer    TINYINT(1)      NOT NULL DEFAULT 0,
+    notes          TEXT            NULL,
+    created_at     TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY ix_contacts_user (user_id),
+    CONSTRAINT fk_contacts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;

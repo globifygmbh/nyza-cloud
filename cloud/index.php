@@ -17,6 +17,7 @@ use Nyza\Json;
 use Nyza\Middleware\CorsMiddleware;
 use Nyza\Routes\ActivityRoutes;
 use Nyza\Routes\AuthRoutes;
+use Nyza\Routes\ContactRoutes;
 use Nyza\Routes\FileRoutes;
 use Nyza\Routes\FolderRoutes;
 use Nyza\Routes\ShareRoutes;
@@ -182,6 +183,7 @@ ShareRoutes::mount($app);
 UploadLinkRoutes::mount($app);
 ActivityRoutes::mount($app);
 TaskRoutes::mount($app);
+ContactRoutes::mount($app);
 WebDavRoutes::mount($app);
 
 /** Asset / SPA fallback for all non-API GETs. */

@@ -236,4 +236,10 @@ export const API = {
   taskDone:      (id) => request('/api/tasks/' + id + '/done', { method: 'POST', body: {} }),
   taskRestore:   (id) => request('/api/tasks/' + id + '/restore', { method: 'POST', body: {} }),
   deleteTask:    (id) => request('/api/tasks/' + id, { method: 'DELETE' }),
+
+  // Apps · Kontakte (CRM)
+  contacts:      (opts = {}) => request('/api/contacts' + (opts.customers ? '?customers=1' : '') + (opts.q ? (opts.customers ? '&' : '?') + 'q=' + encodeURIComponent(opts.q) : '')),
+  newContact:    (body) => request('/api/contacts', { method: 'POST', body }),
+  updateContact: (id, body) => request('/api/contacts/' + id, { method: 'PATCH', body }),
+  deleteContact: (id) => request('/api/contacts/' + id, { method: 'DELETE' }),
 };

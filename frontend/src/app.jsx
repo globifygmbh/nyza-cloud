@@ -2547,7 +2547,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
 
   const activeNav = nav.name === 'folder' ? 'files'
     : nav.name === 'shared' ? 'links'
-    : nav.name === 'app-tasks' ? 'apps'
+    : nav.name.startsWith('app-') ? 'apps'
     : nav.name;
 
   return (
@@ -2637,6 +2637,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         )}
         {nav.name === 'app-tasks' && (
           <TasksApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
+        {nav.name === 'app-contacts' && (
+          <ContactsApp onBack={() => setNav({ name: 'apps' })}/>
         )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
@@ -3312,14 +3315,14 @@ function LinksHub({ refreshTick, basePath, onCreate, afterChange, initialTab = '
 // ───── Apps launcher — Handy-Style Kacheln ──────────────────────────────────
 function AppsView({ onOpenApp }) {
   const live = [
-    { id: 'tasks', label: 'Tasks', desc: 'Aufgaben & To-dos', icon: Ic.checkSquare(26), grad: 'linear-gradient(135deg, oklch(0.72 0.18 282), oklch(0.64 0.17 248))' },
+    { id: 'tasks',    label: 'Tasks',    desc: 'Aufgaben & To-dos', icon: Ic.checkSquare(26), grad: 'linear-gradient(135deg, oklch(0.72 0.18 282), oklch(0.64 0.17 248))' },
+    { id: 'contacts', label: 'Kontakte', desc: 'Kunden & Adressen',  icon: Ic.users(26),      grad: 'linear-gradient(135deg, oklch(0.7 0.16 240), oklch(0.66 0.16 210))' },
   ];
   const soon = [
-    { id: 'roadmap',    label: 'Roadmap',      desc: 'Planung & Meilensteine', icon: Ic.bolt(26),    grad: 'linear-gradient(135deg, oklch(0.74 0.18 30), oklch(0.66 0.2 360))' },
     { id: 'times',      label: 'Zeiten',       desc: 'Zeiterfassung',          icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.74 0.16 200), oklch(0.66 0.16 230))' },
+    { id: 'roadmap',    label: 'Roadmap',      desc: 'Planung & Meilensteine', icon: Ic.bolt(26),    grad: 'linear-gradient(135deg, oklch(0.74 0.18 30), oklch(0.66 0.2 360))' },
     { id: 'accounting', label: 'Buchhaltung',  desc: 'Rechnungen & Belege',    icon: Ic.archive(26), grad: 'linear-gradient(135deg, oklch(0.74 0.17 155), oklch(0.68 0.15 175))' },
     { id: 'calendar',   label: 'Kalender',     desc: 'Termine & Events',       icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.72 0.2 350), oklch(0.66 0.2 320))' },
-    { id: 'contacts',   label: 'Kontakte',     desc: 'Adressbuch',             icon: Ic.users(26),   grad: 'linear-gradient(135deg, oklch(0.7 0.16 240), oklch(0.66 0.16 210))' },
     { id: 'settings',   label: 'Einstellungen',desc: 'Konfiguration',          icon: Ic.cog(26),     grad: 'linear-gradient(135deg, oklch(0.6 0.02 260), oklch(0.5 0.02 260))' },
   ];
   const Tile = ({ a, disabled }) => (
@@ -3590,6 +3593,173 @@ function TaskEditModal({ task, onSave, onClose }) {
               </select>
             </label>
           </div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+// ───── Kontakte app (CRM) ───────────────────────────────────────────────────
+function ContactsApp({ onBack }) {
+  const [contacts, setContacts] = useState(null);
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('all'); // all | customers
+  const [editing, setEditing] = useState(null);
+
+  const load = useCallback(() => {
+    API.contacts({ customers: filter === 'customers', q: search.trim() || undefined })
+      .then((d) => setContacts(d.contacts || [])).catch(() => setContacts([]));
+  }, [filter, search]);
+  useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [load]);
+
+  const save = async (data) => {
+    try {
+      if (data.id) await API.updateContact(data.id, data);
+      else await API.newContact(data);
+      setEditing(null); load();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+  const del = async (c) => {
+    if (!await confirmDialog({ title: 'Kontakt löschen?', message: `„${c.name}" wird endgültig gelöscht.`, confirmLabel: 'Löschen', danger: true })) return;
+    try { await API.deleteContact(c.id); load(); } catch (e) { toast(e.message, 'error'); }
+  };
+  const toggleCustomer = async (c) => {
+    try { await API.updateContact(c.id, { is_customer: c.is_customer ? 0 : 1 }); load(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+
+  const initials = (n) => (n || '?').split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  const sub = (c) => [c.contact_person, c.email, c.phone].filter(Boolean)[0] || (c.city ? c.city : '');
+
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Kontakte']}
+        search={search} onSearch={setSearch}
+        right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ kind: 'person' })}>Neuer Kontakt</Btn>}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        <div style={{ display: 'inline-flex', gap: 4, padding: 4, marginBottom: 22, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+          {[{ id: 'all', label: 'Alle' }, { id: 'customers', label: 'Kunden' }].map((t) => {
+            const on = filter === t.id;
+            return (
+              <button key={t.id} onClick={() => setFilter(t.id)} style={{
+                height: 34, padding: '0 18px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 540,
+                background: on ? 'var(--accent-grad)' : 'transparent', color: on ? '#fff' : 'var(--fg-2)',
+                boxShadow: on ? '0 4px 12px -4px var(--accent-glow)' : 'none', transition: 'all .18s',
+              }}>{t.label}</button>
+            );
+          })}
+        </div>
+
+        {contacts === null ? (
+          <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+        ) : contacts.length === 0 ? (
+          <EmptyHint icon={Ic.users(40)} title={search ? 'Nichts gefunden' : 'Noch keine Kontakte'}
+            desc={search ? 'Keine Kontakte zu deiner Suche.' : 'Lege Kontakte an und markiere sie bei Bedarf als Kunde.'}
+            actions={!search && <Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({ kind: 'person' })}>Neuer Kontakt</Btn>}/>
+        ) : (
+          <div style={{ display: 'grid', gap: 8, maxWidth: 860 }}>
+            {contacts.map((c) => (
+              <div key={c.id} className="nyza-listrow" onClick={() => setEditing(c)}
+                style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                <div style={{ width: 40, height: 40, borderRadius: c.kind === 'company' ? 'var(--r-sm)' : '50%', flexShrink: 0, background: c.is_customer ? 'var(--accent-grad)' : 'var(--surface-hi)', color: c.is_customer ? '#fff' : 'var(--fg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600, border: c.is_customer ? 'none' : '1px solid var(--border)' }}>
+                  {c.kind === 'company' ? Ic.folder(18) : initials(c.name)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</span>
+                    {!!c.is_customer && <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '2px 7px', borderRadius: 999, background: 'color-mix(in oklab, var(--accent) 18%, transparent)', color: 'var(--accent)', textTransform: 'uppercase', flexShrink: 0 }}>Kunde</span>}
+                  </div>
+                  {sub(c) && <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sub(c)}</div>}
+                </div>
+                <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
+                  { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => setEditing(c) },
+                  { label: c.is_customer ? 'Kundenstatus entfernen' : 'Als Kunde markieren', icon: Ic.star(15), onClick: () => toggleCustomer(c) },
+                  { separator: true },
+                  { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => del(c) },
+                ]); }}
+                  style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {editing && <ContactEditModal contact={editing} onSave={save} onClose={() => setEditing(null)}/>}
+    </>
+  );
+}
+
+function ContactEditModal({ contact, onSave, onClose }) {
+  const [f, setF] = useState({
+    kind: contact.kind || 'person', name: contact.name || '', contact_person: contact.contact_person || '',
+    email: contact.email || '', phone: contact.phone || '', street: contact.street || '',
+    zip: contact.zip || '', city: contact.city || '', country: contact.country || '',
+    vat_id: contact.vat_id || '', notes: contact.notes || '', is_customer: !!contact.is_customer,
+  });
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const input = (k, ph, type = 'text') => (
+    <input type={type} value={f[k]} onChange={(e) => set(k, e.target.value)} placeholder={ph}
+      style={{ height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' }}/>
+  );
+  const submit = async () => {
+    if (!f.name.trim()) { toast('Name erforderlich', 'error'); return; }
+    setBusy(true);
+    await onSave({ id: contact.id, ...f, name: f.name.trim(), is_customer: f.is_customer ? 1 : 0 });
+    setBusy(false);
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 520, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.users(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{contact.id ? 'Kontakt bearbeiten' : 'Neuer Kontakt'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[{ id: 'person', label: 'Person' }, { id: 'company', label: 'Firma' }].map((k) => (
+              <button key={k.id} onClick={() => set('kind', k.id)} style={{
+                flex: 1, height: 36, borderRadius: 'var(--r-sm)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 540,
+                border: '1px solid ' + (f.kind === k.id ? 'var(--accent)' : 'var(--border)'),
+                background: f.kind === k.id ? 'color-mix(in oklab, var(--accent) 12%, transparent)' : 'transparent',
+                color: f.kind === k.id ? 'var(--accent)' : 'var(--fg-2)',
+              }}>{k.label}</button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>{f.kind === 'company' ? 'Firmenname' : 'Name'}</span>
+            {input('name', f.kind === 'company' ? 'Firma GmbH' : 'Max Mustermann')}
+          </div>
+          {f.kind === 'company' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Ansprechpartner</span>
+              {input('contact_person', 'Vor- und Nachname')}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>E-Mail</span>{input('email', 'mail@beispiel.at', 'email')}</div>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Telefon</span>{input('phone', '+43 …')}</div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Straße</span>{input('street', 'Straße 1')}</div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ width: 110, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>PLZ</span>{input('zip', '1010')}</div>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Ort</span>{input('city', 'Wien')}</div>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Land</span>{input('country', 'Österreich')}</div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>USt-IdNr / UID</span>{input('vat_id', 'ATU…')}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Notiz</span>
+            <textarea value={f.notes} onChange={(e) => set('notes', e.target.value)} rows={2} placeholder="Notiz (optional)"
+              style={{ padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', resize: 'vertical' }}/>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+            <input type="checkbox" checked={f.is_customer} onChange={(e) => set('is_customer', e.target.checked)} style={{ width: 16, height: 16, accentColor: 'var(--accent)', cursor: 'pointer' }}/>
+            <span style={{ fontSize: 14, color: 'var(--fg-2)' }}>Als Kunde markieren</span>
+          </label>
         </div>
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
