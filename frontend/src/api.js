@@ -278,6 +278,7 @@ export const API = {
   unmarkDocPaid:  (id) => request('/api/documents/' + id + '/unmark-paid', { method: 'POST', body: {} }),
   convertDoc:     (id) => request('/api/documents/' + id + '/convert', { method: 'POST', body: {} }),
   docPdfUrl:      (id, download) => url('/api/documents/' + id + '/pdf') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
+  archiveDocument: (id) => request('/api/documents/' + id + '/archive', { method: 'POST', body: {} }),
   documentReminders: (id) => request('/api/documents/' + id + '/reminders'),
   createReminder: (id) => request('/api/documents/' + id + '/reminders', { method: 'POST', body: {} }),
   deleteReminder: (id) => request('/api/reminders/' + id, { method: 'DELETE' }),

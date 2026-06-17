@@ -35,6 +35,7 @@ final class DocumentRoutes
             $g->post('/{id}/unmark-paid',[self::class, 'unmarkPaid']);
             $g->post('/{id}/convert',    [self::class, 'convert']);
             $g->get('/{id}/pdf',         [self::class, 'pdf']);
+            $g->post('/{id}/archive',    [self::class, 'archive']);
         })->add(new AuthMiddleware());
     }
 
@@ -275,19 +276,7 @@ final class DocumentRoutes
         $d = self::fetchOne($uid, $id);
         if (!$d) return Json::err($res, 'Not found', 404);
 
-        $company = self::companySettings($uid);
-        $items = self::loadItems($id);
-        $html = self::renderHtml($uid, $d, $items, $company);
-
-        $dompdf = new \Dompdf\Dompdf([
-            'isRemoteEnabled'      => false,
-            'isHtml5ParserEnabled' => true,
-            'defaultFont'          => 'DejaVu Sans',
-        ]);
-        $dompdf->loadHtml($html, 'UTF-8');
-        $dompdf->setPaper('A4', 'portrait');
-        $dompdf->render();
-        $pdf = $dompdf->output();
+        $pdf = self::renderPdfBytes($uid, $d);
 
         $download = !empty($req->getQueryParams()['download']);
         $filename = $d['number'] . '.pdf';
@@ -300,6 +289,109 @@ final class DocumentRoutes
         header('Cache-Control: private, max-age=0, must-revalidate');
         echo $pdf;
         exit;
+    }
+
+    /**
+     * Render the document to PDF bytes via Dompdf. Shared by the streaming pdf()
+     * endpoint and the archive() action so both produce byte-identical output.
+     */
+    private static function renderPdfBytes(int $uid, array $doc): string
+    {
+        $company = self::companySettings($uid);
+        $items = self::loadItems((int)$doc['id']);
+        $html = self::renderHtml($uid, $doc, $items, $company);
+
+        $dompdf = new \Dompdf\Dompdf([
+            'isRemoteEnabled'      => false,
+            'isHtml5ParserEnabled' => true,
+            'defaultFont'          => 'DejaVu Sans',
+        ]);
+        $dompdf->loadHtml($html, 'UTF-8');
+        $dompdf->setPaper('A4', 'portrait');
+        $dompdf->render();
+        return $dompdf->output();
+    }
+
+    // ───── Archive (immutable PDF copy into the DMS) ──────────────────────────
+    /**
+     * Render the document's PDF and store it permanently as a real file in the
+     * DMS, under Buchhaltung/<Rechnungen|Angebote>/<year>, so it shows up in the
+     * file manager and can be viewed/downloaded there. Records the new file id on
+     * the document. Always creates a fresh file (keeps prior archives as history).
+     */
+    public static function archive(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        $d = self::fetchOne($uid, $id);
+        if (!$d) return Json::err($res, 'Not found', 404);
+
+        $bytes = self::renderPdfBytes($uid, $d);
+
+        $year = self::archiveYear($d['doc_date'] ?? null);
+        $sub = $d['type'] === 'offer' ? 'Angebote' : 'Rechnungen';
+        $buchhaltungId = self::findOrCreateFolder($uid, null, 'Buchhaltung');
+        $subId = self::findOrCreateFolder($uid, $buchhaltungId, $sub);
+        $yearId = self::findOrCreateFolder($uid, $subId, $year);
+
+        $name = $d['number'] . '.pdf';
+        $rel = Storage::relPath($uid, $name);
+        if (file_put_contents(Storage::abs($rel), $bytes) === false) {
+            return Json::err($res, 'Archivieren fehlgeschlagen', 500);
+        }
+
+        $fileId = self::insertArchiveFile($uid, $yearId, $name, $rel, strlen($bytes));
+        Database::pdo()->prepare('UPDATE documents SET archived_file_id = ? WHERE id = ? AND user_id = ?')
+            ->execute([$fileId, $id, $uid]);
+
+        return Json::ok($res, ['file_id' => $fileId, 'folder_id' => $yearId], 201);
+    }
+
+    /** Year for the archive folder, from doc_date (YYYY-…) or the current year. */
+    private static function archiveYear(?string $docDate): string
+    {
+        if (is_string($docDate) && preg_match('/^(\d{4})/', $docDate, $m)) return $m[1];
+        return date('Y');
+    }
+
+    /** Find a child folder by (user_id, parent_id, name) or create it; returns id. */
+    private static function findOrCreateFolder(int $uid, ?int $parent, string $name): int
+    {
+        $pdo = Database::pdo();
+        if ($parent === null) {
+            $s = $pdo->prepare('SELECT id FROM folders WHERE user_id = ? AND parent_id IS NULL AND name = ? LIMIT 1');
+            $s->execute([$uid, $name]);
+        } else {
+            $s = $pdo->prepare('SELECT id FROM folders WHERE user_id = ? AND parent_id = ? AND name = ? LIMIT 1');
+            $s->execute([$uid, $parent, $name]);
+        }
+        if ($r = $s->fetch()) return (int)$r['id'];
+        $pdo->prepare('INSERT INTO folders (user_id, parent_id, name, kind, tone) VALUES (?, ?, ?, ?, ?)')
+            ->execute([$uid, $parent, $name, 'normal', 'violet']);
+        return (int)$pdo->lastInsertId();
+    }
+
+    /**
+     * Insert a `files` row for an archived PDF, mirroring FileRoutes::insertFile so
+     * the archive behaves like a normal upload (kind/hue set, storage_used bumped,
+     * activity logged). taken_at/upload_link_id/uploader_name are null for a
+     * server-generated PDF.
+     */
+    private static function insertArchiveFile(int $uid, int $folderId, string $name, string $rel, int $size): int
+    {
+        $pdo = Database::pdo();
+        $mime = 'application/pdf';
+        $kind = Storage::kindFromMime($mime);
+        $hue = (crc32($name) % 360);
+        $pdo->prepare(
+            'INSERT INTO files (user_id, folder_id, name, storage_path, mime_type, size, kind, hue, upload_link_id, uploader_name, taken_at) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([$uid, $folderId, $name, $rel, $mime, $size, $kind, $hue, null, null, null]);
+        $id = (int)$pdo->lastInsertId();
+        $pdo->prepare('UPDATE users SET storage_used = storage_used + ? WHERE id = ?')->execute([$size, $uid]);
+        $pdo->prepare("INSERT INTO activity (user_id, kind, payload) VALUES (?, 'file_uploaded', ?)")
+            ->execute([$uid, json_encode(['file_id' => $id, 'name' => $name, 'size' => $size])]);
+        return $id;
     }
 
     // ───── Number counter ────────────────────────────────────────────────────
@@ -467,6 +559,7 @@ final class DocumentRoutes
             'converted_from_offer_id' => $r['converted_from_offer_id'] !== null ? (int)$r['converted_from_offer_id'] : null,
             'payment_status'          => self::paymentStatus($r, $termDays),
             'reminder_stage'          => isset($r['reminder_stage']) && $r['reminder_stage'] !== null ? (int)$r['reminder_stage'] : 0,
+            'archived_file_id'        => isset($r['archived_file_id']) && $r['archived_file_id'] !== null ? (int)$r['archived_file_id'] : null,
             'created_at'              => $r['created_at'],
         ];
     }
