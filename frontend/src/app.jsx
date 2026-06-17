@@ -2802,6 +2802,8 @@ function FilesView({
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [results, setResults] = useState(null); // server search results when searching
   const [showRecentPref, setShowRecentPref] = useState(() => localStorage.getItem('nyza.showRecent') !== '0');
+  const [selected, setSelected] = useState(new Set());
+  const [selectMode, setSelectMode] = useState(false);
 
   useEffect(() => {
     API.recentFiles().then((d) => setRecent(d.files || [])).catch(() => setRecent([]));
@@ -2826,6 +2828,17 @@ function FilesView({
   }, [search, searching, refreshTick]);
 
   const fFolders = folders;
+
+  const toggleSelect = (id) => {
+    const list = results?.files || [];
+    if (id === '__all__') { setSelected((s) => s.size === list.length ? new Set() : new Set(list.map((f) => f.id))); return; }
+    setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  };
+  const fileCtx = (f, e) => openContextMenu(e.clientX, e.clientY, fileMenuItems(f, {
+    onOpen: (x) => onOpenFile(x, results?.files || []),
+    onDownload: onDownloadFile, onToggleStar, onShare: onShareFile,
+    onDelete: onDeleteFile, onVersions, onUnzip, onPin: onPinFile,
+  }));
 
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
     onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolder, onColor: onFolderColor, onDelete: onDeleteFolder, onPin: onPinFolder,
