@@ -245,6 +245,12 @@ export const API = {
   // Apps · Tasks
   tasks:         (opts = {}) => { const qs = []; if (opts.assignee) qs.push('assignee=' + opts.assignee); if (opts.owner) qs.push('owner=' + opts.owner); if (opts.mine) qs.push('mine=1'); return request('/api/tasks' + (qs.length ? '?' + qs.join('&') : '')); },
   users:         () => request('/api/users'),
+
+  // Internal sharing between members
+  internalShares:  (opts = {}) => request('/api/internal-shares' + (opts.folder_id ? '?folder_id=' + opts.folder_id : opts.file_id ? '?file_id=' + opts.file_id : '')),
+  shareInternal:   (body) => request('/api/internal-shares', { method: 'POST', body }),
+  unshareInternal: (id) => request('/api/internal-shares/' + id, { method: 'DELETE' }),
+  sharedWithMe:    () => request('/api/shared-with-me'),
   tasksArchived: () => request('/api/tasks/archived'),
   newTask:       (body) => request('/api/tasks', { method: 'POST', body }),
   updateTask:    (id, body) => request('/api/tasks/' + id, { method: 'PATCH', body }),

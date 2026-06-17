@@ -911,6 +911,7 @@ function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, on
   const items = [
     { id: 'files',    label: 'Meine Dateien', icon: Ic.home,   count: stats?.files },
     { id: 'favorites',label: 'Favoriten',     icon: Ic.star },
+    { id: 'shared-with-me', label: 'Mit mir geteilt', icon: Ic.users },
     { id: 'links',    label: 'Links',         icon: Ic.link,   count: ((stats?.shares || 0) + (stats?.upload_links || 0)) || null },
     { id: 'apps',     label: 'Apps',          icon: Ic.grid },
     { id: 'activity', label: 'Aktivität',     icon: Ic.clock },
@@ -1912,6 +1913,95 @@ function ShareToggleRow({ icon, title, desc, on, onToggle }) {
   );
 }
 
+function InternalShareModal({ folder, file, onClose }) {
+  const [users, setUsers] = useState([]);
+  const [shares, setShares] = useState(null);
+  const [sel, setSel] = useState('');
+  const opts = folder ? { folder_id: folder.id } : { file_id: file.id };
+  const load = () => API.internalShares(opts).then((d) => setShares(d.shares || [])).catch(() => setShares([]));
+  useEffect(() => { API.users().then((d) => setUsers(d.users || [])).catch(() => {}); load(); }, []);
+  const add = async () => { if (!sel) return; try { await API.shareInternal({ ...opts, target_user_id: Number(sel) }); setSel(''); load(); } catch (e) { toast(e.message, 'error'); } };
+  const rm = async (id) => { try { await API.unshareInternal(id); load(); } catch (e) { toast(e.message, 'error'); } };
+  const sharedIds = new Set((shares || []).map((s) => s.target_user_id));
+  const avail = users.filter((u) => !sharedIds.has(u.id));
+  const fld = { height: 40, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 440, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.users(18)}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Intern teilen</h2>
+            <div style={{ fontSize: 12, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{folder?.name || file?.name}</div>
+          </div>
+          <IconBtn size={30} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <select value={sel} onChange={(e) => setSel(e.target.value)} style={{ ...fld, flex: 1, cursor: 'pointer' }}>
+              <option value="">Mitglied wählen…</option>
+              {avail.map((u) => <option key={u.id} value={String(u.id)}>{u.name || u.email}</option>)}
+            </select>
+            <Btn variant="primary" size="md" disabled={!sel} icon={Ic.plus(14)} onClick={add}>Teilen</Btn>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {shares === null ? <div style={{ color: 'var(--fg-3)', fontSize: 13 }}>{Ic.loader(16)}</div>
+              : shares.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Noch mit niemandem geteilt.</div>
+              : shares.map((s) => (
+                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)' }}>
+                    <span style={{ width: 26, height: 26, borderRadius: '50%', background: 'var(--accent-grad)', color: '#fff', fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{(s.target_name || '?').slice(0, 1).toUpperCase()}</span>
+                    <span style={{ flex: 1, fontSize: 13 }}>{s.target_name}</span>
+                    <span onClick={() => rm(s.id)} title="Entfernen" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex' }}>{Ic.close(14)}</span>
+                  </div>
+                ))}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--fg-4)' }}>Geteilte Mitglieder können den Inhalt ansehen und herunterladen (nur lesen).</div>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+function SharedWithMeView({ onOpenFolder, onOpenFile }) {
+  const [data, setData] = useState(null);
+  useEffect(() => { API.sharedWithMe().then(setData).catch(() => setData({ folders: [], files: [] })); }, []);
+  const folders = data?.folders || [];
+  const files = data?.files || [];
+  return (
+    <>
+      <TopBar crumbs={['Mit mir geteilt']}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 60px' }}>
+        {data === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+          : (folders.length === 0 && files.length === 0) ? <EmptyHint icon={Ic.users(40)} title="Nichts geteilt" desc="Hier erscheinen Ordner und Dateien, die andere Mitglieder mit dir teilen."/>
+          : (
+            <>
+              {folders.length > 0 && <><SectionHeader title="Ordner" count={folders.length}/>
+                <div style={{ display: 'grid', gap: 8, maxWidth: 820, marginBottom: 28 }}>
+                  {folders.map((f) => (
+                    <div key={'f' + f.id} className="nyza-listrow" onClick={() => onOpenFolder(f)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                      <span style={{ color: 'var(--accent)' }}>{Ic.folder(18)}</span>
+                      <span style={{ flex: 1, fontSize: 14, fontWeight: 540 }}>{f.name}</span>
+                      <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>von {f.owner_name || '—'}</span>
+                    </div>
+                  ))}
+                </div></>}
+              {files.length > 0 && <><SectionHeader title="Dateien" count={files.length}/>
+                <div style={{ display: 'grid', gap: 8, maxWidth: 820 }}>
+                  {files.map((f) => (
+                    <div key={'x' + f.id} className="nyza-listrow" onClick={() => onOpenFile(f, files)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                      <FileIcon kind={(f.mime_type || '').startsWith('image/') ? 'image' : (f.mime_type || '').startsWith('video/') ? 'video' : (f.mime_type === 'application/pdf') ? 'pdf' : 'doc'} size={16}/>
+                      <span style={{ flex: 1, fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</span>
+                      <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{humanSize(f.size)} · von {f.owner_name || '—'}</span>
+                    </div>
+                  ))}
+                </div></>}
+            </>
+          )}
+      </div>
+    </>
+  );
+}
+
 export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const [withPassword, setWithPassword] = useState(false);
   const [password, setPassword] = useState('');
@@ -2485,6 +2575,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
 
   // modals / overlays
   const [shareTarget, setShareTarget] = useState(null);     // {folder} | {file}
+  const [internalTarget, setInternalTarget] = useState(null); // {folder} | {file}
   const [showUploadLinkModal, setShowUploadLinkModal] = useState(false);
   const [uploadLinkFolder, setUploadLinkFolder] = useState(null);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -2715,6 +2806,8 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onUploadLink={() => { setUploadLinkFolder(null); setShowUploadLinkModal(true); }}
             onOpenFile={openViewer}
             onShareFile={(f) => setShareTarget({ file: f })}
+            onShareInternalFile={(f) => setInternalTarget({ file: f })}
+            onShareInternalFolder={(f) => setInternalTarget({ folder: f })}
             onToggleStar={toggleStar}
             onDropFiles={dropToFolder}
             onUnzip={doUnzip}
@@ -2731,6 +2824,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             fetcher={() => API.starredFiles()} refreshTick={refreshTick}
             onOpenFile={openViewer} onToggleStar={toggleStar}/>
         )}
+        {nav.name === 'shared-with-me' && (
+          <SharedWithMeView onOpenFolder={(f) => setNav({ name: 'folder', id: f.id })} onOpenFile={openViewer}/>
+        )}
         {nav.name === 'folder' && (
           <FolderView
             folderId={nav.id} view={view} setView={setView} sort={sort} setSort={setSort}
@@ -2744,6 +2840,8 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onUploadLink={(f) => { setUploadLinkFolder(f.id); setShowUploadLinkModal(true); }}
             onOpenFile={openViewer}
             onShareFile={(f) => setShareTarget({ file: f })}
+            onShareInternalFile={(f) => setInternalTarget({ file: f })}
+            onShareInternalFolder={(f) => setInternalTarget({ folder: f })}
             onToggleStar={toggleStar}
             onDropFiles={dropToFolder}
             onUnzip={doUnzip}
@@ -2803,6 +2901,10 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
       {shareTarget && (
         <ShareModal folder={shareTarget.folder} file={shareTarget.file} basePath={basePath}
           onClose={() => setShareTarget(null)} onCreated={refreshAll}/>
+      )}
+      {internalTarget && (
+        <InternalShareModal folder={internalTarget.folder} file={internalTarget.file}
+          onClose={() => setInternalTarget(null)}/>
       )}
       {showUploadLinkModal && (
         <UploadLinkModal folders={folders} defaultFolderId={uploadLinkFolder} basePath={basePath}
@@ -2930,7 +3032,8 @@ function fileMenuItems(file, o) {
     { label: 'Grün – Freigegeben',  icon: <span style={{display:'inline-block',width:10,height:10,borderRadius:'50%',background:'#22c55e',marginRight:2}}/>, onClick: () => o.onLabel && o.onLabel(f, 'green') },
     ...(f.label ? [{ label: 'Markierung entfernen', icon: Ic.close(14), onClick: () => o.onLabel && o.onLabel(f, null) }] : []),
     { separator: true },
-    o.onShare && { label: 'Teilen', icon: Ic.share(15), onClick: () => o.onShare(file) },
+    o.onShare && { label: 'Teilen (Link)', icon: Ic.share(15), onClick: () => o.onShare(file) },
+    o.onShareInternal && { label: 'Intern teilen (Mitglieder)', icon: Ic.users(15), onClick: () => o.onShareInternal(file) },
     o.onMove && { label: 'Verschieben', icon: Ic.folder(15), onClick: () => o.onMove(file) },
     o.onVersions && { label: 'Versionsverlauf', icon: Ic.clock(15), onClick: () => o.onVersions(file) },
     { separator: true },
@@ -2943,7 +3046,8 @@ function folderMenuItems(folder, o) {
     o.onPin && { label: folder.pinned ? 'Lösen' : 'Anpinnen', icon: Ic.pin(15), onClick: () => o.onPin(folder) },
     o.onRename && { label: 'Umbenennen', icon: Ic.fileGen(15), onClick: () => o.onRename(folder) },
     o.onMove && { label: 'Verschieben', icon: Ic.folder(15), onClick: () => o.onMove(folder) },
-    o.onShare && { label: 'Teilen', icon: Ic.share(15), onClick: () => o.onShare(folder) },
+    o.onShare && { label: 'Teilen (Link)', icon: Ic.share(15), onClick: () => o.onShare(folder) },
+    o.onShareInternal && { label: 'Intern teilen (Mitglieder)', icon: Ic.users(15), onClick: () => o.onShareInternal(folder) },
     o.onColor && { separator: true },
     o.onColor && { header: 'Farbe' },
     o.onColor && { swatches: FOLDER_SWATCHES, current: folder.tone || 'violet', onPick: (key) => o.onColor(folder, key) },
@@ -2956,7 +3060,7 @@ function folderMenuItems(folder, o) {
 function FilesView({
   user, stats, folders, view, setView, sort, setSort, search, setSearch, refreshTick,
   onOpenFolder, onShareFolder, onRenameFolder, onMoveFolder, onFolderColor, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
-  onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, onUnzip, onVersions, onDownloadFile,
+  onOpenFile, onShareFile, onShareInternalFile, onShareInternalFolder, onDeleteFile, onToggleStar, onDropFiles, onUnzip, onVersions, onDownloadFile,
   onPinFile, onPinFolder,
 }) {
   const [recent, setRecent] = useState([]);
@@ -2997,12 +3101,12 @@ function FilesView({
   };
   const fileCtx = (f, e) => openContextMenu(e.clientX, e.clientY, fileMenuItems(f, {
     onOpen: (x) => onOpenFile(x, results?.files || []),
-    onDownload: onDownloadFile, onToggleStar, onShare: onShareFile,
+    onDownload: onDownloadFile, onToggleStar, onShare: onShareFile, onShareInternal: onShareInternalFile,
     onDelete: onDeleteFile, onVersions, onUnzip, onPin: onPinFile,
   }));
 
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
-    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolder, onColor: onFolderColor, onDelete: onDeleteFolder, onPin: onPinFolder,
+    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolder, onShareInternal: onShareInternalFolder, onColor: onFolderColor, onDelete: onDeleteFolder, onPin: onPinFolder,
   }));
   const bgCtx = (e) => {
     if (e.target.closest('[data-fid]') || e.target.closest('[data-folder-card]')) return;
@@ -3204,7 +3308,7 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext }) {
 function FolderView({
   folderId, view, setView, sort, setSort, search, setSearch, refreshTick,
   onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onMoveFiles, onUploadLink, onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, afterChange,
-  onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onShareFolderItem, onDeleteFolder, onFolderColor, onLabelFile,
+  onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onShareFolderItem, onShareInternalFile, onShareInternalFolder, onDeleteFolder, onFolderColor, onLabelFile,
   onPinFile, onPinFolder,
 }) {
   const [data, setData] = useState(null);
@@ -3248,14 +3352,14 @@ function FolderView({
     openContextMenu(e.clientX, e.clientY, fileMenuItems(f, {
       multi, count: selected.size,
       onOpen: (x) => onOpenFile(x, files), onDownload: onDownloadFile, onUnzip,
-      onToggleStar, onShare: onShareFile, onMove: (x) => onMoveFiles([x.id]),
+      onToggleStar, onShare: onShareFile, onShareInternal: onShareInternalFile, onMove: (x) => onMoveFiles([x.id]),
       onVersions, onDelete: onDeleteFile, onLabel: onLabelFile,
       onZip: doZip, onMoveMany: () => onMoveFiles([...selected]), onDeleteMany: doBulkDelete,
       onPin: onPinFile,
     }));
   };
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
-    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolderItem, onColor: onFolderColor, onDelete: onDeleteFolder, onPin: onPinFolder,
+    onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolderItem, onShareInternal: onShareInternalFolder, onColor: onFolderColor, onDelete: onDeleteFolder, onPin: onPinFolder,
   }));
   const bgCtx = (e) => {
     if (e.target.closest('[data-fid]')) return;

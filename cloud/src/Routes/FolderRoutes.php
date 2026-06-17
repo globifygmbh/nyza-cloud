@@ -82,17 +82,42 @@ final class FolderRoutes
         $uid = (int)$req->getAttribute('uid');
         $id = (int)$args['id'];
         $folder = self::fetchOne($uid, $id);
+
+        // Internal sharing: allow read access to a folder shared with this user
+        // (directly or via an ancestor). For a shared folder we fall back to a
+        // by-id fetch so the viewer can see the owner's folder + its contents.
+        if (!$folder && InternalShareRoutes::accessibleFolder($uid, $id)) {
+            $folder = self::fetchAny($id);
+        }
         if (!$folder) return Json::err($res, 'Not found', 404);
 
-        $files = Database::pdo()->prepare('SELECT * FROM files WHERE user_id = ? AND folder_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, created_at DESC');
-        $files->execute([$uid, $id]);
-        $sub = Database::pdo()->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC');
-        $sub->execute([$uid, $id]);
+        // Once access is confirmed, list the folder's ACTUAL contents (owner's
+        // files / subfolders) by folder_id — not by the viewer's user_id — so a
+        // shared folder shows what's really inside it. deleted_at still filtered.
+        $files = Database::pdo()->prepare('SELECT * FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, created_at DESC');
+        $files->execute([$id]);
+        $sub = Database::pdo()->prepare('SELECT * FROM folders WHERE parent_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC');
+        $sub->execute([$id]);
         return Json::ok($res, [
             'folder' => $folder,
             'files' => $files->fetchAll(),
             'subfolders' => $sub->fetchAll(),
         ]);
+    }
+
+    /** Fetch a live folder row by id regardless of owner (used after a shared
+     *  access check has already authorised the viewer). */
+    private static function fetchAny(int $id): ?array
+    {
+        $stmt = Database::pdo()->prepare(
+            'SELECT f.*, '
+            . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
+            . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
+            . 'FROM folders f WHERE id = ? AND deleted_at IS NULL'
+        );
+        $stmt->execute([$id]);
+        $f = $stmt->fetch();
+        return $f ?: null;
     }
 
     public static function rename(Request $req, Response $res, array $args): Response

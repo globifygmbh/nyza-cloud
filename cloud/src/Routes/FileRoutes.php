@@ -229,7 +229,7 @@ final class FileRoutes
     public static function thumb(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $f = self::fetchOne($uid, (int)$args['id']);
+        $f = self::fetchReadable($uid, (int)$args['id']);
         if (!$f) return Json::err($res, 'Not found', 404);
         return self::serveThumb($res, $f);
     }
@@ -476,10 +476,13 @@ final class FileRoutes
     public static function versions(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $f = self::fetchOne($uid, (int)$args['id']);
+        $f = self::fetchReadable($uid, (int)$args['id']);
         if (!$f) return Json::err($res, 'Not found', 404);
+        // Versions belong to the file's OWNER; scope by the file's user_id so a
+        // shared viewer sees the (read-only) history too.
+        $ownerId = (int)$f['user_id'];
         $stmt = Database::pdo()->prepare('SELECT id, size, name, mime_type, (content IS NOT NULL) AS inline, created_at FROM file_versions WHERE file_id = ? AND user_id = ? ORDER BY id DESC');
-        $stmt->execute([(int)$f['id'], $uid]);
+        $stmt->execute([(int)$f['id'], $ownerId]);
         $rows = array_map(static function (array $v): array {
             return [
                 'id' => (int)$v['id'], 'size' => (int)$v['size'],
@@ -493,8 +496,10 @@ final class FileRoutes
     public static function versionContent(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchReadable($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
         $stmt = Database::pdo()->prepare('SELECT content, storage_path FROM file_versions WHERE id = ? AND file_id = ? AND user_id = ?');
-        $stmt->execute([(int)$args['vid'], (int)$args['id'], $uid]);
+        $stmt->execute([(int)$args['vid'], (int)$f['id'], (int)$f['user_id']]);
         $row = $stmt->fetch();
         if (!$row) return Json::err($res, 'Not found', 404);
         return Json::ok($res, ['content' => self::versionBytes($row)]);
@@ -504,8 +509,10 @@ final class FileRoutes
     public static function versionRaw(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchReadable($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
         $stmt = Database::pdo()->prepare('SELECT content, storage_path, name, mime_type, size FROM file_versions WHERE id = ? AND file_id = ? AND user_id = ?');
-        $stmt->execute([(int)$args['vid'], (int)$args['id'], $uid]);
+        $stmt->execute([(int)$args['vid'], (int)$f['id'], (int)$f['user_id']]);
         $v = $stmt->fetch();
         if (!$v) return Json::err($res, 'Not found', 404);
         $bytes = self::versionBytes($v);
@@ -738,7 +745,7 @@ final class FileRoutes
     public static function show(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $f = self::fetchOne($uid, (int)$args['id']);
+        $f = self::fetchReadable($uid, (int)$args['id']);
         if (!$f) return Json::err($res, 'Not found', 404);
         return Json::ok($res, ['file' => $f]);
     }
@@ -746,9 +753,10 @@ final class FileRoutes
     public static function raw(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $f = self::fetchOne($uid, (int)$args['id']);
+        $f = self::fetchReadable($uid, (int)$args['id']);
         if (!$f) return Json::err($res, 'Not found', 404);
-        // Mark as recently opened (best-effort, ignore failures).
+        // Mark as recently opened (best-effort) — only for the file's OWNER, so a
+        // shared viewer never bumps someone else's recents. Scoped by user_id.
         try { Database::pdo()->prepare('UPDATE files SET opened_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')->execute([(int)$f['id'], $uid]); } catch (\Throwable $e) {}
         return self::stream($res, $f, isset($req->getQueryParams()['dl']));
     }
@@ -1013,6 +1021,23 @@ final class FileRoutes
     {
         $stmt = Database::pdo()->prepare('SELECT * FROM files WHERE id = ? AND user_id = ? AND deleted_at IS NULL');
         $stmt->execute([$id, $uid]);
+        $f = $stmt->fetch();
+        return $f ?: null;
+    }
+
+    /**
+     * Fetch a file the user is allowed to READ: their own, OR one shared with
+     * them internally (directly, or via a shared containing folder/ancestor).
+     * Returns the real file row (owner's) once access is confirmed. Used only by
+     * read endpoints (show/raw/thumb/versions/download) — never for mutations.
+     */
+    private static function fetchReadable(int $uid, int $id): ?array
+    {
+        $own = self::fetchOne($uid, $id);
+        if ($own) return $own;
+        if (!InternalShareRoutes::accessibleFile($uid, $id)) return null;
+        $stmt = Database::pdo()->prepare('SELECT * FROM files WHERE id = ? AND deleted_at IS NULL');
+        $stmt->execute([$id]);
         $f = $stmt->fetch();
         return $f ?: null;
     }
