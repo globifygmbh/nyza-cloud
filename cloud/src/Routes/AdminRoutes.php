@@ -27,7 +27,15 @@ final class AdminRoutes
             $g->post('/users',         [self::class, 'create']);
             $g->patch('/users/{id}',   [self::class, 'update']);
             $g->delete('/users/{id}',  [self::class, 'delete']);
+            $g->get('/cron',           [self::class, 'cronInfo']);
         })->add(new AuthMiddleware());
+    }
+
+    /** Cron token + ready-to-copy command for the admin settings. */
+    public static function cronInfo(Request $req, Response $res): Response
+    {
+        if (!self::requireAdmin($req)) return Json::err($res, 'Nur Admin', 403, 'forbidden');
+        return Json::ok($res, ['token' => PushRoutes::effectiveCronToken()]);
     }
 
     /**

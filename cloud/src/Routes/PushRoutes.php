@@ -170,6 +170,19 @@ final class PushRoutes
      *     matched against ?token= — printed once below if you query the DB.
      *  3. a valid admin bearer token (same model the Updater uses) as a fallback.
      */
+    /** The effective cron token (config override, else a stable auto-generated one). */
+    public static function effectiveCronToken(): string
+    {
+        $configured = Config::get('cron_token');
+        if (is_string($configured) && $configured !== '') return $configured;
+        $auto = self::kvGet('cron_token');
+        if ($auto === null || $auto === '') {
+            $auto = bin2hex(random_bytes(24));
+            self::kvSet('cron_token', $auto);
+        }
+        return (string)$auto;
+    }
+
     private static function cronAuthorized(Request $req): bool
     {
         $given = (string)($req->getQueryParams()['token'] ?? '');

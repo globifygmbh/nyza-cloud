@@ -288,6 +288,7 @@ export const API = {
   adminCreateUser: (body) => request('/api/admin/users', { method: 'POST', body }),
   adminUpdateUser: (id, body) => request('/api/admin/users/' + id, { method: 'PATCH', body }),
   adminDeleteUser: (id) => request('/api/admin/users/' + id, { method: 'DELETE' }),
+  adminCron:       () => request('/api/admin/cron'),
 
   // App settings (namespaced JSON store)
   getSettings:  (ns) => request('/api/settings/' + ns),

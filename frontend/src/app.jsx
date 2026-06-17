@@ -4558,6 +4558,37 @@ function NotificationsSection() {
   );
 }
 
+function CronSection() {
+  const [token, setToken] = useState(null);
+  useEffect(() => { API.adminCron().then((d) => setToken(d.token || '')).catch(() => setToken('')); }, []);
+  const url = location.origin + (BASE || '') + '/api/cron?token=' + (token || 'DEIN_TOKEN');
+  const cron = `*/5 * * * * curl -fsS "${url}" >/dev/null 2>&1`;
+  const copy = (t) => { navigator.clipboard?.writeText(t); toast('Kopiert', 'success'); };
+  const codeBox = (label, value) => (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 6 }}>{label}</div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+        <code style={{ flex: 1, fontSize: 11.5, fontFamily: 'var(--font-mono)', background: 'var(--surface-hi)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', wordBreak: 'break-all', color: 'var(--fg)' }}>{value}</code>
+        <Btn variant="glass" size="sm" icon={Ic.copy(13)} onClick={() => copy(value)}>Kopieren</Btn>
+      </div>
+    </div>
+  );
+  return (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '16px 18px' }}>
+      <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: '0 0 14px' }}>
+        Lege diesen Cronjob bei deinem Hosting an (alle 5 Minuten). Er prüft fällige Termine, Aufgaben, Rechnungen und Belege und sendet die Push-Benachrichtigungen.
+      </p>
+      {token === null ? <div style={{ color: 'var(--fg-3)' }}>{Ic.loader(18)}</div> : (
+        <>
+          {codeBox('Cronjob (crontab -e)', cron)}
+          {codeBox('Nur die URL', url)}
+          <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 4 }}>Tipp: Eigenen Token in <code>config.php</code> via <code>'cron_token' =&gt; '…'</code> setzen — dann hier sichtbar. Token geheim halten.</div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function UserAdminSection({ currentUser }) {
   const [users, setUsers] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -4701,6 +4732,8 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
           {isAdmin && (<>
             <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Benutzerverwaltung · Admin</div>
             <div style={{ marginBottom: 28 }}><UserAdminSection currentUser={user}/></div>
+            <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Cron-Jobs · Admin</div>
+            <div style={{ marginBottom: 28 }}><CronSection/></div>
           </>)}
 
           {/* Firma & Rechnungen */}
