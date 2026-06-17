@@ -312,7 +312,7 @@ final class AuthRoutes
                 $quota,
                 $uid,
             ]);
-        $stmt = $pdo->prepare('SELECT id, email, name, accent, logo_path, storage_quota, storage_used FROM users WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT id, email, name, accent, logo_path, totp_enabled, role, active, storage_quota, storage_used FROM users WHERE id = ?');
         $stmt->execute([$uid]);
         $row = $stmt->fetch();
         return Json::ok($res, ['user' => self::publicUser($row) + ['storage_quota' => (int)$row['storage_quota'], 'storage_used' => (int)$row['storage_used']]]);
