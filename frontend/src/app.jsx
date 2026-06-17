@@ -3379,7 +3379,7 @@ function SharesView({ refreshTick, basePath, afterChange, embedded }) {
                   {histData === null ? <div style={{ color: 'var(--fg-3)', fontSize: 12, padding: 8 }}>{Ic.loader(16)}</div>
                     : (histData.events || []).length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--fg-3)', padding: 6 }}>Noch keine Aktivität.</div>
                     : (<>
-                        <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 8 }}>{histData.views || 0} Aufrufe · {histData.downloads || 0} Downloads</div>
+                        <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 8 }}>{(histData.summary?.views ?? histData.views) || 0} Aufrufe · {(histData.summary?.downloads ?? histData.downloads) || 0} Downloads</div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
                           {histData.events.map((e) => (
                             <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
