@@ -288,6 +288,17 @@ export const API = {
   updateSubscription:(id, body) => request('/api/subscriptions/' + id, { method: 'PATCH', body }),
   deleteSubscription:(id) => request('/api/subscriptions/' + id, { method: 'DELETE' }),
   subscriptionPeriods:(id) => request('/api/subscriptions/' + id + '/periods'),
+
+  // Buchhaltung · Ausgaben (expenses)
+  expenses:        (opts = {}) => { const qs = []; if (opts.from) qs.push('from=' + opts.from); if (opts.to) qs.push('to=' + opts.to); if (opts.category) qs.push('category=' + encodeURIComponent(opts.category)); return request('/api/expenses' + (qs.length ? '?' + qs.join('&') : '')); },
+  newExpense:      (body) => request('/api/expenses', { method: 'POST', body }),
+  updateExpense:   (id, body) => request('/api/expenses/' + id, { method: 'PATCH', body }),
+  deleteExpense:   (id) => request('/api/expenses/' + id, { method: 'DELETE' }),
+  expenseMarkPaid: (id, paid_date) => request('/api/expenses/' + id + '/mark-paid', { method: 'POST', body: { paid_date } }),
+  expenseUnmarkPaid:(id) => request('/api/expenses/' + id + '/unmark-paid', { method: 'POST', body: {} }),
+  uploadExpenseReceipt: (id, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/expenses/' + id + '/receipt', { method: 'POST', body: fd }); },
+  deleteExpenseReceipt: (id) => request('/api/expenses/' + id + '/receipt', { method: 'DELETE' }),
+  expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
   periodMarkPaid:    (id, paid_date) => request('/api/periods/' + id + '/mark-paid', { method: 'POST', body: { paid_date } }),
   periodUnmarkPaid:  (id) => request('/api/periods/' + id + '/unmark-paid', { method: 'POST', body: {} }),
   periodInvoice:     (id) => request('/api/periods/' + id + '/invoice', { method: 'POST', body: {} }),

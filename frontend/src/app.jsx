@@ -4433,13 +4433,16 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const [subs, setSubs] = useState(null);
   const [products, setProducts] = useState([]);
   const [contacts, setContacts] = useState([]);
+  const [exps, setExps] = useState(null);
   const [editing, setEditing] = useState(null);
   const [prodEditing, setProdEditing] = useState(null);
   const [subEditing, setSubEditing] = useState(null);
+  const [expEditing, setExpEditing] = useState(null);
 
   const load = useCallback(() => {
     if (tab === 'products') { API.products().then((d) => setProducts(d.products || [])).catch(() => setProducts([])); return; }
     if (tab === 'subscriptions') { setSubs(null); API.subscriptions().then((d) => setSubs(d.subscriptions || [])).catch(() => setSubs([])); return; }
+    if (tab === 'expenses') { setExps(null); API.expenses().then((d) => setExps(d.expenses || [])).catch(() => setExps([])); return; }
     setDocs(null);
     API.documents(tab).then((d) => setDocs(d.documents || [])).catch(() => setDocs([]));
   }, [tab]);
@@ -4458,10 +4461,14 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const toggleActive = async (s) => { try { await API.updateSubscription(s.id, { active: s.active ? 0 : 1 }); load(); } catch (e) { toast(e.message, 'error'); } };
   const payPeriod = async (s) => { if (!s.current_period) return; try { await API.periodMarkPaid(s.current_period.id); toast('Periode bezahlt', 'success'); load(); } catch (e) { toast(e.message, 'error'); } };
   const invoicePeriod = async (s) => { if (!s.current_period) return; try { const r = await API.periodInvoice(s.current_period.id); toast('Rechnung erstellt', 'success'); load(); if (r.invoice_id) window.open(API.docPdfUrl(r.invoice_id, false), '_blank'); } catch (e) { toast(e.message, 'error'); } };
+  const saveExp = async (data) => { try { if (data.id) await API.updateExpense(data.id, data); else await API.newExpense(data); setExpEditing(null); load(); } catch (e) { toast(e.message, 'error'); } };
+  const delExp = async (x) => { if (!await confirmDialog({ title: 'Ausgabe löschen?', message: `${x.vendor || x.category} wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteExpense(x.id); load(); } catch (e) { toast(e.message, 'error'); } };
+  const toggleExpPaid = async (x) => { try { if (x.paid_at) await API.expenseUnmarkPaid(x.id); else await API.expenseMarkPaid(x.id); load(); } catch (e) { toast(e.message, 'error'); } };
 
-  const tabs = [{ id: 'invoice', label: 'Rechnungen' }, { id: 'offer', label: 'Angebote' }, { id: 'subscriptions', label: 'Abos' }, { id: 'products', label: 'Produkte' }];
+  const tabs = [{ id: 'invoice', label: 'Rechnungen' }, { id: 'offer', label: 'Angebote' }, { id: 'subscriptions', label: 'Abos' }, { id: 'expenses', label: 'Ausgaben' }, { id: 'products', label: 'Produkte' }];
   const newBtn = tab === 'products' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setProdEditing({})}>Produkt</Btn>
     : tab === 'subscriptions' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setSubEditing({ interval_unit: 'monthly', tax_rate: 20, active: 1 })}>Neues Abo</Btn>
+    : tab === 'expenses' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setExpEditing({ category: 'Sonstiges', tax_rate: 20, deductible: 1 })}>Neue Ausgabe</Btn>
     : <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ type: tab })}>{tab === 'offer' ? 'Neues Angebot' : 'Neue Rechnung'}</Btn>;
 
   return (
@@ -4489,6 +4496,38 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                   </div>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{fmtEUR(p.unit_price_net)}<span style={{ fontSize: 11, color: 'var(--fg-3)', fontWeight: 400 }}> /{p.unit} · {p.tax_rate}%</span></div>
                   <span className="task-kebab" onClick={(e) => { e.stopPropagation(); delProduct(p); }} title="Löschen" style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex' }}>{Ic.trash(15)}</span>
+                </div>
+              ))}
+            </div>
+          )
+        ) : tab === 'expenses' ? (
+          exps === null ? (
+            <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+          ) : exps.length === 0 ? (
+            <EmptyHint icon={Ic.archive(40)} title="Keine Ausgaben" desc="Erfasse Kosten mit USt/Vorsteuer und hänge optional einen Beleg an."
+              actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setExpEditing({ category: 'Sonstiges', tax_rate: 20, deductible: 1 })}>Neue Ausgabe</Btn>}/>
+          ) : (
+            <div style={{ display: 'grid', gap: 8, maxWidth: 860 }}>
+              {exps.map((x) => (
+                <div key={x.id} className="nyza-listrow" onClick={() => setExpEditing(x)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                  <div style={{ fontSize: 12, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums', width: 78, flexShrink: 0 }}>{fmtDateShort(x.exp_date)}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{x.vendor || x.description || x.category}</span>
+                      {x.has_receipt && <span title="Beleg vorhanden" style={{ color: 'var(--fg-3)', display: 'inline-flex' }}>{Ic.paperclip ? Ic.paperclip(13) : Ic.fileGen(13)}</span>}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{x.category}{x.contact_name ? ' · ' + x.contact_name : ''}{!x.deductible ? ' · keine Vorsteuer' : ''}</div>
+                  </div>
+                  <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: x.paid_at ? 'color-mix(in oklab, #22c55e 18%, transparent)' : 'var(--surface-hi)', color: x.paid_at ? '#22c55e' : 'var(--fg-3)', textTransform: 'uppercase', flexShrink: 0 }}>{x.paid_at ? 'Bezahlt' : 'Offen'}</span>
+                  <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', width: 110, textAlign: 'right', flexShrink: 0 }}>{fmtEUR(x.gross)}</div>
+                  <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
+                    ...(x.has_receipt ? [{ label: 'Beleg ansehen', icon: Ic.eye(15), onClick: () => window.open(API.expenseReceiptUrl(x.id, false), '_blank') }] : []),
+                    { label: x.paid_at ? 'Als offen markieren' : 'Als bezahlt markieren', icon: Ic.check(15), onClick: () => toggleExpPaid(x) },
+                    { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => setExpEditing(x) },
+                    { separator: true },
+                    { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => delExp(x) },
+                  ]); }}
+                    style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
                 </div>
               ))}
             </div>
@@ -4570,11 +4609,106 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
         onOpenPdf={(id) => window.open(API.docPdfUrl(id, false), '_blank')}/>}
       {prodEditing && <ProductModal product={prodEditing} onSave={saveProduct} onClose={() => setProdEditing(null)}/>}
       {subEditing && <SubscriptionModal sub={subEditing} contacts={contacts} onSave={saveSub} onClose={() => setSubEditing(null)}/>}
+      {expEditing && <ExpenseModal exp={expEditing} contacts={contacts} onSave={saveExp} onClose={() => setExpEditing(null)} onChanged={load}/>}
     </>
   );
 }
 
 const SUB_INTERVALS = { monthly: 'monatlich', quarterly: 'quartalsweise', yearly: 'jährlich' };
+const EXP_CATEGORIES = ['Wareneinkauf', 'Hardware', 'Software', 'Büro', 'Werbung/Marketing', 'Reisekosten', 'Kfz', 'Beratung/Recht', 'Miete', 'Gebühren/Bank', 'Telefon/Internet', 'Fortbildung', 'Sonstiges'];
+
+function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
+  const [date, setDate] = useState(exp.exp_date || todayKeyLocal());
+  const [vendor, setVendor] = useState(exp.vendor || '');
+  const [contactId, setContactId] = useState(exp.contact_id ? String(exp.contact_id) : '');
+  const [category, setCategory] = useState(exp.category || 'Sonstiges');
+  const [description, setDescription] = useState(exp.description || '');
+  const [gross, setGross] = useState(exp.gross != null ? exp.gross : 0);
+  const [taxRate, setTaxRate] = useState(exp.tax_rate != null ? exp.tax_rate : 20);
+  const [deductible, setDeductible] = useState(exp.deductible != null ? !!exp.deductible : true);
+  const [paid, setPaid] = useState(!!exp.paid_at);
+  const [hasReceipt, setHasReceipt] = useState(!!exp.has_receipt);
+  const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
+
+  const g = Number(gross) || 0, r = Number(taxRate) || 0;
+  const net = r > 0 ? Math.round((g / (1 + r / 100)) * 100) / 100 : g;
+  const vat = Math.round((g - net) * 100) / 100;
+
+  const submit = async () => {
+    setBusy(true);
+    await onSave({ id: exp.id, exp_date: date || null, vendor: vendor.trim() || null, contact_id: contactId || null, category, description: description.trim() || null, gross: g, tax_rate: r, deductible: deductible ? 1 : 0, paid_at: paid ? (date || todayKeyLocal()) : '' });
+    setBusy(false);
+  };
+  const pickReceipt = () => fileRef.current && fileRef.current.click();
+  const onFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file || !exp.id) { if (!exp.id) toast('Erst speichern, dann Beleg anhängen', 'error'); return; }
+    setUploading(true);
+    try { await API.uploadExpenseReceipt(exp.id, file); setHasReceipt(true); toast('Beleg hochgeladen', 'success'); onChanged && onChanged(); }
+    catch (err) { toast(err.message, 'error'); } finally { setUploading(false); e.target.value = ''; }
+  };
+  const removeReceipt = async () => { try { await API.deleteExpenseReceipt(exp.id); setHasReceipt(false); onChanged && onChanged(); } catch (err) { toast(err.message, 'error'); } };
+
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 500, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.archive(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{exp.id ? 'Ausgabe bearbeiten' : 'Neue Ausgabe'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Datum</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={fld}/></label>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kategorie</span>
+              <select value={category} onChange={(e) => setCategory(e.target.value)} style={{ ...fld, cursor: 'pointer' }}>{EXP_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+            </label>
+          </div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Lieferant / Wofür</span><input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="z. B. Amazon, Hosting…" style={fld}/></label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kunde (optional, weiterverrechenbar)</span>
+            <select value={contactId} onChange={(e) => setContactId(e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value="">— keiner —</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+          </label>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Betrag (brutto)</span><input type="number" step="0.01" value={gross} onChange={(e) => setGross(e.target.value)} style={{ ...fld, textAlign: 'right' }}/></label>
+            <label style={{ width: 90, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>USt %</span>
+              <select value={taxRate} onChange={(e) => setTaxRate(e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value={20}>20</option><option value={13}>13</option><option value={10}>10</option><option value={0}>0</option></select>
+            </label>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: -6 }}>Netto {fmtEUR(net)} · Vorsteuer {fmtEUR(vat)}</div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13.5 }}>
+            <input type="checkbox" checked={deductible} onChange={(e) => setDeductible(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)' }}/> Vorsteuer abzugsfähig
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13.5 }}>
+            <input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)' }}/> Bereits bezahlt
+          </label>
+          {/* Receipt */}
+          <div style={{ paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 8 }}>Beleg</div>
+            <input ref={fileRef} type="file" accept="image/*,application/pdf" onChange={onFile} style={{ display: 'none' }}/>
+            {!exp.id ? (
+              <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>Speichere die Ausgabe, danach kannst du einen Beleg anhängen.</div>
+            ) : hasReceipt ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Btn variant="glass" size="sm" icon={Ic.eye(13)} onClick={() => window.open(API.expenseReceiptUrl(exp.id, false), '_blank')}>Beleg ansehen</Btn>
+                <Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={pickReceipt}>Ersetzen</Btn>
+                <Btn variant="ghost" size="sm" icon={Ic.trash(13)} onClick={removeReceipt}>Entfernen</Btn>
+              </div>
+            ) : (
+              <Btn variant="glass" size="sm" disabled={uploading} icon={uploading ? Ic.loader(13) : Ic.plus(13)} onClick={pickReceipt}>Beleg hochladen</Btn>
+            )}
+          </div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
 
 function SubscriptionModal({ sub, contacts, onSave, onClose }) {
   const [name, setName] = useState(sub.name || '');

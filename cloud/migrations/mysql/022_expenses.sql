@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS expenses (
+    id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id      BIGINT UNSIGNED NOT NULL,
+    contact_id   BIGINT UNSIGNED NULL,
+    exp_date     DATE            NULL DEFAULT NULL,
+    vendor       VARCHAR(255)    NULL,
+    description  VARCHAR(500)    NULL,
+    category     VARCHAR(64)     NOT NULL DEFAULT 'Sonstiges',
+    net          DECIMAL(12,2)   NOT NULL DEFAULT 0,
+    tax_rate     DECIMAL(5,2)    NOT NULL DEFAULT 20.00,
+    tax          DECIMAL(12,2)   NOT NULL DEFAULT 0,
+    gross        DECIMAL(12,2)   NOT NULL DEFAULT 0,
+    deductible   TINYINT(1)      NOT NULL DEFAULT 1,
+    paid_at      TIMESTAMP       NULL DEFAULT NULL,
+    receipt_path VARCHAR(255)    NULL,
+    receipt_name VARCHAR(255)    NULL,
+    receipt_mime VARCHAR(100)    NULL,
+    created_at   TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY ix_expenses_user (user_id),
+    CONSTRAINT fk_expenses_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_expenses_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
