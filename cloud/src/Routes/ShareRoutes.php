@@ -24,6 +24,7 @@ final class ShareRoutes
             $g->post('',        [self::class, 'create']);
             $g->patch('/{id}',  [self::class, 'update']);
             $g->delete('/{id}', [self::class, 'delete']);
+            $g->get('/{id}/events', [self::class, 'events']);
         })->add(new AuthMiddleware());
 
         // Public (no auth) endpoints
@@ -233,6 +234,58 @@ final class ShareRoutes
         return Json::ok($res, ['ok' => true]);
     }
 
+    /** Record a per-share activity event (link opened, file/zip downloaded). */
+    private static function logEvent(int $shareId, string $type, ?int $fileId = null, ?string $fileName = null, ?Request $req = null): void
+    {
+        $ip = null; $ua = null;
+        if ($req) {
+            $ip = mb_substr(\Nyza\RateLimiter::clientIp($req), 0, 64);
+            $line = $req->getHeaderLine('User-Agent');
+            $ua = $line !== '' ? mb_substr($line, 0, 255) : null;
+        }
+        if ($fileName !== null) $fileName = mb_substr($fileName, 0, 255);
+        try {
+            Database::pdo()->prepare(
+                'INSERT INTO share_events (share_id, type, file_id, file_name, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?)'
+            )->execute([$shareId, mb_substr($type, 0, 16), $fileId, $fileName, $ip, $ua]);
+        } catch (\Throwable $e) {}
+    }
+
+    /** Owner: per-share activity history + summary counts. */
+    public static function events(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        $pdo = Database::pdo();
+        $own = $pdo->prepare('SELECT id FROM share_links WHERE id = ? AND user_id = ?');
+        $own->execute([$id, $uid]);
+        if (!$own->fetch()) return Json::err($res, 'Not found', 404);
+
+        $stmt = $pdo->prepare(
+            'SELECT id, type, file_name, ip, created_at FROM share_events '
+            . 'WHERE share_id = ? ORDER BY created_at DESC LIMIT 200'
+        );
+        $stmt->execute([$id]);
+        $events = $stmt->fetchAll();
+
+        $sum = $pdo->prepare(
+            "SELECT "
+            . "SUM(type = 'view') AS views, "
+            . "SUM(type IN ('download', 'zip')) AS downloads "
+            . 'FROM share_events WHERE share_id = ?'
+        );
+        $sum->execute([$id]);
+        $s = $sum->fetch() ?: [];
+
+        return Json::ok($res, [
+            'events' => $events,
+            'summary' => [
+                'views' => (int)($s['views'] ?? 0),
+                'downloads' => (int)($s['downloads'] ?? 0),
+            ],
+        ]);
+    }
+
     private static function loadByToken(string $token): ?array
     {
         $stmt = Database::pdo()->prepare('SELECT * FROM share_links WHERE token = ?');
@@ -324,6 +377,7 @@ final class ShareRoutes
         }
 
         $pdo->prepare('UPDATE share_links SET view_count = view_count + 1 WHERE id = ?')->execute([(int)$share['id']]);
+        self::logEvent((int)$share['id'], 'view', null, null, $req);
         return Json::ok($res, $payload);
     }
 
@@ -345,6 +399,7 @@ final class ShareRoutes
         foreach ($rows as $r) {
             $members[] = ['path' => Storage::abs($r['storage_path']), 'name' => $r['name']];
         }
+        self::logEvent((int)$share['id'], 'zip', null, null, $req);
         \Nyza\ZipStreamer::emit($members, 'share-' . substr($share['token'], 0, 8) . '.zip');
         return $res; // unreachable — emit() exits after streaming
     }
@@ -373,6 +428,8 @@ final class ShareRoutes
         $stmt->execute([$fileId]);
         $file = $stmt->fetch();
         if (!$file) return Json::err($res, 'Not found', 404);
+
+        self::logEvent((int)$share['id'], 'download', $fileId, (string)$file['name'], $req);
 
         // Inline by default so the MediaViewer can preview images/video/PDF in
         // place; force a download only when ?dl=1 is present (the explicit

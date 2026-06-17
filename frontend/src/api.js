@@ -203,6 +203,7 @@ export const API = {
   newShare:    (body) => request('/api/shares', { method: 'POST', body }),
   updateShare: (id, body) => request('/api/shares/' + id, { method: 'PATCH', body }),
   deleteShare: (id) => request('/api/shares/' + id, { method: 'DELETE' }),
+  shareEvents: (id) => request('/api/shares/' + id + '/events'),
   publicShare: (token, password) =>
     request('/api/s/' + token + (password ? '?p=' + encodeURIComponent(password) : ''), { skipAuth: true }),
   // download=true forces an attachment (the explicit Download buttons);

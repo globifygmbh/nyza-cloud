@@ -3326,8 +3326,16 @@ function FolderView({
 function SharesView({ refreshTick, basePath, afterChange, embedded }) {
   const [shares, setShares] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
+  const [histId, setHistId] = useState(null);
+  const [histData, setHistData] = useState(null);
   const load = useCallback(() => { API.shares().then((d) => setShares(d.shares || [])).catch(() => setShares([])); }, []);
   useEffect(() => { load(); }, [load, refreshTick]);
+  const toggleHist = async (id) => {
+    if (histId === id) { setHistId(null); setHistData(null); return; }
+    setHistId(id); setHistData(null);
+    try { setHistData(await API.shareEvents(id)); } catch (e) { toast(e.message, 'error'); setHistData({ events: [] }); }
+  };
+  const evLabel = (e) => e.type === 'download' ? 'Heruntergeladen: ' + (e.file_name || 'Datei') : e.type === 'zip' ? 'Alles als ZIP heruntergeladen' : 'Link geöffnet';
 
   const del = async (id) => { if (!await confirmDialog({ title: 'Share-Link löschen?', message: 'Der Link wird sofort ungültig — niemand kann ihn mehr öffnen.', confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteShare(id); toast('Gelöscht', 'success'); load(); afterChange && afterChange(); } catch (e) { toast(e.message, 'error'); } };
   const copy = (token) => { navigator.clipboard?.writeText(location.origin + (basePath || '') + '/s/' + token); toast('Link kopiert', 'success'); };
@@ -3343,7 +3351,8 @@ function SharesView({ refreshTick, basePath, afterChange, embedded }) {
         ) : (
           <div style={{ display: 'grid', gap: 10 }}>
             {shares.map((s) => (
-              <div key={s.id} className="nyza-listrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <div key={s.id} style={{ borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+              <div className="nyza-listrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px' }}>
                 <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'color-mix(in oklab, var(--accent) 16%, transparent)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{s.folder_id ? Ic.folder(18) : Ic.fileGen(18)}</div>
                 <div className="nyza-listrow-main" style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 540, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -3359,10 +3368,31 @@ function SharesView({ refreshTick, basePath, afterChange, embedded }) {
                     <span>· erstellt {timeAgo(s.created_at)}</span>
                   </div>
                 </div>
+                <Btn variant="glass" size="sm" icon={Ic.clock(13)} onClick={() => toggleHist(s.id)}>Verlauf</Btn>
                 <Btn variant="glass" size="sm" icon={Ic.cog(13)} onClick={() => edit(s)}>Bearbeiten</Btn>
                 <Btn variant="glass" size="sm" icon={Ic.copy(13)} onClick={() => copy(s.token)}>Kopieren</Btn>
                 <a href={(basePath || '') + '/s/' + s.token} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}><Btn variant="glass" size="sm" icon={Ic.eye(13)}>Öffnen</Btn></a>
                 <IconBtn size={32} title="Löschen" onClick={() => del(s.id)}>{Ic.trash(14)}</IconBtn>
+              </div>
+              {histId === s.id && (
+                <div style={{ borderTop: '1px solid var(--border)', padding: '10px 16px 14px', background: 'var(--surface-hi)' }}>
+                  {histData === null ? <div style={{ color: 'var(--fg-3)', fontSize: 12, padding: 8 }}>{Ic.loader(16)}</div>
+                    : (histData.events || []).length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--fg-3)', padding: 6 }}>Noch keine Aktivität.</div>
+                    : (<>
+                        <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 8 }}>{histData.views || 0} Aufrufe · {histData.downloads || 0} Downloads</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+                          {histData.events.map((e) => (
+                            <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+                              <span style={{ color: e.type === 'view' ? 'var(--fg-3)' : 'var(--accent)', display: 'inline-flex' }}>{e.type === 'view' ? Ic.eye(13) : Ic.download(13)}</span>
+                              <span style={{ flex: 1, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{evLabel(e)}</span>
+                              {e.ip && <span style={{ color: 'var(--fg-4)' }}>{e.ip}</span>}
+                              <span style={{ color: 'var(--fg-3)', whiteSpace: 'nowrap' }}>{timeAgo(e.created_at)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </>)}
+                </div>
+              )}
               </div>
             ))}
           </div>
