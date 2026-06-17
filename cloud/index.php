@@ -22,6 +22,7 @@ use Nyza\Routes\FileRoutes;
 use Nyza\Routes\FolderRoutes;
 use Nyza\Routes\ShareRoutes;
 use Nyza\Routes\TaskRoutes;
+use Nyza\Routes\TimeRoutes;
 use Nyza\Routes\UploadLinkRoutes;
 use Nyza\Routes\WebDavRoutes;
 use Nyza\SetupWizard;
@@ -184,6 +185,7 @@ UploadLinkRoutes::mount($app);
 ActivityRoutes::mount($app);
 TaskRoutes::mount($app);
 ContactRoutes::mount($app);
+TimeRoutes::mount($app);
 WebDavRoutes::mount($app);
 
 /** Asset / SPA fallback for all non-API GETs. */

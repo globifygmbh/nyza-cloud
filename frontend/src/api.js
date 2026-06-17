@@ -242,4 +242,13 @@ export const API = {
   newContact:    (body) => request('/api/contacts', { method: 'POST', body }),
   updateContact: (id, body) => request('/api/contacts/' + id, { method: 'PATCH', body }),
   deleteContact: (id) => request('/api/contacts/' + id, { method: 'DELETE' }),
+
+  // Apps · Zeiten (time tracking)
+  timeEntries:   (opts = {}) => { const qs = []; if (opts.from) qs.push('from=' + opts.from); if (opts.to) qs.push('to=' + opts.to); return request('/api/time' + (qs.length ? '?' + qs.join('&') : '')); },
+  timeRunning:   () => request('/api/time/running'),
+  timeStart:     (body) => request('/api/time/start', { method: 'POST', body }),
+  timeStop:      (id) => request('/api/time/' + id + '/stop', { method: 'POST', body: {} }),
+  newTimeEntry:  (body) => request('/api/time', { method: 'POST', body }),
+  updateTimeEntry: (id, body) => request('/api/time/' + id, { method: 'PATCH', body }),
+  deleteTimeEntry: (id) => request('/api/time/' + id, { method: 'DELETE' }),
 };

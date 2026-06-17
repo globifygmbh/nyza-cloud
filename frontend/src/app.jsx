@@ -2641,6 +2641,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-contacts' && (
           <ContactsApp onBack={() => setNav({ name: 'apps' })}/>
         )}
+        {nav.name === 'app-times' && (
+          <ZeitenApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -3317,9 +3320,9 @@ function AppsView({ onOpenApp }) {
   const live = [
     { id: 'tasks',    label: 'Tasks',    desc: 'Aufgaben & To-dos', icon: Ic.checkSquare(26), grad: 'linear-gradient(135deg, oklch(0.72 0.18 282), oklch(0.64 0.17 248))' },
     { id: 'contacts', label: 'Kontakte', desc: 'Kunden & Adressen',  icon: Ic.users(26),      grad: 'linear-gradient(135deg, oklch(0.7 0.16 240), oklch(0.66 0.16 210))' },
+    { id: 'times',    label: 'Zeiten',   desc: 'Zeiterfassung',      icon: Ic.clock(26),      grad: 'linear-gradient(135deg, oklch(0.74 0.16 200), oklch(0.66 0.16 230))' },
   ];
   const soon = [
-    { id: 'times',      label: 'Zeiten',       desc: 'Zeiterfassung',          icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.74 0.16 200), oklch(0.66 0.16 230))' },
     { id: 'roadmap',    label: 'Roadmap',      desc: 'Planung & Meilensteine', icon: Ic.bolt(26),    grad: 'linear-gradient(135deg, oklch(0.74 0.18 30), oklch(0.66 0.2 360))' },
     { id: 'accounting', label: 'Buchhaltung',  desc: 'Rechnungen & Belege',    icon: Ic.archive(26), grad: 'linear-gradient(135deg, oklch(0.74 0.17 155), oklch(0.68 0.15 175))' },
     { id: 'calendar',   label: 'Kalender',     desc: 'Termine & Events',       icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.72 0.2 350), oklch(0.66 0.2 320))' },
@@ -3760,6 +3763,212 @@ function ContactEditModal({ contact, onSave, onClose }) {
             <input type="checkbox" checked={f.is_customer} onChange={(e) => set('is_customer', e.target.checked)} style={{ width: 16, height: 16, accentColor: 'var(--accent)', cursor: 'pointer' }}/>
             <span style={{ fontSize: 14, color: 'var(--fg-2)' }}>Als Kunde markieren</span>
           </label>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+// ───── Zeiten app (time tracking) ───────────────────────────────────────────
+function fmtDur(sec) {
+  if (sec == null) return '–';
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return h + 'h ' + String(m).padStart(2, '0') + 'm';
+  if (m > 0) return m + 'm';
+  return (sec % 60) + 's';
+}
+function fmtClock(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
+  return [h, m, s].map((x) => String(x).padStart(2, '0')).join(':');
+}
+function dtParse(s) { return s ? new Date(String(s).replace(' ', 'T')) : null; }
+function fmtHM(s) { const d = dtParse(s); return d ? d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : ''; }
+function dayLabel(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const diff = Math.round((d.getTime() - now.getTime()) / 86400000);
+  if (diff === 0) return 'Heute';
+  if (diff === -1) return 'Gestern';
+  return d.toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: 'long', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
+}
+
+function ZeitenApp({ onBack }) {
+  const [entries, setEntries] = useState(null);
+  const [running, setRunning] = useState(null);
+  const [contacts, setContacts] = useState([]);
+  const [now, setNow] = useState(Date.now());
+  const [task, setTask] = useState('');
+  const [contactId, setContactId] = useState('');
+  const [modal, setModal] = useState(null); // {} new | entry edit
+
+  const load = useCallback(() => {
+    API.timeEntries().then((d) => setEntries(d.entries || [])).catch(() => setEntries([]));
+    API.timeRunning().then((d) => setRunning(d.entry || null)).catch(() => {});
+  }, []);
+  useEffect(() => { load(); API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {}); }, [load]);
+  // Tick once a second while a timer runs so the elapsed display stays live.
+  useEffect(() => { if (!running) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [running]);
+
+  const start = async () => {
+    try { await API.timeStart({ task: task.trim() || null, contact_id: contactId || null }); setTask(''); setContactId(''); load(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const stop = async () => { if (!running) return; try { await API.timeStop(running.id); load(); } catch (e) { toast(e.message, 'error'); } };
+  const save = async (data) => {
+    try {
+      if (data.id) await API.updateTimeEntry(data.id, data);
+      else await API.newTimeEntry(data);
+      setModal(null); load();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+  const del = async (en) => {
+    if (!await confirmDialog({ title: 'Eintrag löschen?', message: 'Dieser Zeiteintrag wird gelöscht.', confirmLabel: 'Löschen', danger: true })) return;
+    try { await API.deleteTimeEntry(en.id); load(); } catch (e) { toast(e.message, 'error'); }
+  };
+
+  const liveElapsed = running ? Math.max(0, Math.floor((now - dtParse(running.started_at).getTime()) / 1000)) : 0;
+
+  // Group completed entries by calendar day (newest first) with per-day totals.
+  const done = (entries || []).filter((e) => !e.running);
+  const groups = [];
+  const idx = {};
+  for (const e of done) {
+    const key = (e.started_at || '').slice(0, 10);
+    if (!(key in idx)) { idx[key] = groups.length; groups.push({ key, total: 0, items: [] }); }
+    groups[idx[key]].items.push(e);
+    groups[idx[key]].total += e.duration || 0;
+  }
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayTotal = (groups.find((g) => g.key === todayKey)?.total || 0) + (running ? liveElapsed : 0);
+
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Zeiten']}
+        right={<Btn variant="glass" size="sm" icon={Ic.plus(14)} onClick={() => setModal({})}>Manuell</Btn>}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        {/* Live tracker */}
+        <Glass style={{ borderRadius: 'var(--r-lg)', padding: 18, marginBottom: 8, maxWidth: 860 }}>
+          {running ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 34, fontWeight: 600, letterSpacing: -1, fontVariantNumeric: 'tabular-nums', color: 'var(--accent)', minWidth: 150 }}>{fmtClock(liveElapsed)}</div>
+              <div style={{ flex: 1, minWidth: 160 }}>
+                <div style={{ fontSize: 14, fontWeight: 540 }}>{running.task || 'Ohne Aufgabe'}</div>
+                <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 2 }}>{running.contact_name ? running.contact_name + ' · ' : ''}seit {fmtHM(running.started_at)}</div>
+              </div>
+              <Btn variant="danger" size="lg" icon={<span style={{ width: 12, height: 12, borderRadius: 3, background: 'currentColor', display: 'inline-block' }}/>} onClick={stop}>Stopp</Btn>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <input value={task} onChange={(e) => setTask(e.target.value)} placeholder="Woran arbeitest du?"
+                onKeyDown={(e) => { if (e.key === 'Enter') start(); }}
+                style={{ flex: 1, minWidth: 180, height: 48, padding: '0 16px', borderRadius: 'var(--r-md)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 15, color: 'var(--fg)', fontFamily: 'inherit' }}/>
+              <select value={contactId} onChange={(e) => setContactId(e.target.value)}
+                style={{ height: 48, padding: '0 12px', borderRadius: 'var(--r-md)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer', maxWidth: 200 }}>
+                <option value="">— Kunde —</option>
+                {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <Btn variant="primary" size="lg" icon={<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M3 1l9 6-9 6z"/></svg>} onClick={start}>Start</Btn>
+            </div>
+          )}
+        </Glass>
+        <div style={{ fontSize: 12, color: 'var(--fg-3)', marginBottom: 24, maxWidth: 860 }}>Heute erfasst: <strong style={{ color: 'var(--fg-2)' }}>{fmtDur(todayTotal)}</strong></div>
+
+        {entries === null ? (
+          <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+        ) : done.length === 0 ? (
+          <EmptyHint icon={Ic.clock(40)} title="Noch keine Zeiten" desc="Starte den Timer oder trage eine Zeit manuell ein."/>
+        ) : (
+          <div style={{ maxWidth: 860 }}>
+            {groups.map((g) => (
+              <div key={g.key} style={{ marginBottom: 26 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>{dayLabel(g.key)}</span>
+                  <div style={{ flex: 1, height: 1, background: 'var(--border)' }}/>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>{fmtDur(g.total)}</span>
+                </div>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {g.items.map((en) => (
+                    <div key={en.id} className="nyza-listrow" onClick={() => setModal(en)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                      <div style={{ fontSize: 12, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0, width: 96 }}>{fmtHM(en.started_at)}–{fmtHM(en.ended_at)}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{en.task || 'Ohne Aufgabe'}</div>
+                        {(en.contact_name || en.note) && <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{[en.contact_name, en.note].filter(Boolean).join(' · ')}</div>}
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtDur(en.duration)}</div>
+                      <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
+                        { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => setModal(en) },
+                        { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => del(en) },
+                      ]); }}
+                        style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {modal && <TimeEntryModal entry={modal} contacts={contacts} onSave={save} onClose={() => setModal(null)}/>}
+    </>
+  );
+}
+
+function TimeEntryModal({ entry, contacts, onSave, onClose }) {
+  const startD = dtParse(entry.started_at);
+  const endD = dtParse(entry.ended_at);
+  const pad = (n) => String(n).padStart(2, '0');
+  const toDate = (d) => d ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : new Date().toISOString().slice(0, 10);
+  const toTime = (d) => d ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : '';
+  const [date, setDate] = useState(toDate(startD));
+  const [start, setStart] = useState(toTime(startD) || '09:00');
+  const [end, setEnd] = useState(toTime(endD) || '10:00');
+  const [task, setTask] = useState(entry.task || '');
+  const [contactId, setContactId] = useState(entry.contact_id ? String(entry.contact_id) : '');
+  const [note, setNote] = useState(entry.note || '');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!date || !start || !end) { toast('Datum, Start und Ende erforderlich', 'error'); return; }
+    if (end <= start) { toast('Ende muss nach dem Start liegen', 'error'); return; }
+    setBusy(true);
+    await onSave({ id: entry.id, task: task.trim() || null, note: note.trim() || null, contact_id: contactId || null, started_at: `${date}T${start}`, ended_at: `${date}T${end}` });
+    setBusy(false);
+  };
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 480, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.clock(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{entry.id ? 'Zeit bearbeiten' : 'Zeit eintragen'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Aufgabe</span>
+            <input value={task} autoFocus onChange={(e) => setTask(e.target.value)} placeholder="Woran gearbeitet?" style={fld}/>
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Tag</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={fld}/></div>
+            <div style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Start</span><input type="time" value={start} onChange={(e) => setStart(e.target.value)} style={fld}/></div>
+            <div style={{ flex: '1 1 90px', display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Ende</span><input type="time" value={end} onChange={(e) => setEnd(e.target.value)} style={fld}/></div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kunde</span>
+            <select value={contactId} onChange={(e) => setContactId(e.target.value)} style={{ ...fld, cursor: 'pointer' }}>
+              <option value="">— Kein Kunde —</option>
+              {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Notiz</span>
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Notiz (optional)" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/>
+          </div>
         </div>
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
