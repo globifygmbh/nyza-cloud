@@ -4438,6 +4438,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const [repYear, setRepYear] = useState(() => new Date().getFullYear());
   const [repPeriod, setRepPeriod] = useState('year');
   const [importOpen, setImportOpen] = useState(false);
+  const [doubleEntry, setDoubleEntry] = useState(false);
   const [editing, setEditing] = useState(null);
   const [prodEditing, setProdEditing] = useState(null);
   const [subEditing, setSubEditing] = useState(null);
@@ -4452,7 +4453,11 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
     API.documents(tab).then((d) => setDocs(d.documents || [])).catch(() => setDocs([]));
   }, [tab, repYear, repPeriod]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {}); API.products().then((d) => setProducts(d.products || [])).catch(() => {}); }, []);
+  useEffect(() => {
+    API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {});
+    API.products().then((d) => setProducts(d.products || [])).catch(() => {});
+    API.getSettings('company').then((d) => { const lf = (d.settings || {}).legal_form; setDoubleEntry((d.settings || {}).accounting_mode === 'double_entry' || lf === 'GmbH' || lf === 'AG'); }).catch(() => {});
+  }, []);
 
   const openDoc = async (id) => { try { const d = await API.document(id); setEditing(d.document); } catch (e) { toast(e.message, 'error'); } };
   const saveDoc = async (data) => { try { let r; if (data.id) r = await API.updateDocument(data.id, data); else r = await API.newDocument(data); setEditing(null); load(); return r; } catch (e) { toast(e.message, 'error'); } };
@@ -4473,7 +4478,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const delExp = async (x) => { if (!await confirmDialog({ title: 'Ausgabe löschen?', message: `${x.vendor || x.category} wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteExpense(x.id); load(); } catch (e) { toast(e.message, 'error'); } };
   const toggleExpPaid = async (x) => { try { if (x.paid_at) await API.expenseUnmarkPaid(x.id); else await API.expenseMarkPaid(x.id); load(); } catch (e) { toast(e.message, 'error'); } };
 
-  const tabs = [{ id: 'invoice', label: 'Rechnungen' }, { id: 'offer', label: 'Angebote' }, { id: 'subscriptions', label: 'Abos' }, { id: 'expenses', label: 'Ausgaben' }, { id: 'reports', label: 'Auswertung' }, { id: 'products', label: 'Produkte' }];
+  const tabs = [{ id: 'invoice', label: 'Rechnungen' }, { id: 'offer', label: 'Angebote' }, { id: 'subscriptions', label: 'Abos' }, { id: 'expenses', label: 'Ausgaben' }, { id: 'reports', label: 'Auswertung' }, ...(doubleEntry ? [{ id: 'ledger', label: 'Doppik' }] : []), { id: 'products', label: 'Produkte' }];
   const newBtn = tab === 'products' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setProdEditing({})}>Produkt</Btn>
     : tab === 'subscriptions' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setSubEditing({ interval_unit: 'monthly', tax_rate: 20, active: 1 })}>Neues Abo</Btn>
     : tab === 'expenses' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setExpEditing({ category: 'Sonstiges', tax_rate: 20, deductible: 1 })}>Neue Ausgabe</Btn>
@@ -4513,6 +4518,8 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
           )
         ) : tab === 'reports' ? (
           <AuswertungView data={rep} year={repYear} onYear={(dy) => setRepYear((y) => y + dy)} period={repPeriod} onPeriod={setRepPeriod}/>
+        ) : tab === 'ledger' ? (
+          <DoppikView/>
         ) : tab === 'expenses' ? (
           exps === null ? (
             <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
@@ -4999,6 +5006,290 @@ function txTable(title, rows, isExpense) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function DoppikView() {
+  const [year, setYear] = useState(() => new Date().getFullYear());
+  const [period, setPeriod] = useState('year');
+  const [sub, setSub] = useState('journal');
+  const [data, setData] = useState(null);
+  const [accounts, setAccounts] = useState([]);
+  const [entryModal, setEntryModal] = useState(false);
+
+  useEffect(() => { API.ledgerAccounts().then((d) => setAccounts(d.accounts || [])).catch(() => {}); }, []);
+  const load = useCallback(() => {
+    setData(null);
+    const o = periodOpts(period);
+    const p = sub === 'journal' ? API.ledgerJournal(year, o)
+      : sub === 'guv' ? API.ledgerGuv(year, o)
+      : sub === 'salden' ? API.ledgerBalances(year, o)
+      : sub === 'balance' ? API.ledgerBalanceSheet(year)
+      : API.ledgerAccounts();
+    p.then((d) => setData(d)).catch((e) => { toast(e.message, 'error'); setData({}); });
+  }, [sub, year, period]);
+  useEffect(() => { load(); }, [load]);
+
+  const subs = [{ id: 'journal', label: 'Journal' }, { id: 'guv', label: 'GuV' }, { id: 'balance', label: 'Bilanz' }, { id: 'salden', label: 'Saldenliste' }, { id: 'accounts', label: 'Konten' }];
+  const reloadAccounts = () => API.ledgerAccounts().then((d) => setAccounts(d.accounts || []));
+
+  const sel = { height: 32, padding: '0 10px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer' };
+  return (
+    <div style={{ maxWidth: 900 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <IconBtn size={32} onClick={() => setYear((y) => y - 1)} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronL(15)}</IconBtn>
+        <div style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-display)', minWidth: 52, textAlign: 'center' }}>{year}</div>
+        <IconBtn size={32} onClick={() => setYear((y) => y + 1)} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronR(15)}</IconBtn>
+        {sub !== 'balance' && sub !== 'accounts' && (
+          <select value={period} onChange={(e) => setPeriod(e.target.value)} style={sel}>
+            <option value="year">Ganzes Jahr</option>
+            <optgroup label="Quartal">{[1, 2, 3, 4].map((q) => <option key={'q' + q} value={'q' + q}>Q{q}</option>)}</optgroup>
+            <optgroup label="Monat">{MONTH_FULL.map((m, i) => <option key={'m' + (i + 1)} value={'m' + (i + 1)}>{m}</option>)}</optgroup>
+          </select>
+        )}
+        <div style={{ flex: 1 }}/>
+        {sub === 'journal' && <Btn variant="glass" size="sm" icon={Ic.download(13)} onClick={() => { window.location.href = API.ledgerDatevUrl(year, periodOpts(period)); }}>DATEV</Btn>}
+        {sub === 'journal' && <Btn variant="primary" size="sm" icon={Ic.plus(13)} onClick={() => setEntryModal(true)}>Buchung</Btn>}
+        {sub === 'accounts' && <Btn variant="primary" size="sm" icon={Ic.plus(13)} onClick={() => setEntryModal('account')}>Konto</Btn>}
+      </div>
+
+      <div className="no-scrollbar" style={{ overflowX: 'auto', marginBottom: 18 }}>
+        <div style={{ display: 'inline-flex', gap: 4, padding: 4, width: 'max-content', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+          {subs.map((s) => { const on = sub === s.id; return <button key={s.id} onClick={() => setSub(s.id)} style={{ height: 30, padding: '0 14px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 540, whiteSpace: 'nowrap', background: on ? 'var(--accent-grad)' : 'transparent', color: on ? '#fff' : 'var(--fg-2)' }}>{s.label}</button>; })}
+        </div>
+      </div>
+
+      {data === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div> : (
+        <>
+          {sub === 'journal' && <LedgerJournal data={data}/>}
+          {sub === 'guv' && <LedgerGuv data={data}/>}
+          {sub === 'balance' && <LedgerBalanceSheet data={data}/>}
+          {sub === 'salden' && <LedgerSalden data={data}/>}
+          {sub === 'accounts' && <LedgerAccounts accounts={accounts} onReload={reloadAccounts}/>}
+        </>
+      )}
+
+      {entryModal === true && <LedgerEntryModal accounts={accounts} onClose={() => setEntryModal(false)} onSaved={() => { setEntryModal(false); load(); }}/>}
+      {entryModal === 'account' && <LedgerAccountModal onClose={() => setEntryModal(false)} onSaved={() => { setEntryModal(false); reloadAccounts(); }}/>}
+    </div>
+  );
+}
+
+function LedgerJournal({ data }) {
+  const entries = data.entries || [];
+  if (!entries.length) return <div style={{ fontSize: 13, color: 'var(--fg-3)' }}>Keine Buchungen im Zeitraum.</div>;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {entries.map((e, i) => (
+        <div key={i} style={{ borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '10px 14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <span style={{ fontSize: 11.5, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums' }}>{fmtDateShort(e.date)}</span>
+            <span style={{ fontSize: 13, fontWeight: 540, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.description || e.ref}</span>
+            {e.ref && <span style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>{e.ref}</span>}
+          </div>
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', fontVariantNumeric: 'tabular-nums' }}>
+            <tbody>{e.lines.map((l, j) => (
+              <tr key={j}>
+                <td style={{ width: 56, color: 'var(--fg-3)' }}>{l.account}</td>
+                <td style={{ color: 'var(--fg-2)' }}>{l.name}</td>
+                <td style={{ textAlign: 'right', width: 100, color: l.debit > 0 ? 'var(--fg)' : 'var(--fg-4)' }}>{l.debit > 0 ? fmtEUR(l.debit) : '—'}</td>
+                <td style={{ textAlign: 'right', width: 100, color: l.credit > 0 ? 'var(--fg)' : 'var(--fg-4)' }}>{l.credit > 0 ? fmtEUR(l.credit) : '—'}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      ))}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 24, padding: '8px 14px', fontSize: 12.5, color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums' }}>
+        <span>Soll: <strong>{fmtEUR(data.totals?.debit || 0)}</strong></span>
+        <span>Haben: <strong>{fmtEUR(data.totals?.credit || 0)}</strong></span>
+      </div>
+    </div>
+  );
+}
+
+function LedgerGuv({ data }) {
+  const blk = (title, rows) => (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '14px 16px' }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>{title}</div>
+      {rows.length === 0 ? <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>—</div> : rows.map((r) => (
+        <div key={r.account} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '3px 0', fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ color: 'var(--fg-2)' }}><span style={{ color: 'var(--fg-4)' }}>{r.account}</span> {r.name}</span><span>{fmtEUR(r.amount)}</span>
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 16 }}>
+        {blk('Erlöse', data.income || [])}
+        {blk('Aufwände', data.expense || [])}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 24, fontSize: 14, fontVariantNumeric: 'tabular-nums' }}>
+        <span style={{ color: 'var(--fg-3)' }}>Erlöse {fmtEUR(data.total_income || 0)} − Aufwand {fmtEUR(data.total_expense || 0)} =</span>
+        <strong style={{ color: (data.result || 0) < 0 ? '#ef4444' : 'var(--accent)' }}>Ergebnis {fmtEUR(data.result || 0)}</strong>
+      </div>
+    </div>
+  );
+}
+
+function LedgerBalanceSheet({ data }) {
+  const side = (title, rows, total) => (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '14px 16px' }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>{title}</div>
+      {rows.map((r) => (
+        <div key={r.account} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '3px 0', fontVariantNumeric: 'tabular-nums' }}>
+          <span style={{ color: 'var(--fg-2)' }}><span style={{ color: 'var(--fg-4)' }}>{r.account}</span> {r.name}</span><span>{fmtEUR(r.amount)}</span>
+        </div>
+      ))}
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}><span>Summe</span><span>{fmtEUR(total)}</span></div>
+    </div>
+  );
+  const passiva = [...(data.liabilities || []), ...(data.equity || [])];
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 12 }}>Stichtag {fmtDateShort(data.as_of)} · Jahresergebnis {fmtEUR(data.result || 0)}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+        {side('Aktiva', data.assets || [], data.total_assets || 0)}
+        {side('Passiva (Verbindl. + Eigenkapital)', passiva, data.total_equity_liabilities || 0)}
+      </div>
+    </div>
+  );
+}
+
+function LedgerSalden({ data }) {
+  const rows = data.accounts || data.rows || [];
+  return (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '14px 16px', overflowX: 'auto' }}>
+      <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse', fontVariantNumeric: 'tabular-nums', minWidth: 460 }}>
+        <thead><tr style={{ color: 'var(--fg-3)', textAlign: 'right' }}>
+          <th style={{ textAlign: 'left', fontWeight: 500, padding: '0 0 8px' }}>Konto</th><th style={{ textAlign: 'left', fontWeight: 500 }}>Bezeichnung</th><th style={{ fontWeight: 500 }}>Soll</th><th style={{ fontWeight: 500 }}>Haben</th><th style={{ fontWeight: 500 }}>Saldo</th>
+        </tr></thead>
+        <tbody>{rows.map((r) => (
+          <tr key={r.account} style={{ borderTop: '1px solid var(--border)' }}>
+            <td style={{ color: 'var(--fg-3)', padding: '4px 0' }}>{r.account}</td><td>{r.name}</td>
+            <td style={{ textAlign: 'right' }}>{fmtEUR(r.debit)}</td><td style={{ textAlign: 'right' }}>{fmtEUR(r.credit)}</td>
+            <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtEUR(r.balance)}</td>
+          </tr>
+        ))}</tbody>
+        <tfoot><tr style={{ borderTop: '2px solid var(--border)', fontWeight: 700 }}>
+          <td colSpan={2} style={{ padding: '6px 0' }}>Summe</td><td style={{ textAlign: 'right' }}>{fmtEUR(data.totals?.debit || 0)}</td><td style={{ textAlign: 'right' }}>{fmtEUR(data.totals?.credit || 0)}</td><td/>
+        </tr></tfoot>
+      </table>
+    </div>
+  );
+}
+
+function LedgerAccounts({ accounts, onReload }) {
+  const TYPE_DE = { asset: 'Aktiva', liability: 'Passiva', equity: 'Eigenkapital', income: 'Erlös', expense: 'Aufwand' };
+  const del = async (a) => { try { await API.deleteLedgerAccount(a.number); onReload(); } catch (e) { toast(e.message, 'error'); } };
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      {accounts.map((a) => (
+        <div key={a.number} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+          <span style={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums', color: 'var(--fg-3)', width: 44 }}>{a.number}</span>
+          <span style={{ flex: 1, fontSize: 13 }}>{a.name}</span>
+          <span style={{ fontSize: 10.5, color: 'var(--fg-3)', padding: '2px 7px', borderRadius: 999, background: 'var(--surface-hi)' }}>{TYPE_DE[a.type] || a.type}</span>
+          <span onClick={() => del(a)} title="Entfernen" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex' }}>{Ic.close(13)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LedgerAccountModal({ onClose, onSaved }) {
+  const [number, setNumber] = useState('');
+  const [name, setName] = useState('');
+  const [type, setType] = useState('expense');
+  const [busy, setBusy] = useState(false);
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  const submit = async () => {
+    if (!number.trim() || !name.trim()) { toast('Nummer und Name nötig', 'error'); return; }
+    setBusy(true);
+    try { await API.newLedgerAccount({ number: number.trim(), name: name.trim(), type }); onSaved(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 400, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Neues Konto</h2>
+          <IconBtn size={30} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="Nr. (z. B. 7500)" style={{ ...fld, width: 130 }}/>
+            <select value={type} onChange={(e) => setType(e.target.value)} style={{ ...fld, cursor: 'pointer' }}>
+              <option value="asset">Aktiva</option><option value="liability">Passiva</option><option value="equity">Eigenkapital</option><option value="income">Erlös</option><option value="expense">Aufwand</option>
+            </select>
+          </div>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Bezeichnung" style={fld}/>
+        </div>
+        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+function LedgerEntryModal({ accounts, onClose, onSaved }) {
+  const [date, setDate] = useState(todayKeyLocal());
+  const [desc, setDesc] = useState('');
+  const [lines, setLines] = useState([{ account: '', debit: '', credit: '' }, { account: '', debit: '', credit: '' }]);
+  const [busy, setBusy] = useState(false);
+  const setLine = (i, k, v) => setLines((a) => a.map((l, j) => j === i ? { ...l, [k]: v } : l));
+  const addLine = () => setLines((a) => [...a, { account: '', debit: '', credit: '' }]);
+  const rmLine = (i) => setLines((a) => a.length > 2 ? a.filter((_, j) => j !== i) : a);
+  const sumD = lines.reduce((a, l) => a + (Number(l.debit) || 0), 0);
+  const sumC = lines.reduce((a, l) => a + (Number(l.credit) || 0), 0);
+  const balanced = Math.abs(sumD - sumC) < 0.005 && sumD > 0;
+  const submit = async () => {
+    if (!balanced) { toast('Soll und Haben müssen gleich sein', 'error'); return; }
+    const ls = lines.filter((l) => l.account && ((Number(l.debit) || 0) > 0 || (Number(l.credit) || 0) > 0))
+      .map((l) => ({ account: l.account, debit: Number(l.debit) || 0, credit: Number(l.credit) || 0 }));
+    if (ls.length < 2) { toast('Mind. zwei Zeilen', 'error'); return; }
+    setBusy(true);
+    try { await API.newLedgerEntry({ entry_date: date, description: desc.trim() || null, lines: ls }); onSaved(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const fld = { height: 36, padding: '0 8px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', fontFamily: 'inherit' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 560, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Manuelle Buchung</h2>
+          <IconBtn size={30} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ ...fld, height: 42, width: 160 }}/>
+            <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Buchungstext" style={{ ...fld, height: 42, flex: 1 }}/>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {lines.map((l, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <select value={l.account} onChange={(e) => setLine(i, 'account', e.target.value)} style={{ ...fld, flex: 1, minWidth: 0, cursor: 'pointer' }}>
+                  <option value="">Konto…</option>
+                  {accounts.map((a) => <option key={a.number} value={a.number}>{a.number} {a.name}</option>)}
+                </select>
+                <input type="number" step="0.01" value={l.debit} onChange={(e) => setLine(i, 'debit', e.target.value)} placeholder="Soll" style={{ ...fld, width: 90, textAlign: 'right' }}/>
+                <input type="number" step="0.01" value={l.credit} onChange={(e) => setLine(i, 'credit', e.target.value)} placeholder="Haben" style={{ ...fld, width: 90, textAlign: 'right' }}/>
+                <span onClick={() => rmLine(i)} style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex' }}>{Ic.close(13)}</span>
+              </div>
+            ))}
+            <button onClick={addLine} style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, color: 'var(--fg-3)' }}>{Ic.plus(12)} Zeile</button>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 18, fontSize: 12.5, fontVariantNumeric: 'tabular-nums', color: balanced ? 'var(--fg-2)' : '#ef4444' }}>
+            <span>Soll {fmtEUR(sumD)}</span><span>Haben {fmtEUR(sumC)}</span><span>{balanced ? '✓ ausgeglichen' : 'Differenz ' + fmtEUR(sumD - sumC)}</span>
+          </div>
+        </div>
+        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy || !balanced} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Buchen</Btn>
+        </div>
+      </Glass>
     </div>
   );
 }

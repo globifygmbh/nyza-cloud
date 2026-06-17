@@ -23,6 +23,7 @@ use Nyza\Routes\ExpenseRoutes;
 use Nyza\Routes\FileRoutes;
 use Nyza\Routes\FolderRoutes;
 use Nyza\Routes\ImportRoutes;
+use Nyza\Routes\LedgerRoutes;
 use Nyza\Routes\ProductRoutes;
 use Nyza\Routes\ReminderRoutes;
 use Nyza\Routes\ReportRoutes;
@@ -203,6 +204,7 @@ RoadmapRoutes::mount($app);
 ReportRoutes::mount($app);
 ReminderRoutes::mount($app);
 ImportRoutes::mount($app);
+LedgerRoutes::mount($app);
 SettingsRoutes::mount($app);
 WebDavRoutes::mount($app);
 

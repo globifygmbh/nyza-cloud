@@ -5,6 +5,7 @@
 export const BASE = (typeof window !== 'undefined' && window.NYZA_BASE) || '';
 
 const url = (p) => BASE + p;
+const ledgerQ = (year, opts = {}) => '?year=' + year + (opts.month ? '&month=' + opts.month : '') + (opts.quarter ? '&quarter=' + opts.quarter : '');
 
 export function getToken() {
   return localStorage.getItem('nyza.token') || null;
@@ -309,6 +310,18 @@ export const API = {
   datevUrl:  (year, opts = {}) => url('/api/reports/datev') + '?year=' + year + (opts.month ? '&month=' + opts.month : '') + (opts.quarter ? '&quarter=' + opts.quarter : '') + '&download=1&token=' + (getToken() || ''),
   importParse:  (file) => { const fd = new FormData(); fd.append('file', file); return request('/api/import/parse', { method: 'POST', body: fd }); },
   importCommit: (records) => request('/api/import/commit', { method: 'POST', body: { records } }),
+
+  // Buchhaltung · Doppik (double-entry / GmbH)
+  ledgerAccounts:    () => request('/api/ledger/accounts'),
+  newLedgerAccount:  (body) => request('/api/ledger/accounts', { method: 'POST', body }),
+  deleteLedgerAccount: (number) => request('/api/ledger/accounts/' + number, { method: 'DELETE' }),
+  ledgerJournal:     (year, opts = {}) => request('/api/ledger/journal' + ledgerQ(year, opts)),
+  ledgerGuv:         (year, opts = {}) => request('/api/ledger/guv' + ledgerQ(year, opts)),
+  ledgerBalances:    (year, opts = {}) => request('/api/ledger/balances' + ledgerQ(year, opts)),
+  ledgerBalanceSheet:(year) => request('/api/ledger/balance-sheet?year=' + year),
+  newLedgerEntry:    (body) => request('/api/ledger/entries', { method: 'POST', body }),
+  deleteLedgerEntry: (id) => request('/api/ledger/entries/' + id, { method: 'DELETE' }),
+  ledgerDatevUrl:    (year, opts = {}) => url('/api/ledger/datev') + ledgerQ(year, opts) + '&download=1&token=' + (getToken() || ''),
   periodMarkPaid:    (id, paid_date) => request('/api/periods/' + id + '/mark-paid', { method: 'POST', body: { paid_date } }),
   periodUnmarkPaid:  (id) => request('/api/periods/' + id + '/unmark-paid', { method: 'POST', body: {} }),
   periodInvoice:     (id) => request('/api/periods/' + id + '/invoice', { method: 'POST', body: {} }),
