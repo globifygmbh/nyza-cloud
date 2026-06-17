@@ -156,15 +156,19 @@ final class TimeRoutes
         return $s->fetch() ? (int)$v : null;
     }
 
-    /** Parse 'Y-m-d H:i(:s)' or ISO 'Y-m-dTH:i' → 'Y-m-d H:i:s'. */
+    /**
+     * Parse an incoming datetime (ISO 8601 with offset/Z, or naive) into a UTC
+     * 'Y-m-d H:i:s' string so stored times match MySQL NOW() (UTC) and the
+     * frontend's UTC-based display. The frontend sends ISO 'Z' for manual
+     * entries; strtotime honours the offset, gmdate normalises to UTC.
+     */
     private static function parseDt($v, ?bool &$err): ?string
     {
         $err = false;
         if ($v === null || $v === '') return null;
-        $v = str_replace('T', ' ', (string)$v);
-        $ts = strtotime($v);
+        $ts = strtotime((string)$v);
         if ($ts === false) { $err = true; return null; }
-        return date('Y-m-d H:i:s', $ts);
+        return gmdate('Y-m-d H:i:s', $ts);
     }
 
     private static function runningRow(int $uid): ?array

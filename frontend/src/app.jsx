@@ -2651,6 +2651,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           <SettingsApp onBack={() => setNav({ name: 'apps' })}
             onProfile={() => setShowProfile(true)} onSecurity={() => setShowSecurity(true)}/>
         )}
+        {nav.name === 'app-accounting' && (
+          <BuchhaltungApp onBack={() => setNav({ name: 'apps' })} onOpenSettings={() => setNav({ name: 'app-settings' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -3330,9 +3333,9 @@ function AppsView({ onOpenApp }) {
     { id: 'times',    label: 'Zeiten',   desc: 'Zeiterfassung',      icon: Ic.clock(26),      grad: 'linear-gradient(135deg, oklch(0.74 0.16 200), oklch(0.66 0.16 230))' },
     { id: 'roadmap',  label: 'Roadmap',  desc: 'Planung & Meilensteine', icon: Ic.bolt(26),   grad: 'linear-gradient(135deg, oklch(0.74 0.18 30), oklch(0.66 0.2 360))' },
     { id: 'settings', label: 'Einstellungen', desc: 'Konfiguration',     icon: Ic.cog(26),    grad: 'linear-gradient(135deg, oklch(0.6 0.02 260), oklch(0.5 0.02 260))' },
+    { id: 'accounting', label: 'Buchhaltung', desc: 'Rechnungen & Angebote', icon: Ic.archive(26), grad: 'linear-gradient(135deg, oklch(0.74 0.17 155), oklch(0.68 0.15 175))' },
   ];
   const soon = [
-    { id: 'accounting', label: 'Buchhaltung',  desc: 'Rechnungen & Belege',    icon: Ic.archive(26), grad: 'linear-gradient(135deg, oklch(0.74 0.17 155), oklch(0.68 0.15 175))' },
     { id: 'calendar',   label: 'Kalender',     desc: 'Termine & Events',       icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.72 0.2 350), oklch(0.66 0.2 320))' },
   ];
   const Tile = ({ a, disabled }) => (
@@ -3792,8 +3795,12 @@ function fmtClock(sec) {
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
   return [h, m, s].map((x) => String(x).padStart(2, '0')).join(':');
 }
-function dtParse(s) { return s ? new Date(String(s).replace(' ', 'T')) : null; }
+// Server stores datetimes in UTC (like the rest of the app); append 'Z' so the
+// browser converts to local time for display and elapsed math.
+function dtParse(s) { return s ? new Date(String(s).replace(' ', 'T') + 'Z') : null; }
 function fmtHM(s) { const d = dtParse(s); return d ? d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : ''; }
+function localDateKey(s) { const d = dtParse(s); if (!d) return ''; const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
+function todayKeyLocal() { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
 function dayLabel(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   const now = new Date(); now.setHours(0, 0, 0, 0);
@@ -3844,12 +3851,12 @@ function ZeitenApp({ onBack }) {
   const groups = [];
   const idx = {};
   for (const e of done) {
-    const key = (e.started_at || '').slice(0, 10);
+    const key = localDateKey(e.started_at);
     if (!(key in idx)) { idx[key] = groups.length; groups.push({ key, total: 0, items: [] }); }
     groups[idx[key]].items.push(e);
     groups[idx[key]].total += e.duration || 0;
   }
-  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = todayKeyLocal();
   const todayTotal = (groups.find((g) => g.key === todayKey)?.total || 0) + (running ? liveElapsed : 0);
 
   return (
@@ -3943,7 +3950,7 @@ function TimeEntryModal({ entry, contacts, onSave, onClose }) {
     if (!date || !start || !end) { toast('Datum, Start und Ende erforderlich', 'error'); return; }
     if (end <= start) { toast('Ende muss nach dem Start liegen', 'error'); return; }
     setBusy(true);
-    await onSave({ id: entry.id, task: task.trim() || null, note: note.trim() || null, contact_id: contactId || null, started_at: `${date}T${start}`, ended_at: `${date}T${end}` });
+    await onSave({ id: entry.id, task: task.trim() || null, note: note.trim() || null, contact_id: contactId || null, started_at: new Date(`${date}T${start}`).toISOString(), ended_at: new Date(`${date}T${end}`).toISOString() });
     setBusy(false);
   };
   const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
@@ -4275,6 +4282,276 @@ function SettingsApp({ onBack, onProfile, onSecurity }) {
         </div>
       </div>
     </>
+  );
+}
+
+// ───── Buchhaltung app (Phase 1: Angebote/Rechnungen + Produkte) ─────────────
+const DOC_STATUS = {
+  paid:     { label: 'Bezahlt',     color: '#22c55e' },
+  overdue:  { label: 'Überfällig',  color: '#ef4444' },
+  due_soon: { label: 'Bald fällig', color: '#eab308' },
+  open:     { label: 'Offen',       color: 'var(--fg-3)' },
+  accepted: { label: 'Angenommen',  color: '#22c55e' },
+};
+function fmtEUR(n) { return (Number(n) || 0).toLocaleString('de-AT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'; }
+function fmtDateShort(s) { return s ? new Date(s + 'T00:00:00').toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'; }
+
+function BuchhaltungApp({ onBack, onOpenSettings }) {
+  const [tab, setTab] = useState('invoice');
+  const [docs, setDocs] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [contacts, setContacts] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [prodEditing, setProdEditing] = useState(null);
+
+  const load = useCallback(() => {
+    if (tab === 'products') { API.products().then((d) => setProducts(d.products || [])).catch(() => setProducts([])); return; }
+    setDocs(null);
+    API.documents(tab).then((d) => setDocs(d.documents || [])).catch(() => setDocs([]));
+  }, [tab]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {}); API.products().then((d) => setProducts(d.products || [])).catch(() => {}); }, []);
+
+  const openDoc = async (id) => { try { const d = await API.document(id); setEditing(d.document); } catch (e) { toast(e.message, 'error'); } };
+  const saveDoc = async (data) => { try { let r; if (data.id) r = await API.updateDocument(data.id, data); else r = await API.newDocument(data); setEditing(null); load(); return r; } catch (e) { toast(e.message, 'error'); } };
+  const delDoc = async (doc) => { if (!await confirmDialog({ title: 'Löschen?', message: `${doc.number} wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteDocument(doc.id); load(); } catch (e) { toast(e.message, 'error'); } };
+  const togglePaid = async (doc) => { try { if (doc.paid_at) await API.unmarkDocPaid(doc.id); else await API.markDocPaid(doc.id); load(); } catch (e) { toast(e.message, 'error'); } };
+  const convert = async (doc) => { try { const d = await API.convertDoc(doc.id); toast('Rechnung ' + (d.document?.number || '') + ' erstellt', 'success'); setTab('invoice'); } catch (e) { toast(e.message, 'error'); } };
+  const delProduct = async (p) => { if (!await confirmDialog({ title: 'Produkt löschen?', message: `„${p.name}" wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteProduct(p.id); API.products().then((d) => setProducts(d.products || [])); } catch (e) { toast(e.message, 'error'); } };
+  const saveProduct = async (data) => { try { if (data.id) await API.updateProduct(data.id, data); else await API.newProduct(data); setProdEditing(null); API.products().then((d) => setProducts(d.products || [])); } catch (e) { toast(e.message, 'error'); } };
+
+  const tabs = [{ id: 'invoice', label: 'Rechnungen' }, { id: 'offer', label: 'Angebote' }, { id: 'products', label: 'Produkte' }];
+
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Buchhaltung']}
+        right={tab === 'products'
+          ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setProdEditing({})}>Produkt</Btn>
+          : <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ type: tab })}>{tab === 'offer' ? 'Neues Angebot' : 'Neue Rechnung'}</Btn>}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        <div style={{ display: 'inline-flex', gap: 4, padding: 4, marginBottom: 22, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+          {tabs.map((t) => {
+            const on = tab === t.id;
+            return <button key={t.id} onClick={() => setTab(t.id)} style={{ height: 34, padding: '0 16px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 540, background: on ? 'var(--accent-grad)' : 'transparent', color: on ? '#fff' : 'var(--fg-2)', boxShadow: on ? '0 4px 12px -4px var(--accent-glow)' : 'none' }}>{t.label}</button>;
+          })}
+        </div>
+
+        {tab === 'products' ? (
+          products.length === 0 ? (
+            <EmptyHint icon={Ic.archive(40)} title="Keine Produkte" desc="Lege wiederverwendbare Leistungen mit Preis & USt-Satz an."
+              actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setProdEditing({})}>Produkt</Btn>}/>
+          ) : (
+            <div style={{ display: 'grid', gap: 8, maxWidth: 760 }}>
+              {products.map((p) => (
+                <div key={p.id} className="nyza-listrow" onClick={() => setProdEditing(p)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 540 }}>{p.name}</div>
+                    {p.description && <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.description}</div>}
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{fmtEUR(p.unit_price_net)}<span style={{ fontSize: 11, color: 'var(--fg-3)', fontWeight: 400 }}> /{p.unit} · {p.tax_rate}%</span></div>
+                  <span className="task-kebab" onClick={(e) => { e.stopPropagation(); delProduct(p); }} title="Löschen" style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex' }}>{Ic.trash(15)}</span>
+                </div>
+              ))}
+            </div>
+          )
+        ) : docs === null ? (
+          <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+        ) : docs.length === 0 ? (
+          <EmptyHint icon={Ic.fileGen(40)} title={tab === 'offer' ? 'Keine Angebote' : 'Keine Rechnungen'} desc="Erstelle dein erstes Dokument. Tipp: Firmenprofil in den Einstellungen ausfüllen."
+            actions={<><Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({ type: tab })}>{tab === 'offer' ? 'Neues Angebot' : 'Neue Rechnung'}</Btn><Btn variant="glass" size="md" icon={Ic.cog(14)} onClick={onOpenSettings}>Firmenprofil</Btn></>}/>
+        ) : (
+          <div style={{ display: 'grid', gap: 8, maxWidth: 860 }}>
+            {docs.map((d) => {
+              const st = DOC_STATUS[d.payment_status] || DOC_STATUS.open;
+              return (
+                <div key={d.id} className="nyza-listrow" onClick={() => openDoc(d.id)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums', width: 92, flexShrink: 0 }}>{d.number}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.contact_name || d.client_snapshot?.name || 'Ohne Kunde'}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{fmtDateShort(d.doc_date)}</div>
+                  </div>
+                  <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + st.color + ' 18%, transparent)', color: st.color, textTransform: 'uppercase', flexShrink: 0 }}>{st.label}</span>
+                  <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', width: 110, textAlign: 'right', flexShrink: 0 }}>{fmtEUR(d.gross)}</div>
+                  <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
+                    { label: 'PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.docPdfUrl(d.id, false), '_blank') },
+                    { label: 'PDF herunterladen', icon: Ic.download(15), onClick: () => { window.location.href = API.docPdfUrl(d.id, true); } },
+                    { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => openDoc(d.id) },
+                    ...(d.type === 'invoice' ? [{ label: d.paid_at ? 'Als offen markieren' : 'Als bezahlt markieren', icon: Ic.check(15), onClick: () => togglePaid(d) }] : []),
+                    ...(d.type === 'offer' ? [{ label: 'In Rechnung umwandeln', icon: Ic.copy(15), onClick: () => convert(d) }] : []),
+                    { separator: true },
+                    { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => delDoc(d) },
+                  ]); }}
+                    style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      {editing && <DocumentEditor doc={editing} contacts={contacts} products={products} onSave={saveDoc} onClose={() => setEditing(null)}
+        onOpenPdf={(id) => window.open(API.docPdfUrl(id, false), '_blank')}/>}
+      {prodEditing && <ProductModal product={prodEditing} onSave={saveProduct} onClose={() => setProdEditing(null)}/>}
+    </>
+  );
+}
+
+function DocumentEditor({ doc, contacts, products, onSave, onClose, onOpenPdf }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [contactId, setContactId] = useState(doc.contact_id ? String(doc.contact_id) : '');
+  const [docDate, setDocDate] = useState(doc.doc_date || today);
+  const [deliveryDate, setDeliveryDate] = useState(doc.delivery_date || '');
+  const [intro, setIntro] = useState(doc.intro_text || '');
+  const [footer, setFooter] = useState(doc.footer_text || '');
+  const [notes, setNotes] = useState(doc.notes || '');
+  const [items, setItems] = useState(() => (doc.items && doc.items.length)
+    ? doc.items.map((it) => ({ description: it.description, quantity: it.quantity, unit: it.unit, unit_price_net: it.unit_price_net, tax_rate: it.tax_rate }))
+    : [{ description: '', quantity: 1, unit: 'Stk', unit_price_net: 0, tax_rate: 20 }]);
+  const [busy, setBusy] = useState(false);
+  const type = doc.type || 'invoice';
+
+  const setItem = (i, k, v) => setItems((arr) => arr.map((it, j) => j === i ? { ...it, [k]: v } : it));
+  const addRow = () => setItems((arr) => [...arr, { description: '', quantity: 1, unit: 'Stk', unit_price_net: 0, tax_rate: 20 }]);
+  const rmRow = (i) => setItems((arr) => arr.length > 1 ? arr.filter((_, j) => j !== i) : arr);
+  const addProduct = (pid) => { const p = products.find((x) => String(x.id) === String(pid)); if (!p) return; setItems((arr) => [...arr, { description: p.name, quantity: 1, unit: p.unit, unit_price_net: p.unit_price_net, tax_rate: p.tax_rate }]); };
+
+  const lineNet = (it) => Math.round((Number(it.quantity) || 0) * (Number(it.unit_price_net) || 0) * 100) / 100;
+  const net = items.reduce((a, it) => a + lineNet(it), 0);
+  const tax = items.reduce((a, it) => a + Math.round(lineNet(it) * (Number(it.tax_rate) || 0)) / 100, 0);
+  const gross = net + tax;
+
+  const submit = async () => {
+    setBusy(true);
+    const r = await onSave({ id: doc.id, type, contact_id: contactId || null, doc_date: docDate || null, delivery_date: deliveryDate || null, intro_text: intro || null, footer_text: footer || null, notes: notes || null, items });
+    setBusy(false);
+    return r;
+  };
+
+  const fld = { height: 40, padding: '0 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13.5, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  const numIn = { ...fld, textAlign: 'right' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 760, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.fileGen(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>
+            {doc.id ? (type === 'offer' ? 'Angebot ' : 'Rechnung ') + doc.number : (type === 'offer' ? 'Neues Angebot' : 'Neue Rechnung')}
+          </h2>
+          {doc.id && <IconBtn size={32} title="PDF öffnen" onClick={() => onOpenPdf(doc.id)}>{Ic.eye(16)}</IconBtn>}
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kunde</span>
+              <select value={contactId} onChange={(e) => setContactId(e.target.value)} style={{ ...fld, cursor: 'pointer' }}>
+                <option value="">— Kunde wählen —</option>
+                {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
+            <label style={{ flex: '1 1 130px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Datum</span>
+              <input type="date" value={docDate} onChange={(e) => setDocDate(e.target.value)} style={fld}/>
+            </label>
+            <label style={{ flex: '1 1 130px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Leistungsdatum</span>
+              <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} style={fld}/>
+            </label>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Einleitung</span>
+            <textarea value={intro} onChange={(e) => setIntro(e.target.value)} rows={2} placeholder="Sehr geehrte Damen und Herren, …" style={{ ...fld, height: 'auto', padding: '8px 10px', resize: 'vertical' }}/>
+          </div>
+
+          {/* Items */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Positionen</span>
+              {products.length > 0 && (
+                <select value="" onChange={(e) => { addProduct(e.target.value); e.target.value = ''; }} style={{ height: 30, padding: '0 8px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--fg-2)', cursor: 'pointer', fontFamily: 'inherit' }}>
+                  <option value="">+ Produkt einfügen</option>
+                  {products.map((p) => <option key={p.id} value={p.id}>{p.name} · {fmtEUR(p.unit_price_net)}</option>)}
+                </select>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {items.map((it, i) => (
+                <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <input value={it.description} onChange={(e) => setItem(i, 'description', e.target.value)} placeholder="Beschreibung" style={{ ...fld, flex: 1, minWidth: 0 }}/>
+                  <input type="number" step="0.01" value={it.quantity} onChange={(e) => setItem(i, 'quantity', e.target.value)} title="Menge" style={{ ...numIn, width: 64 }}/>
+                  <input value={it.unit} onChange={(e) => setItem(i, 'unit', e.target.value)} title="Einheit" style={{ ...fld, width: 56 }}/>
+                  <input type="number" step="0.01" value={it.unit_price_net} onChange={(e) => setItem(i, 'unit_price_net', e.target.value)} title="Einzelpreis netto" style={{ ...numIn, width: 90 }}/>
+                  <select value={it.tax_rate} onChange={(e) => setItem(i, 'tax_rate', e.target.value)} title="USt-Satz" style={{ ...fld, width: 64, cursor: 'pointer' }}>
+                    <option value={20}>20%</option><option value={13}>13%</option><option value={10}>10%</option><option value={0}>0%</option>
+                  </select>
+                  <div style={{ width: 84, textAlign: 'right', fontSize: 13, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtEUR(lineNet(it))}</div>
+                  <span onClick={() => rmRow(i)} title="Entfernen" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex', flexShrink: 0 }}>{Ic.close(14)}</span>
+                </div>
+              ))}
+            </div>
+            <button onClick={addRow} style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, color: 'var(--fg-3)' }}>{Ic.plus(12)} Position</button>
+          </div>
+
+          {/* Totals */}
+          <div style={{ alignSelf: 'flex-end', minWidth: 220, display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--fg-2)' }}><span>Netto</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtEUR(net)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--fg-2)' }}><span>USt</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtEUR(tax)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 15, marginTop: 4, paddingTop: 6, borderTop: '1px solid var(--border)' }}><span>Gesamt</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtEUR(gross)}</span></div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <label style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Fußtext</span><textarea value={footer} onChange={(e) => setFooter(e.target.value)} rows={2} placeholder="Zahlbar innerhalb 14 Tagen …" style={{ ...fld, height: 'auto', padding: '8px 10px', resize: 'vertical' }}/></label>
+            <label style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Interne Notiz</span><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Nicht auf dem PDF" style={{ ...fld, height: 'auto', padding: '8px 10px', resize: 'vertical' }}/></label>
+          </div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+function ProductModal({ product, onSave, onClose }) {
+  const [name, setName] = useState(product.name || '');
+  const [description, setDescription] = useState(product.description || '');
+  const [unit, setUnit] = useState(product.unit || 'Stk');
+  const [price, setPrice] = useState(product.unit_price_net != null ? product.unit_price_net : 0);
+  const [taxRate, setTaxRate] = useState(product.tax_rate != null ? product.tax_rate : 20);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!name.trim()) { toast('Name erforderlich', 'error'); return; }
+    setBusy(true);
+    await onSave({ id: product.id, name: name.trim(), description: description.trim() || null, unit: unit.trim() || 'Stk', unit_price_net: Number(price) || 0, tax_rate: Number(taxRate) || 0 });
+    setBusy(false);
+  };
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 460, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.archive(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{product.id ? 'Produkt bearbeiten' : 'Neues Produkt'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Name</span><input value={name} autoFocus onChange={(e) => setName(e.target.value)} placeholder="Leistung / Produkt" style={fld}/></label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Beschreibung</span><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="Optional" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/></label>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Einheit</span><input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="Stk" style={fld}/></label>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Preis netto</span><input type="number" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} style={fld}/></label>
+            <label style={{ width: 90, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>USt %</span>
+              <select value={taxRate} onChange={(e) => setTaxRate(e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value={20}>20</option><option value={13}>13</option><option value={10}>10</option><option value={0}>0</option></select>
+            </label>
+          </div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
   );
 }
 

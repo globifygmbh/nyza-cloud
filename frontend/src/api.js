@@ -264,4 +264,19 @@ export const API = {
   // App settings (namespaced JSON store)
   getSettings:  (ns) => request('/api/settings/' + ns),
   saveSettings: (ns, body) => request('/api/settings/' + ns, { method: 'PUT', body }),
+
+  // Apps · Buchhaltung — documents (Angebote/Rechnungen) + products
+  documents:      (type) => request('/api/documents' + (type ? '?type=' + type : '')),
+  document:       (id) => request('/api/documents/' + id),
+  newDocument:    (body) => request('/api/documents', { method: 'POST', body }),
+  updateDocument: (id, body) => request('/api/documents/' + id, { method: 'PATCH', body }),
+  deleteDocument: (id) => request('/api/documents/' + id, { method: 'DELETE' }),
+  markDocPaid:    (id, paid_date) => request('/api/documents/' + id + '/mark-paid', { method: 'POST', body: { paid_date } }),
+  unmarkDocPaid:  (id) => request('/api/documents/' + id + '/unmark-paid', { method: 'POST', body: {} }),
+  convertDoc:     (id) => request('/api/documents/' + id + '/convert', { method: 'POST', body: {} }),
+  docPdfUrl:      (id, download) => url('/api/documents/' + id + '/pdf') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
+  products:       () => request('/api/products'),
+  newProduct:     (body) => request('/api/products', { method: 'POST', body }),
+  updateProduct:  (id, body) => request('/api/products/' + id, { method: 'PATCH', body }),
+  deleteProduct:  (id) => request('/api/products/' + id, { method: 'DELETE' }),
 };
