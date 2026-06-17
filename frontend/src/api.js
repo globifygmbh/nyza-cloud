@@ -135,6 +135,7 @@ export const API = {
   twoFactorLogin:   (challenge, code) => request('/api/auth/2fa/login', { method: 'POST', body: { challenge, code }, skipAuth: true }),
   twoFactorSetup:   () => request('/api/auth/2fa/setup', { method: 'POST', body: {} }),
   twoFactorEnable:  (code) => request('/api/auth/2fa/enable', { method: 'POST', body: { code } }),
+  twoFactorRecoveryCodes: () => request('/api/auth/2fa/recovery-codes', { method: 'POST', body: {} }),
   twoFactorDisable: (password, code) => request('/api/auth/2fa/disable', { method: 'POST', body: { password, code } }),
   loginHistory:     () => request('/api/auth/logins'),
   updateProfile:  (body) => request('/api/auth/profile', { method: 'PATCH', body }),

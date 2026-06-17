@@ -415,6 +415,7 @@ export function AuthScreen({ onAuth }) {
   const [busy, setBusy] = useState(false);
   const [challenge, setChallenge] = useState(null); // 2FA pending token
   const [code, setCode] = useState('');
+  const [useRecovery, setUseRecovery] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -474,15 +475,19 @@ export function AuthScreen({ onAuth }) {
               <div style={{ width: 56, height: 56, borderRadius: 'var(--r-lg)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 12px 32px -8px var(--accent-glow)' }}>{Ic.lock(24)}</div>
             </div>
             <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, letterSpacing: -0.6, margin: 0, textAlign: 'center' }}>Bestätigung</h1>
-            <p style={{ fontSize: 13, color: 'var(--fg-3)', textAlign: 'center', marginTop: 8 }}>6-stelliger Code aus deiner Authenticator-App.</p>
+            <p style={{ fontSize: 13, color: 'var(--fg-3)', textAlign: 'center', marginTop: 8 }}>{useRecovery ? 'Gib einen deiner Recovery-Codes ein.' : '6-stelliger Code aus deiner Authenticator-App.'}</p>
             <form onSubmit={submit2fa} style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 24 }}>
-              <input autoFocus inputMode="numeric" maxLength={6} value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} placeholder="000000"
-                style={{ height: 56, textAlign: 'center', letterSpacing: 8, fontSize: 24, fontFamily: 'var(--font-mono)', padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', color: 'var(--fg)' }}/>
-              <Btn variant="primary" size="lg" full type="submit" disabled={busy || code.length !== 6} icon={busy ? Ic.loader(16) : null}>
+              {useRecovery
+                ? <input autoFocus value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="XXXX-XXXX" autoCapitalize="characters"
+                    style={{ height: 56, textAlign: 'center', letterSpacing: 4, fontSize: 20, fontFamily: 'var(--font-mono)', padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', color: 'var(--fg)' }}/>
+                : <input autoFocus inputMode="numeric" maxLength={6} value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} placeholder="000000"
+                    style={{ height: 56, textAlign: 'center', letterSpacing: 8, fontSize: 24, fontFamily: 'var(--font-mono)', padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', color: 'var(--fg)' }}/>}
+              <Btn variant="primary" size="lg" full type="submit" disabled={busy || (useRecovery ? code.trim().length < 6 : code.length !== 6)} icon={busy ? Ic.loader(16) : null}>
                 {busy ? 'Prüfe…' : 'Anmelden'}
               </Btn>
-              <Btn variant="ghost" size="md" type="button" onClick={() => { setChallenge(null); setCode(''); }}>Zurück</Btn>
+              <Btn variant="ghost" size="md" type="button" onClick={() => { setUseRecovery((v) => !v); setCode(''); }}>{useRecovery ? 'Authenticator-Code verwenden' : 'Authenticator verloren? Recovery-Code'}</Btn>
+              <Btn variant="ghost" size="md" type="button" onClick={() => { setChallenge(null); setCode(''); setUseRecovery(false); }}>Zurück</Btn>
             </form>
           </>
         )}
@@ -499,6 +504,7 @@ export function SecurityModal({ user, onClose, onChanged, onChangePassword }) {
   const [disablePw, setDisablePw] = useState('');
   const [busy, setBusy] = useState(false);
   const [logins, setLogins] = useState(null);
+  const [recoveryCodes, setRecoveryCodes] = useState(null);
 
   useEffect(() => { API.loginHistory().then((d) => setLogins(d.logins || [])).catch(() => setLogins([])); }, []);
 
@@ -512,7 +518,12 @@ export function SecurityModal({ user, onClose, onChanged, onChangePassword }) {
   };
   const enable = async () => {
     setBusy(true);
-    try { await API.twoFactorEnable(code); setEnabled(true); setSetup(null); setCode(''); toast('2FA aktiviert', 'success'); onChanged && onChanged(); }
+    try { const d = await API.twoFactorEnable(code); setEnabled(true); setSetup(null); setCode(''); if (d.recovery_codes) setRecoveryCodes(d.recovery_codes); toast('2FA aktiviert', 'success'); onChanged && onChanged(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const regenCodes = async () => {
+    setBusy(true);
+    try { const d = await API.twoFactorRecoveryCodes(); setRecoveryCodes(d.recovery_codes || []); toast('Neue Recovery-Codes erstellt', 'success'); }
     catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
   };
   const disable = async () => {
@@ -570,8 +581,23 @@ export function SecurityModal({ user, onClose, onChanged, onChangePassword }) {
                   style={{ height: 40, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', color: 'var(--fg)' }}/>
                 <input inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} placeholder="Code"
                   style={{ height: 40, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', color: 'var(--fg)', fontFamily: 'var(--font-mono)' }}/>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <Btn variant="glass" size="sm" disabled={busy} icon={Ic.rotate(13)} onClick={regenCodes}>Recovery-Codes neu</Btn>
                   <Btn variant="danger" disabled={busy || code.length !== 6 || !disablePw} onClick={disable}>2FA deaktivieren</Btn>
+                </div>
+              </div>
+            )}
+
+            {recoveryCodes && (
+              <div style={{ marginTop: 14, padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'color-mix(in oklab, var(--accent) 8%, transparent)', border: '1px solid color-mix(in oklab, var(--accent) 30%, transparent)' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Recovery-Codes — jetzt sicher speichern!</div>
+                <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: '0 0 10px' }}>Falls du deinen Authenticator verlierst, kannst du dich mit einem dieser Codes einloggen. Jeder Code funktioniert einmal. Sie werden nur dieses eine Mal angezeigt.</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6, marginBottom: 10 }}>
+                  {recoveryCodes.map((c) => <code key={c} style={{ fontFamily: 'var(--font-mono)', fontSize: 13, textAlign: 'center', padding: '6px 4px', borderRadius: 6, background: 'var(--surface-hi)' }}>{c}</code>)}
+                </div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <Btn variant="glass" size="sm" icon={Ic.copy(13)} onClick={() => { navigator.clipboard?.writeText(recoveryCodes.join('\n')); toast('Codes kopiert', 'success'); }}>Kopieren</Btn>
+                  <Btn variant="primary" size="sm" onClick={() => setRecoveryCodes(null)}>Gespeichert</Btn>
                 </div>
               </div>
             )}
