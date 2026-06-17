@@ -30,8 +30,7 @@ final class ReportRoutes
     public static function report(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $year = self::year($req);
-        $from = "$year-01-01"; $to = "$year-12-31";
+        [$year, $month, $quarter, $from, $to, $label] = self::rangeFor($req);
         $pdo = Database::pdo();
 
         // Income: paid invoices, recognised at payment date.
@@ -117,6 +116,39 @@ final class ReportRoutes
             'gross' => round((float)$r['gross'], 2),
         ], $er->fetchAll());
 
+        // Individual bookings in the period (cash basis), for line-by-line review.
+        $it = $pdo->prepare(
+            'SELECT d.number, d.paid_at, d.net, d.tax, d.gross, c.name AS contact_name, d.client_snapshot '
+            . 'FROM documents d LEFT JOIN contacts c ON c.id=d.contact_id '
+            . "WHERE d.user_id=? AND d.type='invoice' AND d.paid_at IS NOT NULL AND DATE(d.paid_at) BETWEEN ? AND ? "
+            . 'ORDER BY d.paid_at ASC, d.id ASC LIMIT 1000'
+        );
+        $it->execute([$uid, $from, $to]);
+        $incomeTx = array_map(static function ($r) {
+            $net = (float)$r['net']; $tax = (float)$r['tax'];
+            $snap = json_decode((string)($r['client_snapshot'] ?? ''), true);
+            return [
+                'date' => substr((string)$r['paid_at'], 0, 10), 'ref' => $r['number'],
+                'partner' => $r['contact_name'] ?: (is_array($snap) ? ($snap['name'] ?? '') : ''),
+                'net' => round($net, 2), 'tax' => round($tax, 2), 'gross' => round((float)$r['gross'], 2),
+                'rate' => $net > 0 ? (float)round($tax / $net * 100) : 0,
+            ];
+        }, $it->fetchAll());
+
+        $et = $pdo->prepare(
+            'SELECT e.paid_at, e.vendor, e.category, e.net, e.tax, e.tax_rate, e.gross, e.deductible, c.name AS contact_name '
+            . 'FROM expenses e LEFT JOIN contacts c ON c.id=e.contact_id '
+            . 'WHERE e.user_id=? AND e.paid_at IS NOT NULL AND DATE(e.paid_at) BETWEEN ? AND ? '
+            . 'ORDER BY e.paid_at ASC, e.id ASC LIMIT 1000'
+        );
+        $et->execute([$uid, $from, $to]);
+        $expenseTx = array_map(static fn($r) => [
+            'date' => substr((string)$r['paid_at'], 0, 10),
+            'ref' => $r['category'], 'partner' => $r['vendor'] ?: ($r['contact_name'] ?: ''),
+            'net' => round((float)$r['net'], 2), 'tax' => round((float)$r['tax'], 2), 'gross' => round((float)$r['gross'], 2),
+            'rate' => (float)$r['tax_rate'], 'deductible' => (int)$r['deductible'],
+        ], $et->fetchAll());
+
         return Json::ok($res, [
             'year'     => $year,
             'income'   => ['net' => round($incomeNet, 2), 'tax' => round($incomeTax, 2), 'gross' => round((float)$inc['gross'], 2), 'count' => (int)$inc['cnt']],
@@ -130,14 +162,17 @@ final class ReportRoutes
             'by_customer' => $byCustomer,
             'income_by_rate' => $incomeByRate,
             'expense_by_rate' => $expenseByRate,
+            'period'   => ['year' => $year, 'month' => $month, 'quarter' => $quarter, 'from' => $from, 'to' => $to, 'label' => $label],
+            'income_tx' => $incomeTx,
+            'expense_tx' => $expenseTx,
         ]);
     }
 
     public static function datev(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $year = self::year($req);
-        $from = "$year-01-01"; $to = "$year-12-31";
+        [$year, $month, $quarter, $from, $to, $label] = self::rangeFor($req);
+        $suffix = $month ? sprintf('%04d-%02d', $year, $month) : ($quarter ? $year . '-Q' . $quarter : (string)$year);
         $pdo = Database::pdo();
 
         $rows = [];
@@ -178,7 +213,7 @@ final class ReportRoutes
         $download = !empty($req->getQueryParams()['download']);
         while (ob_get_level() > 0) { @ob_end_clean(); }
         header('Content-Type: text/csv; charset=utf-8');
-        header('Content-Disposition: ' . ($download ? 'attachment' : 'inline') . '; filename="datev-' . $year . '.csv"');
+        header('Content-Disposition: ' . ($download ? 'attachment' : 'inline') . '; filename="datev-' . $suffix . '.csv"');
         header('Content-Length: ' . strlen($csv));
         header('Cache-Control: private, max-age=0, must-revalidate');
         echo $csv;
@@ -190,6 +225,28 @@ final class ReportRoutes
     {
         $y = (int)($req->getQueryParams()['year'] ?? 0);
         return ($y >= 2000 && $y <= 2100) ? $y : (int)date('Y');
+    }
+
+    /** [year, month(0=none), quarter(0=none), from, to, label] from query. */
+    private static function rangeFor(Request $req): array
+    {
+        $year = self::year($req);
+        $qp = $req->getQueryParams();
+        $month = (int)($qp['month'] ?? 0);
+        $quarter = (int)($qp['quarter'] ?? 0);
+        $names = ['', 'Jänner', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+        if ($month >= 1 && $month <= 12) {
+            $from = sprintf('%04d-%02d-01', $year, $month);
+            $to = date('Y-m-t', strtotime($from));
+            return [$year, $month, 0, $from, $to, $names[$month] . ' ' . $year];
+        }
+        if ($quarter >= 1 && $quarter <= 4) {
+            $sm = ($quarter - 1) * 3 + 1;
+            $from = sprintf('%04d-%02d-01', $year, $sm);
+            $to = date('Y-m-t', strtotime(sprintf('%04d-%02d-01', $year, $sm + 2)));
+            return [$year, 0, $quarter, $from, $to, 'Q' . $quarter . ' ' . $year];
+        }
+        return [$year, 0, 0, "$year-01-01", "$year-12-31", (string)$year];
     }
 
     private static function row(\PDO $pdo, string $sql, array $params): array

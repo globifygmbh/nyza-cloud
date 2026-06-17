@@ -4436,6 +4436,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const [exps, setExps] = useState(null);
   const [rep, setRep] = useState(null);
   const [repYear, setRepYear] = useState(() => new Date().getFullYear());
+  const [repPeriod, setRepPeriod] = useState('year');
   const [editing, setEditing] = useState(null);
   const [prodEditing, setProdEditing] = useState(null);
   const [subEditing, setSubEditing] = useState(null);
@@ -4445,10 +4446,10 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
     if (tab === 'products') { API.products().then((d) => setProducts(d.products || [])).catch(() => setProducts([])); return; }
     if (tab === 'subscriptions') { setSubs(null); API.subscriptions().then((d) => setSubs(d.subscriptions || [])).catch(() => setSubs([])); return; }
     if (tab === 'expenses') { setExps(null); API.expenses().then((d) => setExps(d.expenses || [])).catch(() => setExps([])); return; }
-    if (tab === 'reports') { setRep(null); API.report(repYear).then((d) => setRep(d)).catch(() => setRep(null)); return; }
+    if (tab === 'reports') { setRep(null); API.report(repYear, periodOpts(repPeriod)).then((d) => setRep(d)).catch(() => setRep(null)); return; }
     setDocs(null);
     API.documents(tab).then((d) => setDocs(d.documents || [])).catch(() => setDocs([]));
-  }, [tab, repYear]);
+  }, [tab, repYear, repPeriod]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {}); API.products().then((d) => setProducts(d.products || [])).catch(() => {}); }, []);
 
@@ -4472,18 +4473,20 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const newBtn = tab === 'products' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setProdEditing({})}>Produkt</Btn>
     : tab === 'subscriptions' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setSubEditing({ interval_unit: 'monthly', tax_rate: 20, active: 1 })}>Neues Abo</Btn>
     : tab === 'expenses' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setExpEditing({ category: 'Sonstiges', tax_rate: 20, deductible: 1 })}>Neue Ausgabe</Btn>
-    : tab === 'reports' ? <Btn variant="glass" size="sm" icon={Ic.download(14)} onClick={() => { window.location.href = API.datevUrl(repYear); }}>DATEV-CSV</Btn>
+    : tab === 'reports' ? <Btn variant="glass" size="sm" icon={Ic.download(14)} onClick={() => { window.location.href = API.datevUrl(repYear, periodOpts(repPeriod)); }}>DATEV-CSV</Btn>
     : <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ type: tab })}>{tab === 'offer' ? 'Neues Angebot' : 'Neue Rechnung'}</Btn>;
 
   return (
     <>
       <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Buchhaltung']} right={newBtn}/>
       <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
-        <div style={{ display: 'inline-flex', gap: 4, padding: 4, marginBottom: 22, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
-          {tabs.map((t) => {
-            const on = tab === t.id;
-            return <button key={t.id} onClick={() => setTab(t.id)} style={{ height: 34, padding: '0 16px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 540, background: on ? 'var(--accent-grad)' : 'transparent', color: on ? '#fff' : 'var(--fg-2)', boxShadow: on ? '0 4px 12px -4px var(--accent-glow)' : 'none' }}>{t.label}</button>;
-          })}
+        <div className="no-scrollbar" style={{ overflowX: 'auto', marginBottom: 22, maxWidth: '100%', WebkitOverflowScrolling: 'touch' }}>
+          <div style={{ display: 'inline-flex', gap: 4, padding: 4, width: 'max-content', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+            {tabs.map((t) => {
+              const on = tab === t.id;
+              return <button key={t.id} onClick={() => setTab(t.id)} style={{ height: 34, padding: '0 16px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 540, whiteSpace: 'nowrap', background: on ? 'var(--accent-grad)' : 'transparent', color: on ? '#fff' : 'var(--fg-2)', boxShadow: on ? '0 4px 12px -4px var(--accent-glow)' : 'none' }}>{t.label}</button>;
+            })}
+          </div>
         </div>
 
         {tab === 'products' ? (
@@ -4505,7 +4508,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
             </div>
           )
         ) : tab === 'reports' ? (
-          <AuswertungView data={rep} year={repYear} onYear={(dy) => setRepYear((y) => y + dy)}/>
+          <AuswertungView data={rep} year={repYear} onYear={(dy) => setRepYear((y) => y + dy)} period={repPeriod} onPeriod={setRepPeriod}/>
         ) : tab === 'expenses' ? (
           exps === null ? (
             <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
@@ -4621,8 +4624,15 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
 }
 
 const MONTH_ABBR = ['Jän', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+const MONTH_FULL = ['Jänner', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+function periodOpts(p) {
+  if (!p || p === 'year') return {};
+  if (p[0] === 'q') return { quarter: Number(p.slice(1)) };
+  if (p[0] === 'm') return { month: Number(p.slice(1)) };
+  return {};
+}
 
-function AuswertungView({ data, year, onYear }) {
+function AuswertungView({ data, year, onYear, period, onPeriod }) {
   const card = (label, value, sub, accent) => (
     <div style={{ padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
       {accent && <div style={{ position: 'absolute', inset: 0, background: 'var(--accent-grad)', opacity: 0.08 }}/>}
@@ -4641,11 +4651,16 @@ function AuswertungView({ data, year, onYear }) {
 
   return (
     <div style={{ maxWidth: 900 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
         <IconBtn size={34} title="Vorjahr" onClick={() => onYear(-1)} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronL(16)}</IconBtn>
         <div style={{ fontSize: 18, fontWeight: 600, fontFamily: 'var(--font-display)', minWidth: 64, textAlign: 'center' }}>{year}</div>
         <IconBtn size={34} title="Folgejahr" onClick={() => onYear(1)} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronR(16)}</IconBtn>
-        <span style={{ fontSize: 11.5, color: 'var(--fg-3)', marginLeft: 6 }}>Basis: Zahldatum (EÜR)</span>
+        <select value={period} onChange={(e) => onPeriod(e.target.value)} style={{ height: 34, padding: '0 12px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer' }}>
+          <option value="year">Gesamtes Jahr</option>
+          <optgroup label="Quartal">{[1, 2, 3, 4].map((q) => <option key={'q' + q} value={'q' + q}>Q{q}</option>)}</optgroup>
+          <optgroup label="Monat">{MONTH_FULL.map((m, i) => <option key={'m' + (i + 1)} value={'m' + (i + 1)}>{m}</option>)}</optgroup>
+        </select>
+        <span style={{ fontSize: 11.5, color: 'var(--fg-3)', marginLeft: 6 }}>Basis: Zahldatum (EÜR){data && data.period ? ' · ' + data.period.label : ''}</span>
       </div>
 
       {!data ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div> : (
@@ -4661,6 +4676,24 @@ function AuswertungView({ data, year, onYear }) {
             {card('Überfällig', fmtEUR(data.overdue.total), data.overdue.count + ' Rechnungen')}
             {card('MRR', fmtEUR(data.recurring.mrr), data.recurring.active + ' aktive Abos')}
             {card('ARR', fmtEUR(data.recurring.arr), 'hochgerechnet')}
+          </div>
+
+          {/* Gegenrechnung */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 28 }}>
+            <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '14px 18px' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Ergebnis {data.period ? '· ' + data.period.label : ''}</div>
+              {[['Einnahmen (netto)', data.income.net], ['− Ausgaben (netto)', -data.expense.net]].map((r, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0', color: 'var(--fg-2)' }}><span>{r[0]}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtEUR(r[1])}</span></div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, marginTop: 6, paddingTop: 8, borderTop: '1px solid var(--border)' }}><span>= Gewinn</span><span style={{ fontVariantNumeric: 'tabular-nums', color: data.profit < 0 ? '#ef4444' : 'var(--fg)' }}>{fmtEUR(data.profit)}</span></div>
+            </div>
+            <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '14px 18px' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Umsatzsteuer-Zahllast</div>
+              {[['Umsatzsteuer (Einnahmen)', data.income.tax], ['− Vorsteuer (Ausgaben)', -data.expense.vst]].map((r, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0', color: 'var(--fg-2)' }}><span>{r[0]}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtEUR(r[1])}</span></div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, marginTop: 6, paddingTop: 8, borderTop: '1px solid var(--border)' }}><span>= Zahllast</span><span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--accent)' }}>{fmtEUR(data.ust_zahllast)}</span></div>
+            </div>
           </div>
 
           {/* USt / Vorsteuer per rate */}
@@ -4732,7 +4765,49 @@ function AuswertungView({ data, year, onYear }) {
               ))}
             </div>
           )}
+
+          {/* Individual bookings */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16, marginTop: 28 }}>
+            {txTable('Einnahmen', data.income_tx, false)}
+            {txTable('Ausgaben', data.expense_tx, true)}
+          </div>
         </>
+      )}
+    </div>
+  );
+}
+
+function txTable(title, rows, isExpense) {
+  const total = (rows || []).reduce((a, r) => a + r.net, 0);
+  return (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>{title}</span>
+        <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{(rows || []).length} · netto <strong style={{ color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums' }}>{fmtEUR(total)}</strong></span>
+      </div>
+      {(!rows || rows.length === 0) ? <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>Keine Buchungen im Zeitraum.</div> : (
+        <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+          <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse' }}>
+            <thead><tr style={{ color: 'var(--fg-3)', textAlign: 'right', position: 'sticky', top: 0, background: 'var(--surface)' }}>
+              <th style={{ textAlign: 'left', fontWeight: 500, padding: '0 0 6px' }}>Datum</th>
+              <th style={{ textAlign: 'left', fontWeight: 500 }}>Beleg / Partner</th>
+              <th style={{ fontWeight: 500 }}>Satz</th>
+              <th style={{ fontWeight: 500 }}>Netto</th>
+              <th style={{ fontWeight: 500 }}>{isExpense ? 'VSt' : 'USt'}</th>
+              <th style={{ fontWeight: 500 }}>Brutto</th>
+            </tr></thead>
+            <tbody>{rows.map((r, i) => (
+              <tr key={i} style={{ fontVariantNumeric: 'tabular-nums', borderTop: '1px solid var(--border)' }}>
+                <td style={{ padding: '4px 0', color: 'var(--fg-3)', whiteSpace: 'nowrap' }}>{fmtDateShort(r.date)}</td>
+                <td style={{ maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(r.ref ? r.ref + ' · ' : '') + (r.partner || '')}{isExpense && r.deductible === 0 ? ' (o. VSt)' : ''}</td>
+                <td style={{ textAlign: 'right', color: 'var(--fg-3)' }}>{r.rate}%</td>
+                <td style={{ textAlign: 'right' }}>{fmtEUR(r.net)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--fg-3)' }}>{fmtEUR(r.tax)}</td>
+                <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtEUR(r.gross)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
       )}
     </div>
   );
