@@ -3376,14 +3376,26 @@ function taskDayDiff(due) {
   const now = new Date(); now.setHours(0, 0, 0, 0);
   return Math.round((d.getTime() - now.getTime()) / 86400000);
 }
-function fmtDue(due) {
-  if (!due) return null;
-  const diff = taskDayDiff(due);
-  if (diff === 0) return 'Heute';
-  if (diff === 1) return 'Morgen';
-  if (diff === -1) return 'Gestern';
-  const d = new Date(due + 'T00:00:00');
-  return d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: d.getFullYear() !== new Date().getFullYear() ? '2-digit' : undefined });
+// Full due moment (date + optional time). Time defaults to end-of-day so a
+// date-only task only goes overdue once the day is actually over.
+function taskDueAt(t) {
+  if (!t.due_date) return null;
+  const time = t.due_time ? (t.due_time.length === 5 ? t.due_time + ':00' : t.due_time) : '23:59:59';
+  return new Date(t.due_date + 'T' + time);
+}
+function taskIsOverdue(t) {
+  const at = taskDueAt(t);
+  return at ? at.getTime() < Date.now() : false;
+}
+function fmtDue(t) {
+  if (!t.due_date) return null;
+  const diff = taskDayDiff(t.due_date);
+  const time = t.due_time ? ' · ' + t.due_time.slice(0, 5) : '';
+  if (diff === 0) return 'Heute' + time;
+  if (diff === 1) return 'Morgen' + time;
+  if (diff === -1) return 'Gestern' + time;
+  const d = new Date(t.due_date + 'T00:00:00');
+  return d.toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: d.getFullYear() !== new Date().getFullYear() ? '2-digit' : undefined }) + time;
 }
 
 function TasksApp({ onBack }) {
@@ -3409,8 +3421,8 @@ function TasksApp({ onBack }) {
   };
   const save = async (data) => {
     try {
-      if (data.id) await API.updateTask(data.id, { title: data.title, notes: data.notes, due_date: data.due_date, priority: data.priority });
-      else await API.newTask({ title: data.title, notes: data.notes, due_date: data.due_date, priority: data.priority });
+      if (data.id) await API.updateTask(data.id, { title: data.title, notes: data.notes, due_date: data.due_date, due_time: data.due_time, priority: data.priority });
+      else await API.newTask({ title: data.title, notes: data.notes, due_date: data.due_date, due_time: data.due_time, priority: data.priority });
       setEditing(null); load();
     } catch (e) { toast(e.message, 'error'); }
   };
@@ -3420,7 +3432,7 @@ function TasksApp({ onBack }) {
   for (const t of (tasks || [])) {
     const diff = taskDayDiff(t.due_date);
     if (diff === null) buckets.none.push(t);
-    else if (diff < 0) buckets.overdue.push(t);
+    else if (diff < 0 || (diff === 0 && taskIsOverdue(t))) buckets.overdue.push(t);
     else if (diff === 0) buckets.today.push(t);
     else if (diff <= 7) buckets.week.push(t);
     else buckets.later.push(t);
@@ -3435,7 +3447,7 @@ function TasksApp({ onBack }) {
 
   const Row = ({ t, archivedRow }) => {
     const prio = TASK_PRIO[t.priority] || TASK_PRIO[1];
-    const overdue = !archivedRow && taskDayDiff(t.due_date) < 0;
+    const overdue = !archivedRow && taskIsOverdue(t);
     return (
       <div className="nyza-listrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
         onClick={() => !archivedRow && setEditing(t)}>
@@ -3456,7 +3468,7 @@ function TasksApp({ onBack }) {
         </div>
         {t.due_date && (
           <span style={{ fontSize: 12, fontWeight: 500, color: overdue ? '#ef4444' : 'var(--fg-3)', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-            {Ic.clock(12)}{fmtDue(t.due_date)}
+            {Ic.clock(12)}{fmtDue(t)}
           </span>
         )}
         {archivedRow ? (
@@ -3528,12 +3540,13 @@ function TaskEditModal({ task, onSave, onClose }) {
   const [title, setTitle] = useState(task.title || '');
   const [notes, setNotes] = useState(task.notes || '');
   const [due, setDue] = useState(task.due_date || '');
+  const [time, setTime] = useState(task.due_time ? task.due_time.slice(0, 5) : '');
   const [priority, setPriority] = useState(task.priority ?? 1);
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     if (!title.trim()) { toast('Titel erforderlich', 'error'); return; }
     setBusy(true);
-    await onSave({ id: task.id, title: title.trim(), notes: notes.trim() || null, due_date: due || null, priority });
+    await onSave({ id: task.id, title: title.trim(), notes: notes.trim() || null, due_date: due || null, due_time: due ? (time || null) : null, priority });
     setBusy(false);
   };
   return (
@@ -3556,13 +3569,18 @@ function TaskEditModal({ task, onSave, onClose }) {
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Details (optional)" rows={3}
               style={{ padding: '10px 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', resize: 'vertical' }}/>
           </label>
-          <div style={{ display: 'flex', gap: 12 }}>
-            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <label style={{ flex: '1 1 130px', display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Fälligkeit</span>
               <input type="date" value={due} onChange={(e) => setDue(e.target.value)}
                 style={{ height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit' }}/>
             </label>
-            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ flex: '1 1 110px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Uhrzeit</span>
+              <input type="time" value={time} disabled={!due} onChange={(e) => setTime(e.target.value)}
+                style={{ height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', opacity: due ? 1 : 0.5 }}/>
+            </label>
+            <label style={{ flex: '1 1 130px', display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Priorität</span>
               <select value={priority} onChange={(e) => setPriority(Number(e.target.value))}
                 style={{ height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer' }}>

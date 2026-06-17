@@ -1,0 +1,1 @@
+ALTER TABLE tasks ADD COLUMN due_time TIME NULL DEFAULT NULL AFTER due_date;

@@ -67,12 +67,16 @@ final class TaskRoutes
         $due = self::parseDue($b, $hasDueErr);
         if ($hasDueErr) return Json::err($res, 'Ungültiges Datum', 422);
 
+        $dueTime = self::parseTime($b, $hasTimeErr);
+        if ($hasTimeErr) return Json::err($res, 'Ungültige Uhrzeit', 422);
+        if ($due === null) $dueTime = null; // a time without a date makes no sense
+
         $priority = self::clampPriority($b['priority'] ?? 1);
 
         $stmt = Database::pdo()->prepare(
-            'INSERT INTO tasks (user_id, title, notes, due_date, priority) VALUES (?, ?, ?, ?, ?)'
+            'INSERT INTO tasks (user_id, title, notes, due_date, due_time, priority) VALUES (?, ?, ?, ?, ?, ?)'
         );
-        $stmt->execute([$uid, $title, $notes, $due, $priority]);
+        $stmt->execute([$uid, $title, $notes, $due, $dueTime, $priority]);
         $id = (int)Database::pdo()->lastInsertId();
         return Json::ok($res, ['task' => self::shape(self::fetchOne($uid, $id))], 201);
     }
@@ -104,6 +108,14 @@ final class TaskRoutes
             if ($hasDueErr) return Json::err($res, 'Ungültiges Datum', 422);
             $sets[] = 'due_date = ?';
             $params[] = $due;
+            // Dropping the date clears any time too.
+            if ($due === null) { $sets[] = 'due_time = ?'; $params[] = null; }
+        }
+        if (array_key_exists('due_time', $b)) {
+            $dueTime = self::parseTime($b, $hasTimeErr);
+            if ($hasTimeErr) return Json::err($res, 'Ungültige Uhrzeit', 422);
+            $sets[] = 'due_time = ?';
+            $params[] = $dueTime;
         }
         if (array_key_exists('priority', $b)) {
             $sets[] = 'priority = ?';
@@ -171,6 +183,23 @@ final class TaskRoutes
         return $v;
     }
 
+    /**
+     * Read the body's `due_time`: '' or null → NULL, an HH:MM(:SS) string →
+     * normalised to HH:MM:SS. Sets $err on a malformed non-empty value.
+     */
+    private static function parseTime(array $b, ?bool &$err): ?string
+    {
+        $err = false;
+        $v = $b['due_time'] ?? null;
+        if ($v === null || $v === '') return null;
+        $v = (string)$v;
+        if (!preg_match('/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/', $v)) {
+            $err = true;
+            return null;
+        }
+        return strlen($v) === 5 ? $v . ':00' : $v;
+    }
+
     /** Cast to int and clamp into the 0..2 priority range. */
     private static function clampPriority($v): int
     {
@@ -195,6 +224,7 @@ final class TaskRoutes
             'title'       => $row['title'],
             'notes'       => $row['notes'],
             'due_date'    => $row['due_date'],
+            'due_time'    => $row['due_time'] ?? null,
             'priority'    => (int)$row['priority'],
             'done_at'     => $row['done_at'],
             'archived_at' => $row['archived_at'],

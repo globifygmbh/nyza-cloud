@@ -26,6 +26,10 @@ final class Config
         }
         self::$cfg = $cfg;
 
+        // Server runs on Central European time (Wien/Berlin/Paris) so PHP's
+        // date()/strtotime() and task due-time handling line up with the user.
+        date_default_timezone_set((string)($cfg['timezone'] ?? 'Europe/Berlin'));
+
         // Map config → env so existing code (Database.php, Auth.php, …) keeps working.
         $db = $cfg['db'] ?? [];
         putenv('DB_HOST=' . ($db['host'] ?? '127.0.0.1'));
