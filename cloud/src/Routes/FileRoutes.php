@@ -313,8 +313,13 @@ final class FileRoutes
             return Json::err($res, 'Dieser Dateityp ist aus Sicherheitsgründen nicht erlaubt', 415, 'blocked_type');
         }
         // Re-uploading a same-named file into the same folder versions it instead
-        // of creating a duplicate. Quota is checked against the net size delta.
+        // of creating a duplicate — unless the client asked to keep both, in which
+        // case we uniquify the name. Quota is checked against the net size delta.
         $existing = self::existingInFolder($uid, $folder, $name);
+        if ($existing && (string)($b['mode'] ?? '') === 'keep_both') {
+            $name = self::uniqueName($uid, $folder, $name);
+            $existing = null;
+        }
         $quotaNeed = $existing ? max(0, $size - (int)$existing['size']) : $size;
         if (!self::quotaOk($uid, $quotaNeed)) {
             return Json::err($res, 'Storage quota exceeded', 413, 'quota_exceeded');
@@ -715,11 +720,17 @@ final class FileRoutes
         Database::pdo()->prepare("UPDATE upload_sessions SET status = 'finalized' WHERE id = ?")->execute([$s['id']]);
 
         $folder = $s['folder_id'] !== null ? (int)$s['folder_id'] : null;
-        $existing = self::existingInFolder($uid, $folder, $s['file_name']);
+        $name = $s['file_name'];
+        $b = (array) $req->getParsedBody();
+        $existing = self::existingInFolder($uid, $folder, $name);
+        if ($existing && (string)($b['mode'] ?? '') === 'keep_both') {
+            $name = self::uniqueName($uid, $folder, $name);
+            $existing = null;
+        }
         if ($existing) {
             $id = self::replaceWithVersion($uid, $existing, $rel, $mime, (int)$s['total_size']);
         } else {
-            $id = self::insertFile($uid, $folder, $s['file_name'], $rel, $mime, (int)$s['total_size'], null, null);
+            $id = self::insertFile($uid, $folder, $name, $rel, $mime, (int)$s['total_size'], null, null);
         }
         return Json::ok($res, ['file' => self::fetchOne($uid, $id)], 201);
     }
@@ -937,6 +948,20 @@ final class FileRoutes
             ? self::replaceWithVersion($uid, $existing, $rel, $mime, $size)
             : self::insertFile($uid, $folder, $name, $rel, $mime, $size, null, null);
         return self::fetchOne($uid, $id) ?? [];
+    }
+
+    /** A free filename in the folder by appending " (n)" before the extension. */
+    private static function uniqueName(int $uid, ?int $folder, string $name): string
+    {
+        if (!self::existingInFolder($uid, $folder, $name)) return $name;
+        $dot = strrpos($name, '.');
+        $base = $dot !== false && $dot > 0 ? substr($name, 0, $dot) : $name;
+        $ext = $dot !== false && $dot > 0 ? substr($name, $dot) : '';
+        for ($n = 2; $n < 1000; $n++) {
+            $cand = $base . ' (' . $n . ')' . $ext;
+            if (!self::existingInFolder($uid, $folder, $cand)) return $cand;
+        }
+        return $base . ' (' . time() . ')' . $ext;
     }
 
     /** A live (non-trashed) file with this exact name in the given folder, or null. */

@@ -47,15 +47,15 @@ async function chunked(file, ops, onProgress, signal) {
   return ops.finalize(sid);
 }
 
-export async function uploadOwner(file, folderId, onProgress, signal) {
+export async function uploadOwner(file, folderId, onProgress, signal, mode) {
   if (file.size > CHUNK_THRESHOLD) {
     return chunked(file, {
       init: (b) => API.chunkInit({ ...b, folder_id: folderId }),
       append: (sid, blob, cb, sig) => API.chunkAppend(sid, blob, cb, sig),
-      finalize: (sid) => API.chunkFinalize(sid),
+      finalize: (sid) => API.chunkFinalize(sid, mode),
     }, onProgress, signal);
   }
-  return API.uploadFile(file, folderId, onProgress, signal);
+  return API.uploadFile(file, folderId, onProgress, signal, mode);
 }
 
 export async function uploadClient(token, file, opts, onProgress) {

@@ -1710,12 +1710,13 @@ export function Dropzone({ onFiles, label = 'Dateien hierher ziehen', sub = 'ode
 // ───── Upload progress ─────────────────────────────────────────────────────
 // Pre-upload review: thumbnails of selected files, remove individual ones,
 // total size, then confirm. Used by owner upload + public client upload.
-export function UploadReview({ files: initial, title = 'Diese Dateien hochladen?', confirmLabel = 'Hochladen', maxFileSize, onConfirm, onCancel }) {
+export function UploadReview({ files: initial, title = 'Diese Dateien hochladen?', confirmLabel = 'Hochladen', maxFileSize, conflictChoice = true, onConfirm, onCancel }) {
   const [list, setList] = useState(() => initial.map((f, i) => ({
     key: i + '·' + f.name + '·' + f.size, file: f,
     url: f.type.startsWith('image/') ? URL.createObjectURL(f) : null,
     kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type === 'application/pdf' ? 'pdf' : 'doc',
   })));
+  const [mode, setMode] = useState('replace'); // replace = versionieren · keep_both = umbenennen
   useEffect(() => () => { list.forEach((x) => x.url && URL.revokeObjectURL(x.url)); }, []);
   const remove = (key) => setList((l) => l.filter((x) => x.key !== key));
   const total = list.reduce((s, x) => s + x.file.size, 0);
@@ -1749,12 +1750,20 @@ export function UploadReview({ files: initial, title = 'Diese Dateien hochladen?
             );
           })}
         </div>
+        {conflictChoice && (
+          <div style={{ padding: '0 24px 4px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>Bei gleichem Namen:</span>
+            {[['replace', 'Ersetzen (mit Version)'], ['keep_both', 'Beide behalten']].map(([k, l]) => (
+              <button key={k} type="button" onClick={() => setMode(k)} style={{ height: 28, padding: '0 12px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, border: '1px solid ' + (mode === k ? 'transparent' : 'var(--border)'), background: mode === k ? 'var(--accent-grad)' : 'var(--surface-hi)', color: mode === k ? '#fff' : 'var(--fg-2)' }}>{l}</button>
+            ))}
+          </div>
+        )}
         <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
           {oversize.length > 0 && <span style={{ fontSize: 12, color: 'var(--danger)', flex: 1 }}>{oversize.length} Datei(en) über dem Limit ({humanSize(maxFileSize)})</span>}
           <span style={{ flex: oversize.length ? 0 : 1 }}/>
           <Btn variant="ghost" onClick={onCancel}>Abbrechen</Btn>
           <Btn variant="primary" disabled={list.length === 0 || oversize.length > 0} icon={Ic.upload(15)}
-            onClick={() => onConfirm(list.map((x) => x.file))}>{confirmLabel} ({list.length})</Btn>
+            onClick={() => onConfirm(list.map((x) => x.file), mode)}>{confirmLabel} ({list.length})</Btn>
         </div>
       </Glass>
     </div>
@@ -2486,7 +2495,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const enqueueUploads = (jobs) => {
     const items = jobs.filter((j) => j.file).map((j) => ({
       id: ++uploadIdRef.current, name: j.file.name, size: j.file.size, status: 'queued', pct: 0,
-      kind: fileKind(j.file), file: j.file, folderId: j.folderId ?? null,
+      kind: fileKind(j.file), file: j.file, folderId: j.folderId ?? null, mode: j.mode || null,
     }));
     if (!items.length) return;
     setUploadsSync((u) => [...u, ...items]);
@@ -2504,7 +2513,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
       uploadCtrls.current[next.id] = ctrl;
       setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, status: 'uploading' } : x));
       try {
-        await uploadOwner(next.file, next.folderId, (p) => setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, pct: p } : x)), ctrl.signal);
+        await uploadOwner(next.file, next.folderId, (p) => setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, pct: p } : x)), ctrl.signal, next.mode);
         setUploadsSync((u) => u.map((x) => x.id === next.id ? { ...x, status: 'done', pct: 1, file: null } : x));
         refreshAll();
       } catch (err) {
@@ -2825,7 +2834,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
 
       {reviewFiles && (
         <UploadReview files={reviewFiles}
-          onConfirm={(files) => { const fid = uploadTargetFolder.current; setReviewFiles(null); runUpload(files, fid); }}
+          onConfirm={(files, mode) => { const fid = uploadTargetFolder.current; setReviewFiles(null); enqueueUploads(files.map((f) => ({ file: f, folderId: fid, mode }))); }}
           onCancel={() => setReviewFiles(null)}/>
       )}
 

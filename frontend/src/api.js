@@ -160,8 +160,8 @@ export const API = {
   pinFolder:   (id) => request('/api/folders/' + id + '/pin', { method: 'POST', body: {} }),
   labelFile:   (id, label) => request('/api/files/' + id + '/label', { method: 'POST', body: { label: label ?? null } }),
   shareSetLabel: (token, fileId, label, password) => request('/api/s/' + token + '/file/' + fileId + '/label' + (password ? '?p=' + encodeURIComponent(password) : ''), { method: 'POST', body: { label: label ?? null }, skipAuth: true }),
-  uploadFile:  (file, folderId, onProgress, signal) =>
-    upload('/api/files', file, { folder_id: folderId }, onProgress, signal),
+  uploadFile:  (file, folderId, onProgress, signal, mode) =>
+    upload('/api/files', file, { folder_id: folderId, mode }, onProgress, signal),
   deleteFile:  (id) => request('/api/files/' + id, { method: 'DELETE' }),
   fileRawUrl:  (id) => url('/api/files/' + id + '/raw'),
   thumbUrl:    (id) => url('/api/files/' + id + '/thumb') + '?token=' + (getToken() || ''),
@@ -189,7 +189,7 @@ export const API = {
   chunkInit:     (body) => request('/api/files/chunk/init', { method: 'POST', body }),
   chunkStatus:   (sid) => request('/api/files/chunk/' + sid),
   chunkAppend:   (sid, blob, onProgress, signal) => rawPut('/api/files/chunk/' + sid, blob, onProgress, signal),
-  chunkFinalize: (sid) => request('/api/files/chunk/' + sid + '/finalize', { method: 'POST', body: {} }),
+  chunkFinalize: (sid, mode) => request('/api/files/chunk/' + sid + '/finalize', { method: 'POST', body: { mode } }),
 
   // Trash (soft delete)
   trash:        () => request('/api/trash'),
