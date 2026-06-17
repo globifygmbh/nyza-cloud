@@ -4437,6 +4437,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const [rep, setRep] = useState(null);
   const [repYear, setRepYear] = useState(() => new Date().getFullYear());
   const [repPeriod, setRepPeriod] = useState('year');
+  const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [prodEditing, setProdEditing] = useState(null);
   const [subEditing, setSubEditing] = useState(null);
@@ -4473,7 +4474,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const newBtn = tab === 'products' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setProdEditing({})}>Produkt</Btn>
     : tab === 'subscriptions' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setSubEditing({ interval_unit: 'monthly', tax_rate: 20, active: 1 })}>Neues Abo</Btn>
     : tab === 'expenses' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setExpEditing({ category: 'Sonstiges', tax_rate: 20, deductible: 1 })}>Neue Ausgabe</Btn>
-    : tab === 'reports' ? <Btn variant="glass" size="sm" icon={Ic.download(14)} onClick={() => { window.location.href = API.datevUrl(repYear, periodOpts(repPeriod)); }}>DATEV-CSV</Btn>
+    : tab === 'reports' ? <div style={{ display: 'flex', gap: 8 }}><Btn variant="glass" size="sm" icon={Ic.fileGen(14)} onClick={() => setImportOpen(true)}>CSV-Import</Btn><Btn variant="glass" size="sm" icon={Ic.download(14)} onClick={() => { window.location.href = API.datevUrl(repYear, periodOpts(repPeriod)); }}>DATEV-CSV</Btn></div>
     : <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ type: tab })}>{tab === 'offer' ? 'Neues Angebot' : 'Neue Rechnung'}</Btn>;
 
   return (
@@ -4619,7 +4620,190 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
       {prodEditing && <ProductModal product={prodEditing} onSave={saveProduct} onClose={() => setProdEditing(null)}/>}
       {subEditing && <SubscriptionModal sub={subEditing} contacts={contacts} onSave={saveSub} onClose={() => setSubEditing(null)}/>}
       {expEditing && <ExpenseModal exp={expEditing} contacts={contacts} onSave={saveExp} onClose={() => setExpEditing(null)} onChanged={load}/>}
+      {importOpen && <ImportModal onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); }}/>}
     </>
+  );
+}
+
+function parseNum(s) {
+  if (s == null) return 0;
+  let t = String(s).trim().replace(/[^\d.,\-]/g, '');
+  if (t === '' || t === '-') return 0;
+  const hasC = t.includes(','), hasD = t.includes('.');
+  if (hasC && hasD) { if (t.lastIndexOf(',') > t.lastIndexOf('.')) t = t.replace(/\./g, '').replace(',', '.'); else t = t.replace(/,/g, ''); }
+  else if (hasC) t = t.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(t);
+  return isNaN(n) ? 0 : n;
+}
+
+function ImportModal({ onClose, onDone }) {
+  const [step, setStep] = useState('file');
+  const [columns, setColumns] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [map, setMap] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+
+  const guess = (cols) => {
+    const find = (...keys) => { for (let i = 0; i < cols.length; i++) { const h = cols[i].toLowerCase(); if (keys.some((k) => h.includes(k))) return String(i); } return ''; };
+    const amtGross = find('brutto', 'gross', 'gesamt', 'summe', 'total');
+    const amtNet = find('netto', 'net ');
+    const kindCol = find('typ', 'art', 'type');
+    return {
+      kind: kindCol ? 'column' : 'expense', kindCol, incomeMatch: 'einnahme',
+      date: find('datum', 'date'),
+      amount: amtGross || amtNet || find('betrag', 'amount'),
+      amountMode: amtNet && !amtGross ? 'net' : 'gross',
+      rateCol: find('ust', 'mwst', 'steuer', 'satz', 'vat', '%'),
+      rateDefault: 20,
+      desc: find('beschreibung', 'text', 'bezeichnung', 'description', 'verwendung', 'zweck'),
+      category: find('kategorie', 'category', 'konto'),
+      categoryDefault: 'Import',
+      partner: find('partner', 'kunde', 'lieferant', 'name', 'firma', 'empf'),
+      number: find('belegnummer', 'rechnungsnummer', 'nummer', 'beleg', 'nr'),
+    };
+  };
+
+  const onFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setBusy(true);
+    try { const d = await API.importParse(file); setColumns(d.columns || []); setRows(d.rows || []); setMap(guess(d.columns || [])); setStep('map'); }
+    catch (err) { toast(err.message, 'error'); } finally { setBusy(false); e.target.value = ''; }
+  };
+
+  const col = (i, row) => (i === '' || i == null) ? '' : (row[Number(i)] ?? '');
+  const buildRecord = (row) => {
+    let kind = 'expense';
+    if (map.kind === 'income') kind = 'income';
+    else if (map.kind === 'expense') kind = 'expense';
+    else if (map.kind === 'column') { const v = col(map.kindCol, row).toLowerCase(); kind = (map.incomeMatch && v.includes(map.incomeMatch.toLowerCase())) ? 'income' : 'expense'; }
+    const amount = parseNum(col(map.amount, row));
+    const rate = map.rateCol !== '' ? parseNum(col(map.rateCol, row)) : Number(map.rateDefault) || 0;
+    let net, gross;
+    if (map.amountMode === 'net') { net = amount; gross = Math.round(net * (1 + rate / 100) * 100) / 100; }
+    else { gross = amount; net = rate > 0 ? Math.round(gross / (1 + rate / 100) * 100) / 100 : gross; }
+    return {
+      kind, date: col(map.date, row),
+      net, tax_rate: rate, gross,
+      partner: col(map.partner, row) || null,
+      description: col(map.desc, row) || null,
+      category: col(map.category, row) || map.categoryDefault || 'Import',
+      number: col(map.number, row) || null,
+    };
+  };
+
+  const records = map ? rows.map(buildRecord) : [];
+  const valid = records.filter((r) => r.gross > 0 || r.net > 0);
+  const incomeN = valid.filter((r) => r.kind === 'income').length;
+  const expenseN = valid.length - incomeN;
+
+  const doImport = async () => {
+    if (!valid.length) { toast('Keine gültigen Zeilen', 'error'); return; }
+    setBusy(true);
+    try { const r = await API.importCommit(valid); toast(`${r.imported} importiert (${r.income} Einnahmen, ${r.expense} Ausgaben)`, 'success'); onDone(); }
+    catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+  };
+
+  const sel = { height: 38, padding: '0 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer', width: '100%' };
+  const colSelect = (key, label, opt = {}) => (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 5, flex: opt.flex || 1, minWidth: opt.min || 130 }}>
+      <span style={{ fontSize: 11.5, fontWeight: 540, color: 'var(--fg-2)' }}>{label}</span>
+      <select value={map[key]} onChange={(e) => setMap({ ...map, [key]: e.target.value })} style={sel}>
+        <option value="">{opt.none || '— keine —'}</option>
+        {columns.map((c, i) => <option key={i} value={i}>{c || ('Spalte ' + (i + 1))}</option>)}
+      </select>
+    </label>
+  );
+
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: step === 'map' ? 820 : 460, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.fileGen(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>Alte Buchhaltung importieren</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+
+        {step === 'file' ? (
+          <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <p style={{ fontSize: 13.5, color: 'var(--fg-2)', lineHeight: 1.6, margin: 0 }}>
+              Lade deine CSV (z. B. DATEV-Liste oder Excel-Export). Im nächsten Schritt ordnest du die Spalten zu und siehst eine Vorschau, bevor importiert wird.
+              Belegdateien legst du separat im DMS ab.
+            </p>
+            <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" onChange={onFile} style={{ display: 'none' }}/>
+            <Btn variant="primary" size="lg" disabled={busy} icon={busy ? Ic.loader(15) : Ic.plus(15)} onClick={() => fileRef.current && fileRef.current.click()}>CSV auswählen</Btn>
+          </div>
+        ) : (
+          <>
+            <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', letterSpacing: 0.5, textTransform: 'uppercase' }}>Spalten zuordnen</div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 5, flex: 1, minWidth: 150 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 540, color: 'var(--fg-2)' }}>Buchungstyp</span>
+                  <select value={map.kind} onChange={(e) => setMap({ ...map, kind: e.target.value })} style={sel}>
+                    <option value="expense">Alle als Ausgaben</option>
+                    <option value="income">Alle als Einnahmen</option>
+                    <option value="column">Aus Spalte bestimmen</option>
+                  </select>
+                </label>
+                {map.kind === 'column' && colSelect('kindCol', 'Typ-Spalte')}
+                {map.kind === 'column' && (
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 5, flex: 1, minWidth: 130 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 540, color: 'var(--fg-2)' }}>= Einnahme, wenn enthält</span>
+                    <input value={map.incomeMatch} onChange={(e) => setMap({ ...map, incomeMatch: e.target.value })} placeholder="einnahme" style={{ ...sel, cursor: 'text' }}/>
+                  </label>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                {colSelect('date', 'Datum')}
+                {colSelect('amount', 'Betrag')}
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 5, width: 120 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 540, color: 'var(--fg-2)' }}>Betrag ist</span>
+                  <select value={map.amountMode} onChange={(e) => setMap({ ...map, amountMode: e.target.value })} style={sel}><option value="gross">brutto</option><option value="net">netto</option></select>
+                </label>
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                {colSelect('rateCol', 'USt-Satz (Spalte)')}
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 5, width: 130 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 540, color: 'var(--fg-2)' }}>USt-Satz Standard</span>
+                  <select value={map.rateDefault} onChange={(e) => setMap({ ...map, rateDefault: Number(e.target.value) })} style={sel}><option value={20}>20%</option><option value={13}>13%</option><option value={10}>10%</option><option value={0}>0%</option></select>
+                </label>
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                {colSelect('partner', 'Partner / Kunde')}
+                {colSelect('desc', 'Beschreibung')}
+                {colSelect('category', 'Kategorie')}
+                {colSelect('number', 'Belegnummer')}
+              </div>
+
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', letterSpacing: 0.5, textTransform: 'uppercase', marginTop: 4 }}>Vorschau ({valid.length} gültige Zeilen)</div>
+              <div style={{ maxHeight: 240, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>
+                <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse' }}>
+                  <thead><tr style={{ color: 'var(--fg-3)', textAlign: 'right', position: 'sticky', top: 0, background: 'var(--surface)' }}>
+                    <th style={{ textAlign: 'left', fontWeight: 500, padding: '6px 8px' }}>Typ</th><th style={{ textAlign: 'left', fontWeight: 500 }}>Datum</th><th style={{ textAlign: 'left', fontWeight: 500 }}>Partner</th><th style={{ fontWeight: 500 }}>Satz</th><th style={{ fontWeight: 500 }}>Netto</th><th style={{ fontWeight: 500, padding: '6px 8px' }}>Brutto</th>
+                  </tr></thead>
+                  <tbody>{records.slice(0, 12).map((r, i) => (
+                    <tr key={i} style={{ borderTop: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums', opacity: (r.gross > 0 || r.net > 0) ? 1 : 0.4 }}>
+                      <td style={{ padding: '5px 8px', color: r.kind === 'income' ? '#22c55e' : 'var(--fg-2)' }}>{r.kind === 'income' ? 'Einn.' : 'Ausg.'}</td>
+                      <td>{r.date || '—'}</td><td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.partner || '—'}</td>
+                      <td style={{ textAlign: 'right', color: 'var(--fg-3)' }}>{r.tax_rate}%</td><td style={{ textAlign: 'right' }}>{fmtEUR(r.net)}</td><td style={{ textAlign: 'right', fontWeight: 600, padding: '5px 8px' }}>{fmtEUR(r.gross)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+              {records.length > 12 && <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>… und {records.length - 12} weitere Zeilen</div>}
+            </div>
+            <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{incomeN} Einnahmen · {expenseN} Ausgaben</span>
+              <div style={{ flex: 1 }}/>
+              <Btn variant="ghost" onClick={() => setStep('file')}>Zurück</Btn>
+              <Btn variant="primary" disabled={busy || !valid.length} onClick={doImport} icon={busy ? Ic.loader(15) : Ic.check(15)}>{valid.length} importieren</Btn>
+            </div>
+          </>
+        )}
+      </Glass>
+    </div>
   );
 }
 

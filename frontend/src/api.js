@@ -303,6 +303,8 @@ export const API = {
   // Buchhaltung · Auswertung
   report:    (year, opts = {}) => request('/api/reports?year=' + year + (opts.month ? '&month=' + opts.month : '') + (opts.quarter ? '&quarter=' + opts.quarter : '')),
   datevUrl:  (year, opts = {}) => url('/api/reports/datev') + '?year=' + year + (opts.month ? '&month=' + opts.month : '') + (opts.quarter ? '&quarter=' + opts.quarter : '') + '&download=1&token=' + (getToken() || ''),
+  importParse:  (file) => { const fd = new FormData(); fd.append('file', file); return request('/api/import/parse', { method: 'POST', body: fd }); },
+  importCommit: (records) => request('/api/import/commit', { method: 'POST', body: { records } }),
   periodMarkPaid:    (id, paid_date) => request('/api/periods/' + id + '/mark-paid', { method: 'POST', body: { paid_date } }),
   periodUnmarkPaid:  (id) => request('/api/periods/' + id + '/unmark-paid', { method: 'POST', body: {} }),
   periodInvoice:     (id) => request('/api/periods/' + id + '/invoice', { method: 'POST', body: {} }),

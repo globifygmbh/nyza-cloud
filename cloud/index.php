@@ -22,6 +22,7 @@ use Nyza\Routes\DocumentRoutes;
 use Nyza\Routes\ExpenseRoutes;
 use Nyza\Routes\FileRoutes;
 use Nyza\Routes\FolderRoutes;
+use Nyza\Routes\ImportRoutes;
 use Nyza\Routes\ProductRoutes;
 use Nyza\Routes\ReportRoutes;
 use Nyza\Routes\RoadmapRoutes;
@@ -199,6 +200,7 @@ SubscriptionRoutes::mount($app);
 TimeRoutes::mount($app);
 RoadmapRoutes::mount($app);
 ReportRoutes::mount($app);
+ImportRoutes::mount($app);
 SettingsRoutes::mount($app);
 WebDavRoutes::mount($app);
 
