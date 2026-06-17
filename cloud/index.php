@@ -131,7 +131,7 @@ $app->get('/sw.js', function ($req, $res) use ($pwaBase) {
     // falls back to cache only when offline. API + media are always network-only.
     $scope = ($pwaBase ?: '') . '/';
     $js = <<<JS
-const CACHE = 'nyza-v1';
+const CACHE = 'nyza-v3';
 const SCOPE = '{$scope}';
 self.addEventListener('install', (e) => self.skipWaiting());
 self.addEventListener('activate', (e) => {
