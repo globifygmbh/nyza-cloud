@@ -4459,6 +4459,9 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const delDoc = async (doc) => { if (!await confirmDialog({ title: 'Löschen?', message: `${doc.number} wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteDocument(doc.id); load(); } catch (e) { toast(e.message, 'error'); } };
   const togglePaid = async (doc) => { try { if (doc.paid_at) await API.unmarkDocPaid(doc.id); else await API.markDocPaid(doc.id); load(); } catch (e) { toast(e.message, 'error'); } };
   const convert = async (doc) => { try { const d = await API.convertDoc(doc.id); toast('Rechnung ' + (d.document?.number || '') + ' erstellt', 'success'); setTab('invoice'); } catch (e) { toast(e.message, 'error'); } };
+  const createReminder = async (doc) => { try { const r = await API.createReminder(doc.id); toast(r.stage + '. Mahnung erstellt', 'success'); load(); if (r.reminder && r.reminder.id) window.open(API.reminderPdfUrl(r.reminder.id, false), '_blank'); } catch (e) { toast(e.message, 'error'); } };
+  const lastReminderPdf = async (doc) => { try { const d = await API.documentReminders(doc.id); const last = (d.reminders || []).slice(-1)[0]; if (last) window.open(API.reminderPdfUrl(last.id, false), '_blank'); } catch (e) { toast(e.message, 'error'); } };
+  const removeLastReminder = async (doc) => { try { const d = await API.documentReminders(doc.id); const last = (d.reminders || []).slice(-1)[0]; if (last) { await API.deleteReminder(last.id); toast('Mahnung entfernt', 'success'); load(); } } catch (e) { toast(e.message, 'error'); } };
   const delProduct = async (p) => { if (!await confirmDialog({ title: 'Produkt löschen?', message: `„${p.name}" wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteProduct(p.id); API.products().then((d) => setProducts(d.products || [])); } catch (e) { toast(e.message, 'error'); } };
   const saveProduct = async (data) => { try { if (data.id) await API.updateProduct(data.id, data); else await API.newProduct(data); setProdEditing(null); API.products().then((d) => setProducts(d.products || [])); } catch (e) { toast(e.message, 'error'); } };
   const saveSub = async (data) => { try { if (data.id) await API.updateSubscription(data.id, data); else await API.newSubscription(data); setSubEditing(null); load(); } catch (e) { toast(e.message, 'error'); } };
@@ -4598,12 +4601,15 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                     <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{fmtDateShort(d.doc_date)}</div>
                   </div>
                   <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + st.color + ' 18%, transparent)', color: st.color, textTransform: 'uppercase', flexShrink: 0 }}>{st.label}</span>
+                  {d.reminder_stage > 0 && <span title="Mahnstufe" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, #ef4444 18%, transparent)', color: '#ef4444', flexShrink: 0 }}>{d.reminder_stage}. MAHN.</span>}
                   <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', width: 110, textAlign: 'right', flexShrink: 0 }}>{fmtEUR(d.gross)}</div>
                   <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
                     { label: 'PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.docPdfUrl(d.id, false), '_blank') },
                     { label: 'PDF herunterladen', icon: Ic.download(15), onClick: () => { window.location.href = API.docPdfUrl(d.id, true); } },
                     { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => openDoc(d.id) },
                     ...(d.type === 'invoice' ? [{ label: d.paid_at ? 'Als offen markieren' : 'Als bezahlt markieren', icon: Ic.check(15), onClick: () => togglePaid(d) }] : []),
+                    ...(d.type === 'invoice' && !d.paid_at && (d.reminder_stage || 0) < 3 ? [{ label: (d.reminder_stage || 0) + 1 + '. Mahnung erstellen', icon: Ic.clock(15), onClick: () => createReminder(d) }] : []),
+                    ...(d.type === 'invoice' && (d.reminder_stage || 0) > 0 ? [{ label: 'Letzte Mahnung (PDF)', icon: Ic.eye(15), onClick: () => lastReminderPdf(d) }, { label: 'Mahnung zurücksetzen', icon: Ic.rotate(15), onClick: () => removeLastReminder(d) }] : []),
                     ...(d.type === 'offer' ? [{ label: 'In Rechnung umwandeln', icon: Ic.copy(15), onClick: () => convert(d) }] : []),
                     { separator: true },
                     { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => delDoc(d) },

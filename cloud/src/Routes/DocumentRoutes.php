@@ -52,7 +52,9 @@ final class DocumentRoutes
             $params[] = $qp['type'];
         }
         $stmt = $pdo->prepare(
-            'SELECT d.*, c.name AS contact_name FROM documents d '
+            'SELECT d.*, c.name AS contact_name, '
+            . '(SELECT MAX(stage) FROM reminders rm WHERE rm.document_id = d.id) AS reminder_stage '
+            . 'FROM documents d '
             . 'LEFT JOIN contacts c ON c.id = d.contact_id '
             . "WHERE $where ORDER BY d.doc_date DESC, d.id DESC"
         );
@@ -464,6 +466,7 @@ final class DocumentRoutes
             'converted_invoice_id'    => $r['converted_invoice_id'] !== null ? (int)$r['converted_invoice_id'] : null,
             'converted_from_offer_id' => $r['converted_from_offer_id'] !== null ? (int)$r['converted_from_offer_id'] : null,
             'payment_status'          => self::paymentStatus($r, $termDays),
+            'reminder_stage'          => isset($r['reminder_stage']) && $r['reminder_stage'] !== null ? (int)$r['reminder_stage'] : 0,
             'created_at'              => $r['created_at'],
         ];
     }
