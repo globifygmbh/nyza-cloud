@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Nyza\Routes;
 
+use Nyza\CompanyContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -63,6 +64,7 @@ final class ImportRoutes
     public static function commit(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $b = (array) $req->getParsedBody();
         $records = $b['records'] ?? null;
         if (!is_array($records) || !$records) return Json::err($res, 'Keine Datensätze', 422);
@@ -73,12 +75,12 @@ final class ImportRoutes
         $pdo->beginTransaction();
         try {
             $insExp = $pdo->prepare(
-                'INSERT INTO expenses (user_id, exp_date, vendor, description, category, net, tax_rate, tax, gross, deductible, paid_at) '
-                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO expenses (user_id, company_id, exp_date, vendor, description, category, net, tax_rate, tax, gross, deductible, paid_at) '
+                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
             $insDoc = $pdo->prepare(
-                'INSERT INTO documents (user_id, type, number, contact_id, client_snapshot, doc_date, intro_text, net, tax, gross, paid_at) '
-                . 'VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO documents (user_id, company_id, type, number, contact_id, client_snapshot, doc_date, intro_text, net, tax, gross, paid_at) '
+                . 'VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)'
             );
             $insItem = $pdo->prepare(
                 'INSERT INTO document_items (document_id, position, description, quantity, unit, unit_price_net, tax_rate) VALUES (?, 1, ?, 1, ?, ?, ?)'
@@ -102,13 +104,13 @@ final class ImportRoutes
 
                 if ($kind === 'expense') {
                     $cat = self::str($r['category'] ?? null, 64) ?? 'Import';
-                    $insExp->execute([$uid, $date, $partner, $desc, $cat, $net, $rate, $tax, $gross, 1, $paidAt]);
+                    $insExp->execute([$uid, $cid, $date, $partner, $desc, $cat, $net, $rate, $tax, $gross, 1, $paidAt]);
                     $expense++;
                 } else {
                     $number = self::str($r['number'] ?? null, 32);
-                    if ($number === null || $number === '') $number = self::nextInvoiceNumber($uid);
+                    if ($number === null || $number === '') $number = self::nextInvoiceNumber($cid);
                     $snap = json_encode(['name' => $partner ?: ''], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                    $insDoc->execute([$uid, 'invoice', $number, $snap, $date, $desc, $net, $tax, $gross, $paidAt]);
+                    $insDoc->execute([$uid, $cid, 'invoice', $number, $snap, $date, $desc, $net, $tax, $gross, $paidAt]);
                     $docId = (int)$pdo->lastInsertId();
                     $insItem->execute([$docId, $desc ?: ($partner ?: 'Position'), 'Pausch.', $net, $rate]);
                     $income++;
@@ -134,13 +136,13 @@ final class ImportRoutes
         return $best;
     }
 
-    private static function nextInvoiceNumber(int $uid): string
+    private static function nextInvoiceNumber(int $cid): string
     {
         $pdo = Database::pdo();
-        $pdo->prepare('INSERT INTO counters (user_id, name, value) VALUES (?, ?, 1000) ON DUPLICATE KEY UPDATE value = value + 1')
-            ->execute([$uid, 'invoice']);
-        $s = $pdo->prepare('SELECT value FROM counters WHERE user_id = ? AND name = ?');
-        $s->execute([$uid, 'invoice']);
+        $pdo->prepare('INSERT INTO counters (company_id, name, value) VALUES (?, ?, 1000) ON DUPLICATE KEY UPDATE value = value + 1')
+            ->execute([$cid, 'invoice']);
+        $s = $pdo->prepare('SELECT value FROM counters WHERE company_id = ? AND name = ?');
+        $s->execute([$cid, 'invoice']);
         return 'RE-' . (int)$s->fetch()['value'];
     }
 

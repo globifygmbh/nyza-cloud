@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Nyza\Routes;
 
+use Nyza\CompanyContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -30,27 +31,28 @@ final class ReportRoutes
     public static function report(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $uid = CompanyContext::active($req, $uid); // scope all queries by active company
         [$year, $month, $quarter, $from, $to, $label] = self::rangeFor($req);
         $pdo = Database::pdo();
 
         // Income: paid invoices, recognised at payment date.
         $inc = self::row($pdo, 'SELECT COALESCE(SUM(net),0) net, COALESCE(SUM(tax),0) tax, COALESCE(SUM(gross),0) gross, COUNT(*) cnt '
-            . "FROM documents WHERE user_id=? AND type='invoice' AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ?", [$uid, $from, $to]);
+            . "FROM documents WHERE company_id=? AND type='invoice' AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ?", [$uid, $from, $to]);
         // Expenses: paid expenses; Vorsteuer only counts when deductible.
         $exp = self::row($pdo, 'SELECT COALESCE(SUM(net),0) net, COALESCE(SUM(CASE WHEN deductible=1 THEN tax ELSE 0 END),0) vst, COALESCE(SUM(gross),0) gross, COUNT(*) cnt '
-            . 'FROM expenses WHERE user_id=? AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ?', [$uid, $from, $to]);
+            . 'FROM expenses WHERE company_id=? AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ?', [$uid, $from, $to]);
 
         $incomeNet = (float)$inc['net']; $incomeTax = (float)$inc['tax'];
         $expenseNet = (float)$exp['net']; $vst = (float)$exp['vst'];
 
         // Open / overdue receivables (current state, not year-bound).
         $term = self::paymentTermDays($uid);
-        $open = self::row($pdo, "SELECT COALESCE(SUM(gross),0) total, COUNT(*) cnt FROM documents WHERE user_id=? AND type='invoice' AND paid_at IS NULL", [$uid]);
-        $over = self::row($pdo, "SELECT COALESCE(SUM(gross),0) total, COUNT(*) cnt FROM documents WHERE user_id=? AND type='invoice' AND paid_at IS NULL AND doc_date IS NOT NULL AND DATE_ADD(doc_date, INTERVAL ? DAY) < CURDATE()", [$uid, $term]);
+        $open = self::row($pdo, "SELECT COALESCE(SUM(gross),0) total, COUNT(*) cnt FROM documents WHERE company_id=? AND type='invoice' AND paid_at IS NULL", [$uid]);
+        $over = self::row($pdo, "SELECT COALESCE(SUM(gross),0) total, COUNT(*) cnt FROM documents WHERE company_id=? AND type='invoice' AND paid_at IS NULL AND doc_date IS NOT NULL AND DATE_ADD(doc_date, INTERVAL ? DAY) < CURDATE()", [$uid, $term]);
 
         // Recurring revenue (active subscriptions, normalised to monthly).
         $mrr = 0.0;
-        $rs = $pdo->prepare('SELECT interval_unit, COALESCE(SUM(net_price),0) s, COUNT(*) c FROM subscriptions WHERE user_id=? AND active=1 GROUP BY interval_unit');
+        $rs = $pdo->prepare('SELECT interval_unit, COALESCE(SUM(net_price),0) s, COUNT(*) c FROM subscriptions WHERE company_id=? AND active=1 GROUP BY interval_unit');
         $rs->execute([$uid]);
         $activeSubs = 0;
         foreach ($rs->fetchAll() as $r) {
@@ -64,7 +66,7 @@ final class ReportRoutes
         $bc = $pdo->prepare(
             'SELECT d.contact_id, c.name, COALESCE(SUM(d.net),0) net, COALESCE(SUM(d.gross),0) gross, COUNT(*) cnt '
             . 'FROM documents d LEFT JOIN contacts c ON c.id = d.contact_id '
-            . "WHERE d.user_id=? AND d.type='invoice' AND d.paid_at IS NOT NULL AND DATE(d.paid_at) BETWEEN ? AND ? "
+            . "WHERE d.company_id=? AND d.type='invoice' AND d.paid_at IS NOT NULL AND DATE(d.paid_at) BETWEEN ? AND ? "
             . 'GROUP BY d.contact_id, c.name ORDER BY net DESC LIMIT 12'
         );
         $bc->execute([$uid, $from, $to]);
@@ -78,10 +80,10 @@ final class ReportRoutes
         // Monthly income/expense net (cash basis).
         $monthly = [];
         for ($m = 1; $m <= 12; $m++) $monthly[$m] = ['month' => $m, 'income_net' => 0.0, 'expense_net' => 0.0, 'profit' => 0.0];
-        $mi = $pdo->prepare("SELECT MONTH(paid_at) m, COALESCE(SUM(net),0) s FROM documents WHERE user_id=? AND type='invoice' AND paid_at IS NOT NULL AND YEAR(paid_at)=? GROUP BY m");
+        $mi = $pdo->prepare("SELECT MONTH(paid_at) m, COALESCE(SUM(net),0) s FROM documents WHERE company_id=? AND type='invoice' AND paid_at IS NOT NULL AND YEAR(paid_at)=? GROUP BY m");
         $mi->execute([$uid, $year]);
         foreach ($mi->fetchAll() as $r) { $monthly[(int)$r['m']]['income_net'] = (float)$r['s']; }
-        $me = $pdo->prepare('SELECT MONTH(paid_at) m, COALESCE(SUM(net),0) s FROM expenses WHERE user_id=? AND paid_at IS NOT NULL AND YEAR(paid_at)=? GROUP BY m');
+        $me = $pdo->prepare('SELECT MONTH(paid_at) m, COALESCE(SUM(net),0) s FROM expenses WHERE company_id=? AND paid_at IS NOT NULL AND YEAR(paid_at)=? GROUP BY m');
         $me->execute([$uid, $year]);
         foreach ($me->fetchAll() as $r) { $monthly[(int)$r['m']]['expense_net'] = (float)$r['s']; }
         foreach ($monthly as &$mm) { $mm['profit'] = round($mm['income_net'] - $mm['expense_net'], 2); }
@@ -93,7 +95,7 @@ final class ReportRoutes
             'SELECT i.tax_rate rate, COALESCE(SUM(ROUND(i.quantity*i.unit_price_net,2)),0) net, '
             . 'COALESCE(SUM(ROUND(ROUND(i.quantity*i.unit_price_net,2)*i.tax_rate/100,2)),0) tax '
             . 'FROM document_items i JOIN documents d ON d.id=i.document_id '
-            . "WHERE d.user_id=? AND d.type='invoice' AND d.paid_at IS NOT NULL AND DATE(d.paid_at) BETWEEN ? AND ? "
+            . "WHERE d.company_id=? AND d.type='invoice' AND d.paid_at IS NOT NULL AND DATE(d.paid_at) BETWEEN ? AND ? "
             . 'GROUP BY i.tax_rate ORDER BY i.tax_rate DESC'
         );
         $ir->execute([$uid, $from, $to]);
@@ -106,7 +108,7 @@ final class ReportRoutes
             . 'COALESCE(SUM(CASE WHEN deductible=1 THEN tax ELSE 0 END),0) vst, '
             . 'COALESCE(SUM(CASE WHEN deductible=0 THEN tax ELSE 0 END),0) tax_nondeduct, '
             . 'COALESCE(SUM(gross),0) gross '
-            . 'FROM expenses WHERE user_id=? AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ? '
+            . 'FROM expenses WHERE company_id=? AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ? '
             . 'GROUP BY tax_rate ORDER BY tax_rate DESC'
         );
         $er->execute([$uid, $from, $to]);
@@ -120,7 +122,7 @@ final class ReportRoutes
         $it = $pdo->prepare(
             'SELECT d.number, d.paid_at, d.net, d.tax, d.gross, c.name AS contact_name, d.client_snapshot '
             . 'FROM documents d LEFT JOIN contacts c ON c.id=d.contact_id '
-            . "WHERE d.user_id=? AND d.type='invoice' AND d.paid_at IS NOT NULL AND DATE(d.paid_at) BETWEEN ? AND ? "
+            . "WHERE d.company_id=? AND d.type='invoice' AND d.paid_at IS NOT NULL AND DATE(d.paid_at) BETWEEN ? AND ? "
             . 'ORDER BY d.paid_at ASC, d.id ASC LIMIT 1000'
         );
         $it->execute([$uid, $from, $to]);
@@ -138,7 +140,7 @@ final class ReportRoutes
         $et = $pdo->prepare(
             'SELECT e.paid_at, e.vendor, e.category, e.net, e.tax, e.tax_rate, e.gross, e.deductible, c.name AS contact_name '
             . 'FROM expenses e LEFT JOIN contacts c ON c.id=e.contact_id '
-            . 'WHERE e.user_id=? AND e.paid_at IS NOT NULL AND DATE(e.paid_at) BETWEEN ? AND ? '
+            . 'WHERE e.company_id=? AND e.paid_at IS NOT NULL AND DATE(e.paid_at) BETWEEN ? AND ? '
             . 'ORDER BY e.paid_at ASC, e.id ASC LIMIT 1000'
         );
         $et->execute([$uid, $from, $to]);
@@ -171,6 +173,7 @@ final class ReportRoutes
     public static function datev(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $uid = CompanyContext::active($req, $uid); // scope by active company
         [$year, $month, $quarter, $from, $to, $label] = self::rangeFor($req);
         $suffix = $month ? sprintf('%04d-%02d', $year, $month) : ($quarter ? $year . '-Q' . $quarter : (string)$year);
         $pdo = Database::pdo();
@@ -179,7 +182,7 @@ final class ReportRoutes
         $rows[] = ['Datum', 'Belegnummer', 'Bezeichnung', 'Partner', 'Kategorie', 'Netto', 'USt-Satz', 'USt', 'Brutto', 'Art', 'Bezahlt am'];
 
         $inv = $pdo->prepare('SELECT d.*, c.name AS contact_name FROM documents d LEFT JOIN contacts c ON c.id=d.contact_id '
-            . "WHERE d.user_id=? AND d.type='invoice' AND d.doc_date BETWEEN ? AND ? ORDER BY d.doc_date ASC, d.id ASC");
+            . "WHERE d.company_id=? AND d.type='invoice' AND d.doc_date BETWEEN ? AND ? ORDER BY d.doc_date ASC, d.id ASC");
         $inv->execute([$uid, $from, $to]);
         foreach ($inv->fetchAll() as $d) {
             $snap = json_decode((string)($d['client_snapshot'] ?? ''), true);
@@ -193,7 +196,7 @@ final class ReportRoutes
         }
 
         $exp = $pdo->prepare('SELECT e.*, c.name AS contact_name FROM expenses e LEFT JOIN contacts c ON c.id=e.contact_id '
-            . 'WHERE e.user_id=? AND e.exp_date BETWEEN ? AND ? ORDER BY e.exp_date ASC, e.id ASC');
+            . 'WHERE e.company_id=? AND e.exp_date BETWEEN ? AND ? ORDER BY e.exp_date ASC, e.id ASC');
         $exp->execute([$uid, $from, $to]);
         foreach ($exp->fetchAll() as $e) {
             $partner = $e['vendor'] ?: ($e['contact_name'] ?: '');
@@ -258,7 +261,7 @@ final class ReportRoutes
 
     private static function paymentTermDays(int $uid): int
     {
-        $s = Database::pdo()->prepare("SELECT data FROM app_settings WHERE user_id=? AND ns='company'");
+        $s = Database::pdo()->prepare("SELECT data FROM app_settings WHERE company_id=? AND ns='company'");
         $s->execute([$uid]);
         $row = $s->fetch();
         if ($row && $row['data']) {
