@@ -6342,6 +6342,44 @@ function LedgerEntryModal({ accounts, onClose, onSaved }) {
 const SUB_INTERVALS = { monthly: 'monatlich', quarterly: 'quartalsweise', yearly: 'jährlich' };
 const EXP_CATEGORIES = ['Wareneinkauf', 'Hardware', 'Software', 'Büro', 'Werbung/Marketing', 'Reisekosten', 'Kfz', 'Beratung/Recht', 'Miete', 'Gebühren/Bank', 'Telefon/Internet', 'Fortbildung', 'Sonstiges'];
 
+// Pick an existing DMS file (search + recent) — used to link a receipt.
+function DmsFilePicker({ onPick, onClose }) {
+  const [q, setQ] = useState('');
+  const [items, setItems] = useState(null);
+  useEffect(() => {
+    let off = false;
+    const term = q.trim();
+    if (term.length < 2) { API.recentFiles().then((d) => { if (!off) setItems(d.files || []); }).catch(() => { if (!off) setItems([]); }); return () => { off = true; }; }
+    const t = setTimeout(() => { API.searchFiles(term).then((d) => { if (!off) setItems(d.files || []); }).catch(() => { if (!off) setItems([]); }); }, 220);
+    return () => { off = true; clearTimeout(t); };
+  }, [q]);
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose} style={{ zIndex: 60 }}>
+      <Glass style={{ width: '100%', maxWidth: 460, borderRadius: 'var(--r-xl)', padding: 0, overflow: 'hidden', maxHeight: '76vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+          <span style={{ color: 'var(--fg-3)', display: 'flex' }}>{Ic.search(16)}</span>
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="DMS-Datei suchen…"
+            style={{ flex: 1, height: 30, border: 'none', outline: 'none', background: 'transparent', fontSize: 14, color: 'var(--fg)' }}/>
+          <IconBtn size={28} onClick={onClose}>{Ic.close(15)}</IconBtn>
+        </div>
+        <div style={{ overflowY: 'auto', padding: 8 }}>
+          {q.trim().length < 2 && <div style={{ fontSize: 11, color: 'var(--fg-3)', padding: '6px 10px' }}>Zuletzt verwendet</div>}
+          {items === null ? <div style={{ padding: 20, color: 'var(--fg-3)' }}>{Ic.loader(18)}</div>
+            : items.length === 0 ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--fg-3)', fontSize: 13 }}>Nichts gefunden.</div>
+            : items.map((f) => (
+              <button key={f.id} onClick={() => onPick(f)} style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: 'var(--r-sm)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--fg)' }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-hi)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+                <FileIcon kind={f.kind} size={16} tint={f.hue}/>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</span>
+                <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>{humanSize(f.size || 0)}</span>
+              </button>
+            ))}
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
 function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
   const [date, setDate] = useState(exp.exp_date || todayKeyLocal());
   const [vendor, setVendor] = useState(exp.vendor || '');
@@ -6355,6 +6393,7 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
   const [hasReceipt, setHasReceipt] = useState(!!exp.has_receipt);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [picking, setPicking] = useState(false);
   const fileRef = useRef(null);
 
   const g = Number(gross) || 0, r = Number(taxRate) || 0;
@@ -6375,6 +6414,11 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
     catch (err) { toast(err.message, 'error'); } finally { setUploading(false); e.target.value = ''; }
   };
   const removeReceipt = async () => { try { await API.deleteExpenseReceipt(exp.id); setHasReceipt(false); onChanged && onChanged(); } catch (err) { toast(err.message, 'error'); } };
+  const pickFromDms = async (f) => {
+    setPicking(false); setUploading(true);
+    try { await API.linkExpenseReceiptFile(exp.id, f.id); setHasReceipt(true); toast('Beleg aus DMS verknüpft', 'success'); onChanged && onChanged(); }
+    catch (err) { toast(err.message, 'error'); } finally { setUploading(false); }
+  };
 
   const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
   return (
@@ -6416,13 +6460,17 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
             {!exp.id ? (
               <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>Speichere die Ausgabe, danach kannst du einen Beleg anhängen.</div>
             ) : hasReceipt ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Btn variant="glass" size="sm" icon={Ic.eye(13)} onClick={() => window.open(API.expenseReceiptUrl(exp.id, false), '_blank')}>Beleg ansehen</Btn>
                 <Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={pickReceipt}>Ersetzen</Btn>
+                <Btn variant="glass" size="sm" icon={Ic.folder(13)} onClick={() => setPicking(true)}>Aus DMS</Btn>
                 <Btn variant="ghost" size="sm" icon={Ic.trash(13)} onClick={removeReceipt}>Entfernen</Btn>
               </div>
             ) : (
-              <Btn variant="glass" size="sm" disabled={uploading} icon={uploading ? Ic.loader(13) : Ic.plus(13)} onClick={pickReceipt}>Beleg hochladen</Btn>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Btn variant="glass" size="sm" disabled={uploading} icon={uploading ? Ic.loader(13) : Ic.plus(13)} onClick={pickReceipt}>Beleg hochladen</Btn>
+                <Btn variant="glass" size="sm" disabled={uploading} icon={Ic.folder(13)} onClick={() => setPicking(true)}>Aus DMS wählen</Btn>
+              </div>
             )}
           </div>
         </div>
@@ -6431,6 +6479,7 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
           <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
         </div>
       </Glass>
+      {picking && <DmsFilePicker onPick={pickFromDms} onClose={() => setPicking(false)}/>}
     </div>
   );
 }

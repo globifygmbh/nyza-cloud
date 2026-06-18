@@ -32,6 +32,7 @@ final class ExpenseRoutes
             $g->post('/{id}/mark-paid',  [self::class, 'markPaid']);
             $g->post('/{id}/unmark-paid',[self::class, 'unmarkPaid']);
             $g->post('/{id}/receipt',    [self::class, 'uploadReceipt']);
+            $g->post('/{id}/receipt-from-file', [self::class, 'receiptFromFile']);
             $g->get('/{id}/receipt',     [self::class, 'getReceipt']);
             $g->delete('/{id}/receipt',  [self::class, 'deleteReceipt']);
         })->add(new AuthMiddleware());
@@ -142,6 +143,36 @@ final class ExpenseRoutes
         if (!empty($cur['receipt_path'])) Storage::deleteRel($cur['receipt_path']);
         $rel = Storage::relPath($uid, $name);
         $file->moveTo(Storage::abs($rel));
+        Database::pdo()->prepare('UPDATE expenses SET receipt_path = ?, receipt_name = ?, receipt_mime = ? WHERE id = ? AND company_id = ?')
+            ->execute([$rel, mb_substr($name, 0, 255), mb_substr($mime, 0, 100), $id, $cid]);
+        return Json::ok($res, ['expense' => self::shape(self::joined($cid, $id))]);
+    }
+
+    /** Link an existing DMS file as this expense's receipt (copies the blob). */
+    public static function receiptFromFile(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
+        $id = (int)$args['id'];
+        $cur = self::fetchOne($cid, $id);
+        if (!$cur) return Json::err($res, 'Not found', 404);
+        $b = (array)$req->getParsedBody();
+        $fileId = (int)($b['file_id'] ?? 0);
+        if ($fileId <= 0) return Json::err($res, 'Keine Datei', 422);
+
+        $s = Database::pdo()->prepare('SELECT name, storage_path, mime_type, size FROM files WHERE id = ? AND user_id = ? AND deleted_at IS NULL');
+        $s->execute([$fileId, $uid]);
+        $f = $s->fetch();
+        if (!$f) return Json::err($res, 'Datei nicht gefunden', 404);
+        if ((int)$f['size'] > self::RECEIPT_MAX) return Json::err($res, 'Beleg zu groß (max 20 MB)', 413);
+        $srcAbs = Storage::abs($f['storage_path']);
+        if (!is_file($srcAbs)) return Json::err($res, 'Datei nicht gefunden', 404);
+
+        $name = (string)$f['name'];
+        $mime = (string)($f['mime_type'] ?: 'application/octet-stream');
+        if (!empty($cur['receipt_path'])) Storage::deleteRel($cur['receipt_path']);
+        $rel = Storage::relPath($uid, $name);
+        if (!@copy($srcAbs, Storage::abs($rel))) return Json::err($res, 'Kopieren fehlgeschlagen', 500);
         Database::pdo()->prepare('UPDATE expenses SET receipt_path = ?, receipt_name = ?, receipt_mime = ? WHERE id = ? AND company_id = ?')
             ->execute([$rel, mb_substr($name, 0, 255), mb_substr($mime, 0, 100), $id, $cid]);
         return Json::ok($res, ['expense' => self::shape(self::joined($cid, $id))]);

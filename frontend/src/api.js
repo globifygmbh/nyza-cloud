@@ -367,6 +367,7 @@ export const API = {
   expenseUnmarkPaid:(id) => request('/api/expenses/' + id + '/unmark-paid', { method: 'POST', body: {} }),
   uploadExpenseReceipt: (id, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/expenses/' + id + '/receipt', { method: 'POST', body: fd }); },
   deleteExpenseReceipt: (id) => request('/api/expenses/' + id + '/receipt', { method: 'DELETE' }),
+  linkExpenseReceiptFile: (id, fileId) => request('/api/expenses/' + id + '/receipt-from-file', { method: 'POST', body: { file_id: fileId } }),
   expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
 
   // Buchhaltung · Auswertung
