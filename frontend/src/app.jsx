@@ -5435,7 +5435,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const toggleActive = async (s) => { try { await API.updateSubscription(s.id, { active: s.active ? 0 : 1 }); load(); } catch (e) { toast(e.message, 'error'); } };
   const payPeriod = async (s) => { if (!s.current_period) return; try { await API.periodMarkPaid(s.current_period.id); toast('Periode bezahlt', 'success'); load(); } catch (e) { toast(e.message, 'error'); } };
   const invoicePeriod = async (s) => { if (!s.current_period) return; try { const r = await API.periodInvoice(s.current_period.id); toast('Rechnung erstellt', 'success'); load(); if (r.invoice_id) window.open(API.docPdfUrl(r.invoice_id, false), '_blank'); } catch (e) { toast(e.message, 'error'); } };
-  const saveExp = async (data) => { try { if (data.id) await API.updateExpense(data.id, data); else await API.newExpense(data); setExpEditing(null); load(); } catch (e) { toast(e.message, 'error'); } };
+  const saveExp = async (data) => { try { const r = data.id ? await API.updateExpense(data.id, data) : await API.newExpense(data); load(); return r; } catch (e) { toast(e.message, 'error'); throw e; } };
   const delExp = async (x) => { if (!await confirmDialog({ title: 'Ausgabe löschen?', message: `${x.vendor || x.category} wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteExpense(x.id); load(); } catch (e) { toast(e.message, 'error'); } };
   const toggleExpPaid = async (x) => { try { if (x.paid_at) await API.expenseUnmarkPaid(x.id); else await API.expenseMarkPaid(x.id); load(); } catch (e) { toast(e.message, 'error'); } };
 
@@ -6396,6 +6396,9 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
   const [picking, setPicking] = useState(null); // 'link' | 'ocr'
   const [ocrBusy, setOcrBusy] = useState(false);
   const [ocrOk, setOcrOk] = useState(false);
+  const [pendingFile, setPendingFile] = useState(null);   // File to attach on save
+  const [pendingDmsId, setPendingDmsId] = useState(null); // DMS file id to link on save
+  const [pendingName, setPendingName] = useState('');
   const fileRef = useRef(null);
   const ocrRef = useRef(null);
   useEffect(() => { API.ocrStatus().then((d) => setOcrOk(!!d.available)).catch(() => setOcrOk(false)); }, []);
@@ -6406,17 +6409,29 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
 
   const submit = async () => {
     setBusy(true);
-    await onSave({ id: exp.id, exp_date: date || null, vendor: vendor.trim() || null, contact_id: contactId || null, category, description: description.trim() || null, gross: g, tax_rate: r, deductible: deductible ? 1 : 0, paid_at: paid ? (date || todayKeyLocal()) : '' });
-    setBusy(false);
+    try {
+      const res = await onSave({ id: exp.id, exp_date: date || null, vendor: vendor.trim() || null, contact_id: contactId || null, category, description: description.trim() || null, gross: g, tax_rate: r, deductible: deductible ? 1 : 0, paid_at: paid ? (date || todayKeyLocal()) : '' });
+      const savedId = exp.id || res?.expense?.id;
+      if (savedId && (pendingFile || pendingDmsId)) {
+        try {
+          if (pendingFile) await API.uploadExpenseReceipt(savedId, pendingFile);
+          else await API.linkExpenseReceiptFile(savedId, pendingDmsId);
+          onChanged && onChanged();
+        } catch (err) { toast('Gespeichert, aber Beleg-Anhang fehlgeschlagen: ' + err.message, 'error'); }
+      }
+      onClose();
+    } catch (e) { /* error toast shown by onSave */ } finally { setBusy(false); }
   };
   const pickReceipt = () => fileRef.current && fileRef.current.click();
   const onFile = async (e) => {
     const file = e.target.files && e.target.files[0];
-    if (!file || !exp.id) { if (!exp.id) toast('Erst speichern, dann Beleg anhängen', 'error'); return; }
+    if (!file) return;
+    if (!exp.id) { setPendingFile(file); setPendingDmsId(null); setPendingName(file.name); e.target.value = ''; return; }
     setUploading(true);
     try { await API.uploadExpenseReceipt(exp.id, file); setHasReceipt(true); toast('Beleg hochgeladen', 'success'); onChanged && onChanged(); }
     catch (err) { toast(err.message, 'error'); } finally { setUploading(false); e.target.value = ''; }
   };
+  const linkPendingDms = (f) => { setPicking(null); setPendingDmsId(f.id); setPendingFile(null); setPendingName(f.name); };
   const removeReceipt = async () => { try { await API.deleteExpenseReceipt(exp.id); setHasReceipt(false); onChanged && onChanged(); } catch (err) { toast(err.message, 'error'); } };
   const pickFromDms = async (f) => {
     setPicking(null); setUploading(true);
@@ -6435,12 +6450,12 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     setOcrBusy(true);
-    try { const d = await API.ocrReceipt(file); applyOcr(d.suggestion); }
+    try { const d = await API.ocrReceipt(file); applyOcr(d.suggestion); setPendingFile(file); setPendingDmsId(null); setPendingName(file.name); }
     catch (err) { toast(err.message, 'error'); } finally { setOcrBusy(false); e.target.value = ''; }
   };
   const ocrFromDms = async (f) => {
     setPicking(null); setOcrBusy(true);
-    try { const d = await API.ocrReceiptFile(f.id); applyOcr(d.suggestion); }
+    try { const d = await API.ocrReceiptFile(f.id); applyOcr(d.suggestion); setPendingDmsId(f.id); setPendingFile(null); setPendingName(f.name); }
     catch (err) { toast(err.message, 'error'); } finally { setOcrBusy(false); }
   };
 
@@ -6454,6 +6469,20 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
           <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
         </div>
         <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+          {ocrOk && (
+            <div style={{ padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'color-mix(in oklab, var(--accent) 7%, var(--surface-hi))', border: '1px solid color-mix(in oklab, var(--accent) 30%, var(--border))' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <span style={{ color: 'var(--accent)', display: 'inline-flex' }}>{Ic.camera(16)}</span>
+                <span style={{ fontSize: 13.5, fontWeight: 600 }}>Beleg scannen{ocrBusy ? ' · erkenne…' : ''}</span>
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 10 }}>Foto/PDF zuerst scannen — Datum, Betrag, USt &amp; Lieferant werden automatisch ausgefüllt. Danach nur prüfen.</div>
+              <input ref={ocrRef} type="file" accept="image/*,application/pdf" onChange={onOcrFile} style={{ display: 'none' }}/>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Btn variant="primary" size="sm" disabled={ocrBusy} icon={ocrBusy ? Ic.loader(13) : Ic.camera(13)} onClick={() => ocrRef.current && ocrRef.current.click()}>Datei scannen</Btn>
+                <Btn variant="glass" size="sm" disabled={ocrBusy} icon={Ic.folder(13)} onClick={() => setPicking('ocr')}>Aus DMS scannen</Btn>
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 12 }}>
             <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Datum</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={fld}/></label>
             <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kategorie</span>
@@ -6477,24 +6506,21 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
           <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13.5 }}>
             <input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)' }}/> Bereits bezahlt
           </label>
-          {/* OCR auto-fill */}
-          {ocrOk && (
-            <div style={{ paddingTop: 6, borderTop: '1px solid var(--border)' }}>
-              <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 8 }}>Beleg scannen (OCR){ocrBusy ? ' · erkenne…' : ''}</div>
-              <input ref={ocrRef} type="file" accept="image/*,application/pdf" onChange={onOcrFile} style={{ display: 'none' }}/>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <Btn variant="glass" size="sm" disabled={ocrBusy} icon={ocrBusy ? Ic.loader(13) : Ic.camera(13)} onClick={() => ocrRef.current && ocrRef.current.click()}>Datei scannen</Btn>
-                <Btn variant="glass" size="sm" disabled={ocrBusy} icon={Ic.folder(13)} onClick={() => setPicking('ocr')}>DMS scannen</Btn>
-                <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>füllt Datum, Betrag, USt & Lieferant</span>
-              </div>
-            </div>
-          )}
           {/* Receipt */}
           <div style={{ paddingTop: 6, borderTop: '1px solid var(--border)' }}>
             <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 8 }}>Beleg</div>
             <input ref={fileRef} type="file" accept="image/*,application/pdf" onChange={onFile} style={{ display: 'none' }}/>
-            {!exp.id ? (
-              <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>Speichere die Ausgabe, danach kannst du einen Beleg anhängen.</div>
+            {(pendingFile || pendingDmsId) ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--fg-2)' }}>
+                <span style={{ color: 'var(--accent)', display: 'inline-flex' }}>{Ic.check(14)}</span>
+                <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{pendingName || 'Beleg'} — wird beim Speichern angehängt</span>
+                <span onClick={() => { setPendingFile(null); setPendingDmsId(null); setPendingName(''); }} style={{ cursor: 'pointer', color: 'var(--fg-4)' }} title="Verwerfen">{Ic.close(14)}</span>
+              </div>
+            ) : !exp.id ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Btn variant="glass" size="sm" disabled={uploading} icon={Ic.plus(13)} onClick={pickReceipt}>Beleg wählen</Btn>
+                <Btn variant="glass" size="sm" disabled={uploading} icon={Ic.folder(13)} onClick={() => setPicking('link-pending')}>Aus DMS</Btn>
+              </div>
             ) : hasReceipt ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Btn variant="glass" size="sm" icon={Ic.eye(13)} onClick={() => window.open(API.expenseReceiptUrl(exp.id, false), '_blank')}>Beleg ansehen</Btn>
@@ -6515,7 +6541,7 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
           <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
         </div>
       </Glass>
-      {picking && <DmsFilePicker onPick={picking === 'ocr' ? ocrFromDms : pickFromDms} onClose={() => setPicking(null)}/>}
+      {picking && <DmsFilePicker onPick={picking === 'ocr' ? ocrFromDms : picking === 'link-pending' ? linkPendingDms : pickFromDms} onClose={() => setPicking(null)}/>}
     </div>
   );
 }
