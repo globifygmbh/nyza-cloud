@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Nyza\Routes;
 
+use Nyza\CompanyContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -82,12 +83,14 @@ final class LedgerRoutes
     public static function accounts(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        return Json::ok($res, ['accounts' => array_values(self::mergedAccounts($uid))]);
+        $cid = CompanyContext::active($req, $uid);
+        return Json::ok($res, ['accounts' => array_values(self::mergedAccounts($cid))]);
     }
 
     public static function createAccount(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $b = (array)$req->getParsedBody();
         $number = trim((string)($b['number'] ?? ''));
         $name = trim((string)($b['name'] ?? ''));
@@ -96,11 +99,11 @@ final class LedgerRoutes
         if (!in_array($type, self::TYPES, true)) return Json::err($res, 'Ungültiger Kontotyp', 422);
         if ($name === '') $name = $number;
 
-        // Upsert custom account by (user, number).
+        // Upsert custom account (creator user_id kept; scoped per company).
         Database::pdo()->prepare(
-            'INSERT INTO ledger_accounts (user_id, number, name, type) VALUES (?, ?, ?, ?) '
-            . 'ON DUPLICATE KEY UPDATE name = VALUES(name), type = VALUES(type)'
-        )->execute([$uid, $number, $name, $type]);
+            'INSERT INTO ledger_accounts (user_id, company_id, number, name, type) VALUES (?, ?, ?, ?, ?) '
+            . 'ON DUPLICATE KEY UPDATE name = VALUES(name), type = VALUES(type), company_id = VALUES(company_id)'
+        )->execute([$uid, $cid, $number, $name, $type]);
 
         return Json::ok($res, ['account' => ['number' => $number, 'name' => $name, 'type' => $type]], 201);
     }
@@ -108,11 +111,12 @@ final class LedgerRoutes
     public static function deleteAccount(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $number = (string)$args['number'];
         foreach (self::DEFAULT_ACCOUNTS as $a) {
             if ($a[0] === $number) return Json::err($res, 'Standardkonto', 422);
         }
-        Database::pdo()->prepare('DELETE FROM ledger_accounts WHERE user_id=? AND number=?')->execute([$uid, $number]);
+        Database::pdo()->prepare('DELETE FROM ledger_accounts WHERE company_id=? AND number=?')->execute([$cid, $number]);
         return Json::ok($res, ['ok' => true]);
     }
 
@@ -120,9 +124,10 @@ final class LedgerRoutes
     public static function journal(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         [$year, $month, $quarter, $from, $to, $label] = self::rangeFor($req);
-        $names = self::accountNameMap($uid);
-        $entries = self::derive($uid, $from, $to, $names);
+        $names = self::accountNameMap($cid);
+        $entries = self::derive($cid, $from, $to, $names);
 
         // Sort by date asc, then source.
         usort($entries, static function ($a, $b) {
@@ -145,10 +150,11 @@ final class LedgerRoutes
     public static function guv(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         [$year, $month, $quarter, $from, $to, $label] = self::rangeFor($req);
-        $names = self::accountNameMap($uid);
-        $types = self::accountTypeMap($uid);
-        $fold = self::foldByAccount(self::derive($uid, $from, $to, $names));
+        $names = self::accountNameMap($cid);
+        $types = self::accountTypeMap($cid);
+        $fold = self::foldByAccount(self::derive($cid, $from, $to, $names));
 
         $income = []; $expense = []; $ti = 0.0; $te = 0.0;
         foreach ($fold as $acc => $sums) {
@@ -182,10 +188,11 @@ final class LedgerRoutes
     public static function balances(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         [$year, $month, $quarter, $from, $to, $label] = self::rangeFor($req);
-        $names = self::accountNameMap($uid);
-        $types = self::accountTypeMap($uid);
-        $fold = self::foldByAccount(self::derive($uid, $from, $to, $names));
+        $names = self::accountNameMap($cid);
+        $types = self::accountTypeMap($cid);
+        $fold = self::foldByAccount(self::derive($cid, $from, $to, $names));
 
         $rows = []; $td = 0.0; $tc = 0.0;
         foreach ($fold as $acc => $sums) {
@@ -213,12 +220,13 @@ final class LedgerRoutes
     public static function balanceSheet(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $year = self::year($req);
         $to = "$year-12-31";
-        $names = self::accountNameMap($uid);
-        $types = self::accountTypeMap($uid);
+        $names = self::accountNameMap($cid);
+        $types = self::accountTypeMap($cid);
         // Cumulative: from beginning of time through year-end.
-        $fold = self::foldByAccount(self::derive($uid, '1900-01-01', $to, $names));
+        $fold = self::foldByAccount(self::derive($cid, '1900-01-01', $to, $names));
 
         $assets = []; $liabilities = []; $equity = [];
         $totalAssets = 0.0; $resultIncome = 0.0; $resultExpense = 0.0; $equitySum = 0.0;
@@ -267,6 +275,7 @@ final class LedgerRoutes
     public static function createEntry(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $b = (array)$req->getParsedBody();
         $date = trim((string)($b['entry_date'] ?? ''));
         $desc = trim((string)($b['description'] ?? ''));
@@ -290,13 +299,13 @@ final class LedgerRoutes
         if ($sd <= 0 || $sd !== $sc) return Json::err($res, 'Buchung nicht ausgeglichen', 422);
 
         $pdo = Database::pdo();
-        $pdo->prepare('INSERT INTO journal_entries (user_id, entry_date, description) VALUES (?, ?, ?)')
-            ->execute([$uid, $date, $desc !== '' ? $desc : null]);
+        $pdo->prepare('INSERT INTO journal_entries (user_id, company_id, entry_date, description) VALUES (?, ?, ?, ?)')
+            ->execute([$uid, $cid, $date, $desc !== '' ? $desc : null]);
         $eid = (int)$pdo->lastInsertId();
         $ins = $pdo->prepare('INSERT INTO journal_lines (entry_id, account, debit, credit) VALUES (?, ?, ?, ?)');
         foreach ($lines as $l) $ins->execute([$eid, $l['account'], $l['debit'], $l['credit']]);
 
-        $names = self::accountNameMap($uid);
+        $names = self::accountNameMap($cid);
         $shaped = array_map(static fn($l) => [
             'account' => $l['account'], 'name' => $names[$l['account']] ?? '',
             'debit' => $l['debit'], 'credit' => $l['credit'],
@@ -311,11 +320,12 @@ final class LedgerRoutes
     public static function deleteEntry(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        $s = Database::pdo()->prepare('SELECT id FROM journal_entries WHERE id=? AND user_id=?');
-        $s->execute([$id, $uid]);
+        $s = Database::pdo()->prepare('SELECT id FROM journal_entries WHERE id=? AND company_id=?');
+        $s->execute([$id, $cid]);
         if (!$s->fetch()) return Json::err($res, 'Not found', 404);
-        Database::pdo()->prepare('DELETE FROM journal_entries WHERE id=? AND user_id=?')->execute([$id, $uid]);
+        Database::pdo()->prepare('DELETE FROM journal_entries WHERE id=? AND company_id=?')->execute([$id, $cid]);
         return Json::ok($res, ['ok' => true]);
     }
 
@@ -323,10 +333,11 @@ final class LedgerRoutes
     public static function datev(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         [$year, $month, $quarter, $from, $to, $label] = self::rangeFor($req);
         $suffix = $month ? sprintf('%04d-%02d', $year, $month) : ($quarter ? $year . '-Q' . $quarter : (string)$year);
-        $names = self::accountNameMap($uid);
-        $entries = self::derive($uid, $from, $to, $names);
+        $names = self::accountNameMap($cid);
+        $entries = self::derive($cid, $from, $to, $names);
         usort($entries, static fn($a, $b) => [$a['date'], $a['source']] <=> [$b['date'], $b['source']]);
 
         $rows = [];
@@ -362,16 +373,16 @@ final class LedgerRoutes
      * within [$from, $to]. Each entry: {date, ref, description, source, lines:[
      * {account, name, debit, credit}]}.
      */
-    private static function derive(int $uid, string $from, string $to, array $names): array
+    private static function derive(int $cid, string $from, string $to, array $names): array
     {
         $pdo = Database::pdo();
         $entries = [];
 
         // Invoices booked (accrual) at doc_date.
         $inv = $pdo->prepare("SELECT id, number, client_snapshot, doc_date, paid_at, net, tax, gross "
-            . "FROM documents WHERE user_id=? AND type='invoice' AND doc_date BETWEEN ? AND ? "
+            . "FROM documents WHERE company_id=? AND type='invoice' AND doc_date BETWEEN ? AND ? "
             . "ORDER BY doc_date ASC, id ASC");
-        $inv->execute([$uid, $from, $to]);
+        $inv->execute([$cid, $from, $to]);
         foreach ($inv->fetchAll() as $d) {
             $snap = json_decode((string)($d['client_snapshot'] ?? ''), true);
             $client = is_array($snap) ? (string)($snap['name'] ?? '') : '';
@@ -389,9 +400,9 @@ final class LedgerRoutes
 
         // Invoice payments at paid_at.
         $pay = $pdo->prepare("SELECT number, paid_at, gross FROM documents "
-            . "WHERE user_id=? AND type='invoice' AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ? "
+            . "WHERE company_id=? AND type='invoice' AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ? "
             . "ORDER BY paid_at ASC, id ASC");
-        $pay->execute([$uid, $from, $to]);
+        $pay->execute([$cid, $from, $to]);
         foreach ($pay->fetchAll() as $d) {
             $gross = (float)$d['gross'];
             $entries[] = [
@@ -403,8 +414,8 @@ final class LedgerRoutes
 
         // Expenses booked at exp_date.
         $exp = $pdo->prepare("SELECT id, exp_date, paid_at, vendor, category, net, tax, gross, deductible "
-            . "FROM expenses WHERE user_id=? AND exp_date BETWEEN ? AND ? ORDER BY exp_date ASC, id ASC");
-        $exp->execute([$uid, $from, $to]);
+            . "FROM expenses WHERE company_id=? AND exp_date BETWEEN ? AND ? ORDER BY exp_date ASC, id ASC");
+        $exp->execute([$cid, $from, $to]);
         foreach ($exp->fetchAll() as $e) {
             $cat = (string)$e['category'];
             $acc = self::CATEGORY_ACCOUNTS[$cat] ?? '7700';
@@ -422,9 +433,9 @@ final class LedgerRoutes
 
         // Expense payments at paid_at.
         $ep = $pdo->prepare("SELECT id, paid_at, vendor, category, gross FROM expenses "
-            . "WHERE user_id=? AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ? "
+            . "WHERE company_id=? AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ? "
             . "ORDER BY paid_at ASC, id ASC");
-        $ep->execute([$uid, $from, $to]);
+        $ep->execute([$cid, $from, $to]);
         foreach ($ep->fetchAll() as $e) {
             $cat = (string)$e['category'];
             $partner = ((string)$e['vendor']) !== '' ? (string)$e['vendor'] : $cat;
@@ -438,8 +449,8 @@ final class LedgerRoutes
 
         // Manual journal entries.
         $je = $pdo->prepare('SELECT id, entry_date, description FROM journal_entries '
-            . 'WHERE user_id=? AND entry_date BETWEEN ? AND ? ORDER BY entry_date ASC, id ASC');
-        $je->execute([$uid, $from, $to]);
+            . 'WHERE company_id=? AND entry_date BETWEEN ? AND ? ORDER BY entry_date ASC, id ASC');
+        $je->execute([$cid, $from, $to]);
         $ml = $pdo->prepare('SELECT account, debit, credit FROM journal_lines WHERE entry_id=? ORDER BY id ASC');
         foreach ($je->fetchAll() as $m) {
             $ml->execute([(int)$m['id']]);
@@ -481,14 +492,14 @@ final class LedgerRoutes
 
     // ───── Account map helpers ─────────────────────────────────────────────────
     /** Merged chart: default accounts + custom rows (custom overrides by number), keyed by number, sorted. */
-    private static function mergedAccounts(int $uid): array
+    private static function mergedAccounts(int $cid): array
     {
         $map = [];
         foreach (self::DEFAULT_ACCOUNTS as $a) {
             $map[$a[0]] = ['number' => $a[0], 'name' => $a[1], 'type' => $a[2]];
         }
-        $s = Database::pdo()->prepare('SELECT number, name, type FROM ledger_accounts WHERE user_id=?');
-        $s->execute([$uid]);
+        $s = Database::pdo()->prepare('SELECT number, name, type FROM ledger_accounts WHERE company_id=?');
+        $s->execute([$cid]);
         foreach ($s->fetchAll() as $r) {
             $map[(string)$r['number']] = [
                 'number' => (string)$r['number'], 'name' => (string)$r['name'], 'type' => (string)$r['type'],
@@ -498,17 +509,17 @@ final class LedgerRoutes
         return $map;
     }
 
-    private static function accountNameMap(int $uid): array
+    private static function accountNameMap(int $cid): array
     {
         $out = [];
-        foreach (self::mergedAccounts($uid) as $num => $a) $out[(string)$num] = $a['name'];
+        foreach (self::mergedAccounts($cid) as $num => $a) $out[(string)$num] = $a['name'];
         return $out;
     }
 
-    private static function accountTypeMap(int $uid): array
+    private static function accountTypeMap(int $cid): array
     {
         $out = [];
-        foreach (self::mergedAccounts($uid) as $num => $a) $out[(string)$num] = $a['type'];
+        foreach (self::mergedAccounts($cid) as $num => $a) $out[(string)$num] = $a['type'];
         return $out;
     }
 
