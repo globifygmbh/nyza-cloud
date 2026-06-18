@@ -5725,6 +5725,65 @@ function periodOpts(p) {
   return {};
 }
 
+// Maps the cash-basis report onto the Austrian UVA (U30) Kennzahlen so the
+// figures can be typed straight into FinanzOnline. Click any amount to copy it.
+function UvaPreview({ data }) {
+  const KZ_BASE = { 20: '022', 10: '029', 13: '006' }; // Bemessungsgrundlage per rate
+  const copy = (n) => {
+    const s = Number(n || 0).toFixed(2).replace('.', ',');
+    if (navigator.clipboard) navigator.clipboard.writeText(s).then(() => toast('Kopiert: ' + s, 'success')).catch(() => {});
+  };
+  const amount = (n, bold) => (
+    <span onClick={() => copy(n)} title="Klicken zum Kopieren" style={{ cursor: 'pointer', fontVariantNumeric: 'tabular-nums', fontWeight: bold ? 700 : 500, borderBottom: '1px dotted var(--border-hi)' }}>{fmtEUR(n)}</span>
+  );
+  const kz = (code) => <span style={{ display: 'inline-block', minWidth: 42, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>KZ {code}</span>;
+  const rows = (data.income_by_rate || []).filter((r) => r.net > 0 || r.tax > 0);
+  const ustTotal = data.income.tax;
+  const vst = data.expense.vst;
+  const zahllast = data.ust_zahllast;
+  const r = (label, code, base, ust, bold) => (
+    <tr style={{ borderTop: '1px solid var(--border)' }}>
+      <td style={{ padding: '7px 0' }}>{code ? kz(code) : <span style={{ display: 'inline-block', minWidth: 42 }}/>}<span style={{ fontWeight: bold ? 700 : 500 }}>{label}</span></td>
+      <td style={{ textAlign: 'right' }}>{base != null ? amount(base, bold) : ''}</td>
+      <td style={{ textAlign: 'right' }}>{ust != null ? amount(ust, bold) : ''}</td>
+    </tr>
+  );
+  return (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '16px 18px', marginBottom: 28 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-display)' }}>UVA-Vorschau (FinanzOnline)</div>
+        <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, padding: '2px 7px', borderRadius: 999, background: 'var(--accent-grad)', color: '#fff' }}>AT · U30</span>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 14 }}>
+        Umsatzsteuervoranmeldung {data.period ? '· ' + data.period.label : ''} · Basis: Ist (Zahldatum) · Beträge zum Abtippen — klick zum Kopieren
+      </div>
+      <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ color: 'var(--fg-3)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            <th style={{ textAlign: 'left', fontWeight: 500, paddingBottom: 6 }}>Kennzahl</th>
+            <th style={{ textAlign: 'right', fontWeight: 500 }}>Bemessungsgrundlage</th>
+            <th style={{ textAlign: 'right', fontWeight: 500 }}>Umsatzsteuer</th>
+          </tr>
+        </thead>
+        <tbody>
+          {r('Gesamtbetrag Bemessungsgrundlage', '000', data.income.net, null, true)}
+          {rows.map((x) => r((x.rate === 20 ? 'Normalsteuersatz' : x.rate === 10 ? 'Ermäßigt' : x.rate === 13 ? 'Ermäßigt' : 'Sonstiger Satz') + ' ' + x.rate + ' %', KZ_BASE[x.rate], x.net, x.tax))}
+          {r('Summe Umsatzsteuer', null, null, ustTotal, true)}
+          {r('Gesamtbetrag der Vorsteuern', '060', null, vst, false)}
+          <tr style={{ borderTop: '2px solid var(--border-hi)' }}>
+            <td style={{ padding: '9px 0' }}>{kz('095')}<span style={{ fontWeight: 700 }}>{zahllast >= 0 ? 'Vorauszahlung (Zahllast)' : 'Überschuss (Gutschrift)'}</span></td>
+            <td/>
+            <td style={{ textAlign: 'right' }}>{amount(Math.abs(zahllast), true)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style={{ fontSize: 10.5, color: 'var(--fg-4)', marginTop: 10 }}>
+        Hinweis: Vorschau auf Ist-Basis. Reverse-Charge, ig. Erwerbe/Lieferungen und steuerfreie Umsätze sind nicht berücksichtigt — bei Bedarf manuell ergänzen.
+      </div>
+    </div>
+  );
+}
+
 function AuswertungView({ data, year, onYear, period, onPeriod }) {
   const card = (label, value, sub, accent) => (
     <div style={{ padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
@@ -5815,6 +5874,9 @@ function AuswertungView({ data, year, onYear, period, onPeriod }) {
               {data.expense_by_rate.some((r) => r.tax_nondeduct > 0) && <div style={{ fontSize: 10.5, color: 'var(--fg-4)', marginTop: 8 }}>* enthält nicht abzugsfähige Beträge (nicht in Vorsteuer)</div>}
             </div>
           </div>
+
+          {/* UVA-Vorschau (FinanzOnline, AT) */}
+          <UvaPreview data={data}/>
 
           {/* Quarters */}
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Gewinn pro Quartal</div>
