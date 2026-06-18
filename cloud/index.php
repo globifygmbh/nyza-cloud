@@ -37,6 +37,7 @@ use Nyza\Routes\SearchRoutes;
 use Nyza\Routes\SettingsRoutes;
 use Nyza\Routes\ShareRoutes;
 use Nyza\Routes\SubscriptionRoutes;
+use Nyza\Routes\TagRoutes;
 use Nyza\Routes\TaskRoutes;
 use Nyza\Routes\TimeRoutes;
 use Nyza\Routes\UploadLinkRoutes;
@@ -233,6 +234,7 @@ ImportRoutes::mount($app);
 LedgerRoutes::mount($app);
 SettingsRoutes::mount($app);
 SearchRoutes::mount($app);
+TagRoutes::mount($app);
 PushRoutes::mount($app);
 WebDavRoutes::mount($app);
 
