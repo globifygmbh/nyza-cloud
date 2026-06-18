@@ -101,14 +101,33 @@ final class WebDavRoutes
         return array_values(array_map('rawurldecode', $parts));
     }
 
+    /**
+     * macOS Finder / Windows Explorer sprinkle metadata sidecar files into every
+     * folder they touch (.DS_Store, AppleDouble ._*, Thumbs.db, desktop.ini, …).
+     * We accept their PUT/MKCOL with a success status but never store them, and
+     * hide any that slipped in before this guard existed — so the cloud stays
+     * clean and the client doesn't error out.
+     */
+    private static function isJunk(string $name): bool
+    {
+        $n = strtolower($name);
+        if (str_starts_with($n, '._')) return true;            // AppleDouble resource forks
+        return in_array($n, [
+            '.ds_store', '.localized', '.apdisk',
+            'thumbs.db', 'desktop.ini', 'ehthumbs.db',
+            '.trashes', '.spotlight-v100', '.temporaryitems',
+            '.fseventsd', '.documentrevisions-v100', '.volumeicon.icns',
+        ], true);
+    }
+
     private static function findFolder(int $uid, ?int $parent, string $name): ?array
     {
         $pdo = Database::pdo();
         if ($parent === null) {
-            $stmt = $pdo->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id IS NULL AND name = ? LIMIT 1');
+            $stmt = $pdo->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id IS NULL AND name = ? AND deleted_at IS NULL LIMIT 1');
             $stmt->execute([$uid, $name]);
         } else {
-            $stmt = $pdo->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id = ? AND name = ? LIMIT 1');
+            $stmt = $pdo->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id = ? AND name = ? AND deleted_at IS NULL LIMIT 1');
             $stmt->execute([$uid, $parent, $name]);
         }
         return $stmt->fetch() ?: null;
@@ -201,6 +220,7 @@ final class WebDavRoutes
                     $entries[] = self::collectionXml(($base === '' ? '' : $base . '/') . $sf['name'], $sf);
                 }
                 foreach (self::childFiles($uid, $folderId) as $cf) {
+                    if (self::isJunk((string)$cf['name'])) continue;
                     $entries[] = self::fileXml(($base === '' ? '' : $base . '/') . $cf['name'], $cf);
                 }
             }
@@ -216,10 +236,10 @@ final class WebDavRoutes
     {
         $pdo = Database::pdo();
         if ($parent === null) {
-            $s = $pdo->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id IS NULL ORDER BY name');
+            $s = $pdo->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id IS NULL AND deleted_at IS NULL ORDER BY name');
             $s->execute([$uid]);
         } else {
-            $s = $pdo->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id = ? ORDER BY name');
+            $s = $pdo->prepare('SELECT * FROM folders WHERE user_id = ? AND parent_id = ? AND deleted_at IS NULL ORDER BY name');
             $s->execute([$uid, $parent]);
         }
         return $s->fetchAll();
@@ -290,6 +310,9 @@ final class WebDavRoutes
         if (!$segs) return $res->withStatus(409);
         $name = array_pop($segs);
 
+        // Swallow OS sidecar files: pretend success, store nothing.
+        if (self::isJunk($name)) return $res->withStatus(201);
+
         // Resolve (and require) the parent collection.
         $parent = null;
         foreach ($segs as $seg) {
@@ -328,6 +351,9 @@ final class WebDavRoutes
         $segs = self::segments($path);
         if (!$segs) return $res->withStatus(405); // root already exists
         $name = array_pop($segs);
+
+        // Swallow OS sidecar collections (.Trashes, .TemporaryItems, …).
+        if (self::isJunk($name)) return $res->withStatus(201);
 
         $parent = null;
         foreach ($segs as $seg) {
