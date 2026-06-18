@@ -90,14 +90,17 @@ final class PushRoutes
     public static function test(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        self::sendToUser($uid, ['title' => 'Nyza Cloud', 'body' => 'Test-Benachrichtigung ✓', 'url' => '/']);
-        return Json::ok($res, ['ok' => true]);
+        $r = self::sendToUser($uid, ['title' => 'Nyza Cloud', 'body' => 'Test-Benachrichtigung ✓', 'url' => '/']);
+        if (($r['subscriptions'] ?? 0) === 0) return Json::err($res, 'Kein aktives Push-Abo auf diesem Gerät — bitte Benachrichtigungen erneut aktivieren.', 422);
+        if (($r['sent'] ?? 0) === 0) return Json::err($res, 'Push abgelehnt: ' . ($r['error'] ?? 'unbekannt'), 502);
+        return Json::ok($res, ['ok' => true, 'sent' => $r['sent']]);
     }
 
     // ───── Helpers ─────────────────────────────────────────────────────────────
     /**
      * Load (or lazily generate + persist) the VAPID keypair. Returns the auth
-     * array shape that WebPush expects under auth['VAPID'].
+     * array shape that WebPush expects under auth['VAPID']. The subject must be a
+     * valid https URL or mailto: — push services (esp. Apple) reject invalid ones.
      */
     public static function vapid(): array
     {
@@ -110,26 +113,30 @@ final class PushRoutes
             self::kvSet('vapid_public', $pub);
             self::kvSet('vapid_private', $priv);
         }
+        $host = (string)($_SERVER['HTTP_HOST'] ?? '');
+        $subject = $host !== '' ? 'https://' . preg_replace('/[^a-zA-Z0-9.\-:]/', '', $host) : 'mailto:admin@nyza-studio.at';
         return [
             'publicKey'  => $pub,
             'privateKey' => $priv,
-            'subject'    => 'mailto:admin@nyza',
+            'subject'    => $subject,
         ];
     }
 
     /**
      * Push a payload to every subscription of one user. Expired/gone endpoints
-     * (404/410) are pruned. Never throws — failures are swallowed so callers
-     * (routes, cron) stay robust.
+     * (404/410) are pruned. Never throws — returns a small result summary
+     * {subscriptions, sent, failed, error} so callers can report status.
      */
-    public static function sendToUser(int $uid, array $payload): void
+    public static function sendToUser(int $uid, array $payload): array
     {
+        $out = ['subscriptions' => 0, 'sent' => 0, 'failed' => 0, 'error' => null];
         try {
             $pdo = Database::pdo();
             $s = $pdo->prepare('SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?');
             $s->execute([$uid]);
             $subs = $s->fetchAll();
-            if (!$subs) return;
+            $out['subscriptions'] = count($subs);
+            if (!$subs) return $out;
 
             $webPush = new WebPush(['VAPID' => self::vapid()]);
             $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -144,13 +151,17 @@ final class PushRoutes
 
             $del = $pdo->prepare('DELETE FROM push_subscriptions WHERE endpoint = ?');
             foreach ($webPush->flush() as $report) {
-                if (!$report->isSuccess() && $report->isSubscriptionExpired()) {
-                    $del->execute([$report->getEndpoint()]);
+                if ($report->isSuccess()) { $out['sent']++; }
+                else {
+                    $out['failed']++;
+                    $out['error'] = $report->getReason() ?: 'rejected';
+                    if ($report->isSubscriptionExpired()) $del->execute([$report->getEndpoint()]);
                 }
             }
         } catch (\Throwable $e) {
-            // Swallow: a failed push must never break the calling request.
+            $out['error'] = $e->getMessage();
         }
+        return $out;
     }
 
     // ───── Cron scheduler ──────────────────────────────────────────────────────
