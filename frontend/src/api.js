@@ -368,6 +368,9 @@ export const API = {
   uploadExpenseReceipt: (id, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/expenses/' + id + '/receipt', { method: 'POST', body: fd }); },
   deleteExpenseReceipt: (id) => request('/api/expenses/' + id + '/receipt', { method: 'DELETE' }),
   linkExpenseReceiptFile: (id, fileId) => request('/api/expenses/' + id + '/receipt-from-file', { method: 'POST', body: { file_id: fileId } }),
+  ocrStatus: () => request('/api/ocr/status'),
+  ocrReceipt: (file) => { const fd = new FormData(); fd.append('file', file); return request('/api/ocr/receipt', { method: 'POST', body: fd }); },
+  ocrReceiptFile: (fileId) => request('/api/ocr/receipt-file', { method: 'POST', body: { file_id: fileId } }),
   expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
 
   // Buchhaltung · Auswertung

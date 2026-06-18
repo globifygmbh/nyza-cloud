@@ -6393,8 +6393,12 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
   const [hasReceipt, setHasReceipt] = useState(!!exp.has_receipt);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [picking, setPicking] = useState(false);
+  const [picking, setPicking] = useState(null); // 'link' | 'ocr'
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const [ocrOk, setOcrOk] = useState(false);
   const fileRef = useRef(null);
+  const ocrRef = useRef(null);
+  useEffect(() => { API.ocrStatus().then((d) => setOcrOk(!!d.available)).catch(() => setOcrOk(false)); }, []);
 
   const g = Number(gross) || 0, r = Number(taxRate) || 0;
   const net = r > 0 ? Math.round((g / (1 + r / 100)) * 100) / 100 : g;
@@ -6415,9 +6419,29 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
   };
   const removeReceipt = async () => { try { await API.deleteExpenseReceipt(exp.id); setHasReceipt(false); onChanged && onChanged(); } catch (err) { toast(err.message, 'error'); } };
   const pickFromDms = async (f) => {
-    setPicking(false); setUploading(true);
+    setPicking(null); setUploading(true);
     try { await API.linkExpenseReceiptFile(exp.id, f.id); setHasReceipt(true); toast('Beleg aus DMS verknüpft', 'success'); onChanged && onChanged(); }
     catch (err) { toast(err.message, 'error'); } finally { setUploading(false); }
+  };
+  const applyOcr = (sug) => {
+    if (!sug) return;
+    if (sug.date) setDate(sug.date);
+    if (sug.gross != null) setGross(sug.gross);
+    if (sug.tax_rate != null) setTaxRate(sug.tax_rate);
+    if (sug.vendor && !vendor.trim()) setVendor(sug.vendor);
+    toast('Beleg erkannt — bitte Werte prüfen', 'success');
+  };
+  const onOcrFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setOcrBusy(true);
+    try { const d = await API.ocrReceipt(file); applyOcr(d.suggestion); }
+    catch (err) { toast(err.message, 'error'); } finally { setOcrBusy(false); e.target.value = ''; }
+  };
+  const ocrFromDms = async (f) => {
+    setPicking(null); setOcrBusy(true);
+    try { const d = await API.ocrReceiptFile(f.id); applyOcr(d.suggestion); }
+    catch (err) { toast(err.message, 'error'); } finally { setOcrBusy(false); }
   };
 
   const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
@@ -6453,6 +6477,18 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
           <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13.5 }}>
             <input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)' }}/> Bereits bezahlt
           </label>
+          {/* OCR auto-fill */}
+          {ocrOk && (
+            <div style={{ paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 8 }}>Beleg scannen (OCR){ocrBusy ? ' · erkenne…' : ''}</div>
+              <input ref={ocrRef} type="file" accept="image/*,application/pdf" onChange={onOcrFile} style={{ display: 'none' }}/>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Btn variant="glass" size="sm" disabled={ocrBusy} icon={ocrBusy ? Ic.loader(13) : Ic.camera(13)} onClick={() => ocrRef.current && ocrRef.current.click()}>Datei scannen</Btn>
+                <Btn variant="glass" size="sm" disabled={ocrBusy} icon={Ic.folder(13)} onClick={() => setPicking('ocr')}>DMS scannen</Btn>
+                <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>füllt Datum, Betrag, USt & Lieferant</span>
+              </div>
+            </div>
+          )}
           {/* Receipt */}
           <div style={{ paddingTop: 6, borderTop: '1px solid var(--border)' }}>
             <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 8 }}>Beleg</div>
@@ -6463,13 +6499,13 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Btn variant="glass" size="sm" icon={Ic.eye(13)} onClick={() => window.open(API.expenseReceiptUrl(exp.id, false), '_blank')}>Beleg ansehen</Btn>
                 <Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={pickReceipt}>Ersetzen</Btn>
-                <Btn variant="glass" size="sm" icon={Ic.folder(13)} onClick={() => setPicking(true)}>Aus DMS</Btn>
+                <Btn variant="glass" size="sm" icon={Ic.folder(13)} onClick={() => setPicking('link')}>Aus DMS</Btn>
                 <Btn variant="ghost" size="sm" icon={Ic.trash(13)} onClick={removeReceipt}>Entfernen</Btn>
               </div>
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Btn variant="glass" size="sm" disabled={uploading} icon={uploading ? Ic.loader(13) : Ic.plus(13)} onClick={pickReceipt}>Beleg hochladen</Btn>
-                <Btn variant="glass" size="sm" disabled={uploading} icon={Ic.folder(13)} onClick={() => setPicking(true)}>Aus DMS wählen</Btn>
+                <Btn variant="glass" size="sm" disabled={uploading} icon={Ic.folder(13)} onClick={() => setPicking('link')}>Aus DMS wählen</Btn>
               </div>
             )}
           </div>
@@ -6479,7 +6515,7 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
           <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
         </div>
       </Glass>
-      {picking && <DmsFilePicker onPick={pickFromDms} onClose={() => setPicking(false)}/>}
+      {picking && <DmsFilePicker onPick={picking === 'ocr' ? ocrFromDms : pickFromDms} onClose={() => setPicking(null)}/>}
     </div>
   );
 }

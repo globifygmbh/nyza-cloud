@@ -28,6 +28,7 @@ use Nyza\Routes\FolderRoutes;
 use Nyza\Routes\ImportRoutes;
 use Nyza\Routes\InternalShareRoutes;
 use Nyza\Routes\LedgerRoutes;
+use Nyza\Routes\OcrRoutes;
 use Nyza\Routes\ProductRoutes;
 use Nyza\Routes\PushRoutes;
 use Nyza\Routes\ReminderRoutes;
@@ -235,6 +236,7 @@ LedgerRoutes::mount($app);
 SettingsRoutes::mount($app);
 SearchRoutes::mount($app);
 TagRoutes::mount($app);
+OcrRoutes::mount($app);
 PushRoutes::mount($app);
 WebDavRoutes::mount($app);
 
