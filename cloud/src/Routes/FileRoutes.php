@@ -154,6 +154,7 @@ final class FileRoutes
         $name = Database::pdo()->query("SELECT name FROM users WHERE id = $uid")->fetch()['name'] ?? 'Owner';
         Database::pdo()->prepare("INSERT INTO comments (file_id, user_id, author_name, body, source) VALUES (?, ?, ?, ?, 'owner')")
             ->execute([(int)$f['id'], $uid, $name, $body]);
+        \Nyza\Mentions::notify($uid, $name, $b['mentions'] ?? [], 'Datei „' . $f['name'] . '"', $body);
         return Json::ok($res, ['comments' => self::listComments((int)$f['id'])], 201);
     }
 

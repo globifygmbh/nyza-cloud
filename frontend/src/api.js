@@ -195,8 +195,9 @@ export const API = {
   moveFile:    (id, folderId) => request('/api/files/' + id, { method: 'PATCH', body: { folder_id: folderId } }),
   moveFiles:   (ids, folderId) => request('/api/files/move', { method: 'POST', body: { file_ids: ids, folder_id: folderId } }),
   fileComments:    (id) => request('/api/files/' + id + '/comments'),
-  addFileComment:  (id, body) => request('/api/files/' + id + '/comments', { method: 'POST', body: { body } }),
+  addFileComment:  (id, body, mentions) => request('/api/files/' + id + '/comments', { method: 'POST', body: { body, mentions } }),
   delFileComment:  (id, cid) => request('/api/files/' + id + '/comments/' + cid, { method: 'DELETE' }),
+  mentionable:     () => request('/api/mentionable'),
   shareComments:   (token, fileId, password) => request('/api/s/' + token + '/file/' + fileId + '/comments' + (password ? '?p=' + encodeURIComponent(password) : ''), { skipAuth: true }),
   addShareComment: (token, fileId, body) => request('/api/s/' + token + '/file/' + fileId + '/comments', { method: 'POST', body, skipAuth: true }),
   zip: (body) => fetch(url('/api/files/zip'), {
@@ -394,4 +395,7 @@ export const API = {
   newEvent:       (body) => request('/api/calendar/events', { method: 'POST', body }),
   updateEvent:    (id, body) => request('/api/calendar/events/' + id, { method: 'PATCH', body }),
   deleteEvent:    (id) => request('/api/calendar/events/' + id, { method: 'DELETE' }),
+  eventComments:  (id) => request('/api/calendar/events/' + id + '/comments'),
+  addEventComment:(id, body, mentions) => request('/api/calendar/events/' + id + '/comments', { method: 'POST', body: { body, mentions } }),
+  delEventComment:(id, cid) => request('/api/calendar/events/' + id + '/comments/' + cid, { method: 'DELETE' }),
 };

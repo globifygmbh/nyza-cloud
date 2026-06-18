@@ -40,6 +40,15 @@ final class CompanyRoutes
             $g->post('/{id}/members',           [self::class, 'addMember']);
             $g->delete('/{id}/members/{userId}',[self::class, 'removeMember']);
         })->add(new AuthMiddleware());
+
+        // People the current user can @-mention in comments.
+        $app->get('/api/mentionable', [self::class, 'mentionable'])->add(new AuthMiddleware());
+    }
+
+    public static function mentionable(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        return Json::ok($res, ['users' => \Nyza\Mentions::mentionable($uid)]);
     }
 
     // ───── List (member view) ──────────────────────────────────────────────────

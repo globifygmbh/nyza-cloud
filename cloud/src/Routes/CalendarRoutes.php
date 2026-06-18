@@ -27,7 +27,53 @@ final class CalendarRoutes
             $g->post('/events',       [self::class, 'create']);
             $g->patch('/events/{id}', [self::class, 'update']);
             $g->delete('/events/{id}',[self::class, 'delete']);
+            $g->get('/events/{id}/comments',        [self::class, 'comments']);
+            $g->post('/events/{id}/comments',       [self::class, 'addComment']);
+            $g->delete('/events/{id}/comments/{cid}',[self::class, 'deleteComment']);
         })->add(new AuthMiddleware());
+    }
+
+    // ───── Comments (shared calendar) ─────────────────────────────────────────
+    private static function listComments(int $eventId): array
+    {
+        $s = Database::pdo()->prepare('SELECT id, user_id, author_name, body, created_at FROM event_comments WHERE event_id = ? ORDER BY id ASC');
+        $s->execute([$eventId]);
+        return array_map(static fn($c) => [
+            'id' => (int)$c['id'], 'user_id' => $c['user_id'] !== null ? (int)$c['user_id'] : null,
+            'author_name' => $c['author_name'], 'body' => $c['body'], 'created_at' => $c['created_at'],
+        ], $s->fetchAll());
+    }
+
+    public static function comments(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        if (!self::fetchOne($uid, (int)$args['id'])) return Json::err($res, 'Not found', 404);
+        return Json::ok($res, ['comments' => self::listComments((int)$args['id'])]);
+    }
+
+    public static function addComment(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $ev = self::fetchOne($uid, (int)$args['id']);
+        if (!$ev) return Json::err($res, 'Not found', 404);
+        $b = (array) $req->getParsedBody();
+        $body = trim((string)($b['body'] ?? ''));
+        if ($body === '') return Json::err($res, 'Kommentar leer', 422);
+        $body = mb_substr($body, 0, 5000);
+        $name = Database::pdo()->query("SELECT name FROM users WHERE id = $uid")->fetch()['name'] ?? 'Nutzer';
+        Database::pdo()->prepare('INSERT INTO event_comments (event_id, user_id, author_name, body) VALUES (?, ?, ?, ?)')
+            ->execute([(int)$ev['id'], $uid, $name, $body]);
+        \Nyza\Mentions::notify($uid, $name, $b['mentions'] ?? [], 'Termin „' . $ev['title'] . '"', $body);
+        return Json::ok($res, ['comments' => self::listComments((int)$ev['id'])], 201);
+    }
+
+    public static function deleteComment(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        if (!self::fetchOne($uid, (int)$args['id'])) return Json::err($res, 'Not found', 404);
+        Database::pdo()->prepare('DELETE FROM event_comments WHERE id = ? AND event_id = ?')
+            ->execute([(int)$args['cid'], (int)$args['id']]);
+        return Json::ok($res, ['ok' => true]);
     }
 
     public static function list(Request $req, Response $res): Response

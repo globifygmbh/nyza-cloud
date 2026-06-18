@@ -334,6 +334,75 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
   );
 }
 
+// ───── @-mentions ──────────────────────────────────────────────────────────
+const _mentionCache = { users: null, p: null };
+function useMentionables() {
+  const [users, setUsers] = useState(_mentionCache.users || []);
+  useEffect(() => {
+    if (_mentionCache.users) { setUsers(_mentionCache.users); return; }
+    if (!_mentionCache.p) _mentionCache.p = API.mentionable().then((d) => (_mentionCache.users = d.users || [])).catch(() => (_mentionCache.users = []));
+    let off = false; _mentionCache.p.then((u) => { if (!off) setUsers(u); });
+    return () => { off = true; };
+  }, []);
+  return users;
+}
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function renderMentions(body, users) {
+  const names = (users || []).map((u) => u.name).filter(Boolean).sort((a, b) => b.length - a.length).map(escRe);
+  if (!names.length) return body;
+  const re = new RegExp('@(' + names.join('|') + ')', 'g');
+  const out = []; let last = 0; let m; let i = 0;
+  while ((m = re.exec(body)) !== null) {
+    if (m.index > last) out.push(body.slice(last, m.index));
+    out.push(<span key={'m' + (i++)} style={{ color: 'var(--accent)', fontWeight: 600 }}>{m[0]}</span>);
+    last = m.index + m[0].length;
+  }
+  if (last < body.length) out.push(body.slice(last));
+  return out;
+}
+
+// Textarea with an @-autocomplete dropdown over mentionable users.
+function MentionTextarea({ value, onChange, users, placeholder, rows = 2, style }) {
+  const ref = useRef(null);
+  const [menu, setMenu] = useState(null); // { query, start }
+  const handle = (e) => {
+    const v = e.target.value; onChange(v);
+    const caret = e.target.selectionStart;
+    const m = v.slice(0, caret).match(/@([\p{L}0-9._-]*)$/u);
+    setMenu(m ? { query: m[1].toLowerCase(), start: caret - m[0].length } : null);
+  };
+  const pick = (u) => {
+    const caret = ref.current.selectionStart;
+    const before = value.slice(0, menu.start);
+    const insert = '@' + u.name + ' ';
+    const nv = before + insert + value.slice(caret);
+    onChange(nv); setMenu(null);
+    requestAnimationFrame(() => { if (ref.current) { const p = (before + insert).length; ref.current.focus(); ref.current.setSelectionRange(p, p); } });
+  };
+  const matches = menu ? (users || []).filter((u) => u.name.toLowerCase().includes(menu.query) || (u.email || '').toLowerCase().includes(menu.query)).slice(0, 6) : [];
+  return (
+    <div style={{ position: 'relative' }}>
+      <textarea ref={ref} value={value} onChange={handle} onBlur={() => setTimeout(() => setMenu(null), 150)} placeholder={placeholder} rows={rows}
+        style={style || { width: '100%', padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }}/>
+      {menu && matches.length > 0 && (
+        <div style={{ position: 'absolute', bottom: '100%', left: 0, marginBottom: 4, minWidth: 200, maxWidth: '100%', background: 'var(--surface)', border: '1px solid var(--border-hi)', borderRadius: 'var(--r-sm)', boxShadow: '0 8px 28px rgba(0,0,0,0.25)', zIndex: 20, overflow: 'hidden' }}>
+          {matches.map((u) => (
+            <div key={u.id} onMouseDown={(e) => { e.preventDefault(); pick(u); }}
+              style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-hi)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+              <span style={{ color: 'var(--accent)' }}>@</span>
+              <span style={{ fontWeight: 600 }}>{u.name}</span>
+              {u.email && <span style={{ color: 'var(--fg-3)', fontSize: 11 }}>{u.email}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+const mentionIdsIn = (body, users) => (users || []).filter((u) => u.name && body.includes('@' + u.name)).map((u) => u.id);
+
 // Comments drawer (right side) used inside the MediaViewer. cfg provides
 // load/add (+ optional remove), askName (guest) and a default name.
 function CommentsPanel({ file, cfg, onClose }) {
@@ -341,6 +410,8 @@ function CommentsPanel({ file, cfg, onClose }) {
   const [body, setBody] = useState('');
   const [name, setName] = useState(cfg.defaultName || '');
   const [busy, setBusy] = useState(false);
+  const canMention = !cfg.askName;
+  const users = useMentionables();
   useEffect(() => {
     let off = false;
     cfg.load(file).then((c) => { if (!off) setItems(c || []); }).catch(() => { if (!off) setItems([]); });
@@ -351,7 +422,7 @@ function CommentsPanel({ file, cfg, onClose }) {
     if (!body.trim()) return;
     if (cfg.askName && !name.trim()) { toast('Bitte Namen eingeben', 'error'); return; }
     setBusy(true);
-    try { const c = await cfg.add(file, { body: body.trim(), author_name: name.trim() }); setItems(c || []); setBody(''); }
+    try { const c = await cfg.add(file, { body: body.trim(), author_name: name.trim(), mentions: canMention ? mentionIdsIn(body, users) : [] }); setItems(c || []); setBody(''); }
     catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
   };
   const remove = async (cid) => {
@@ -381,7 +452,7 @@ function CommentsPanel({ file, cfg, onClose }) {
                 <span style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>{timeAgo(c.created_at)}</span>
                 {cfg.remove && <span onClick={() => remove(c.id)} style={{ cursor: 'pointer', color: 'var(--fg-4)' }} title="Löschen">{Ic.trash(12)}</span>}
               </div>
-              <div style={{ fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{c.body}</div>
+              <div style={{ fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{canMention ? renderMentions(c.body, users) : c.body}</div>
             </div>
           ))}
       </div>
@@ -390,8 +461,10 @@ function CommentsPanel({ file, cfg, onClose }) {
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Dein Name"
             style={{ height: 36, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}/>
         )}
-        <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Kommentar schreiben…" rows={2}
-          style={{ padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', resize: 'vertical', fontFamily: 'inherit' }}/>
+        {canMention
+          ? <MentionTextarea value={body} onChange={setBody} users={users} placeholder="Kommentar… @ erwähnt Mitglieder"/>
+          : <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Kommentar schreiben…" rows={2}
+              style={{ padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', resize: 'vertical', fontFamily: 'inherit' }}/>}
         <Btn variant="primary" size="sm" full type="submit" disabled={busy || !body.trim()} icon={busy ? Ic.loader(13) : Ic.comment(13)}>Senden</Btn>
       </form>
     </div>
@@ -3177,7 +3250,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           onSaveText={async (f, content) => { await API.saveContent(f.id, content); refreshAll(); }}
           comments={{
             load: (f) => API.fileComments(f.id).then((d) => d.comments || []),
-            add: (f, { body }) => API.addFileComment(f.id, body).then((d) => d.comments || []),
+            add: (f, { body, mentions }) => API.addFileComment(f.id, body, mentions).then((d) => d.comments || []),
             remove: async (f, cid) => { await API.delFileComment(f.id, cid); return (await API.fileComments(f.id)).comments || []; },
             askName: false, defaultName: user?.name || '',
           }}
@@ -6733,6 +6806,49 @@ function CalTimeGrid({ days, evs, tasksOn, onOpen, onSlot }) {
   );
 }
 
+function EventComments({ eventId }) {
+  const users = useMentionables();
+  const [items, setItems] = useState(null);
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let off = false;
+    API.eventComments(eventId).then((d) => { if (!off) setItems(d.comments || []); }).catch(() => { if (!off) setItems([]); });
+    return () => { off = true; };
+  }, [eventId]);
+  const send = async () => {
+    if (!body.trim()) return;
+    setBusy(true);
+    try { const d = await API.addEventComment(eventId, body.trim(), mentionIdsIn(body, users)); setItems(d.comments || []); setBody(''); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const remove = async (cid) => { try { const d = await API.delEventComment(eventId, cid); setItems(d.comments || []); } catch (e) { toast(e.message, 'error'); } };
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>{Ic.comment(14)} Kommentare{items ? ' · ' + items.length : ''}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+        {items === null ? <div style={{ color: 'var(--fg-3)', fontSize: 12 }}>{Ic.loader(16)}</div>
+          : items.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Noch keine Kommentare. @ erwähnt Mitglieder.</div>
+          : items.map((c) => (
+            <div key={c.id} style={{ background: 'var(--surface-hi)', borderRadius: 'var(--r-sm)', padding: '9px 11px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 600 }}>{c.author_name}</span>
+                <span style={{ flex: 1 }}/>
+                <span style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>{timeAgo(c.created_at)}</span>
+                <span onClick={() => remove(c.id)} style={{ cursor: 'pointer', color: 'var(--fg-4)' }} title="Löschen">{Ic.trash(12)}</span>
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{renderMentions(c.body, users)}</div>
+            </div>
+          ))}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <MentionTextarea value={body} onChange={setBody} users={users} placeholder="Kommentar… @ erwähnt Mitglieder"/>
+        <Btn variant="primary" size="sm" disabled={busy || !body.trim()} onClick={send} icon={busy ? Ic.loader(13) : Ic.comment(13)}>Senden</Btn>
+      </div>
+    </div>
+  );
+}
+
 function EventModal({ ev, contacts, onSave, onDelete, onClose }) {
   const pad = (n) => String(n).padStart(2, '0');
   const toDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -6805,6 +6921,7 @@ function EventModal({ ev, contacts, onSave, onDelete, onClose }) {
             </div>
           </div>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Notiz</span><textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Optional" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/></label>
+          {ev.id && <EventComments eventId={ev.id}/>}
         </div>
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
