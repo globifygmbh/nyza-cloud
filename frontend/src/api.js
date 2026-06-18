@@ -183,6 +183,7 @@ export const API = {
   versionRawUrl:  (id, vid) => url('/api/files/' + id + '/versions/' + vid + '/raw') + '?token=' + (getToken() || ''),
   restoreVersion: (id, vid) => request('/api/files/' + id + '/versions/' + vid + '/restore', { method: 'POST', body: {} }),
   searchFiles: (q) => request('/api/files/search?q=' + encodeURIComponent(q)),
+  search:      (q) => request('/api/search?q=' + encodeURIComponent(q)),
   moveFile:    (id, folderId) => request('/api/files/' + id, { method: 'PATCH', body: { folder_id: folderId } }),
   moveFiles:   (ids, folderId) => request('/api/files/move', { method: 'POST', body: { file_ids: ids, folder_id: folderId } }),
   fileComments:    (id) => request('/api/files/' + id + '/comments'),

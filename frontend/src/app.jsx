@@ -907,7 +907,7 @@ function FieldInput({ label, value, onChange, type = 'text', placeholder }) {
 }
 
 // ───── Sidebar ─────────────────────────────────────────────────────────────
-function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, onUpload, onSecurity, onProfile }) {
+function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, onUpload, onSearch, onSecurity, onProfile }) {
   const items = [
     { id: 'files',    label: 'Meine Dateien', icon: Ic.home,   count: stats?.files },
     { id: 'favorites',label: 'Favoriten',     icon: Ic.star },
@@ -933,6 +933,15 @@ function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, on
           : <NyzaWordmark size={16}/>}
       </div>
       <Btn variant="primary" size="md" icon={Ic.upload(16)} full onClick={onUpload}>Hochladen</Btn>
+      <button onClick={onSearch} style={{
+        display: 'flex', alignItems: 'center', gap: 10, width: '100%', marginTop: 10, padding: '9px 12px',
+        borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)',
+        color: 'var(--fg-3)', fontSize: 13, cursor: 'pointer', textAlign: 'left',
+      }}>
+        <span style={{ display: 'inline-flex' }}>{Ic.search(15)}</span>
+        <span style={{ flex: 1 }}>Suchen…</span>
+        <kbd style={{ fontSize: 10, border: '1px solid var(--border)', borderRadius: 5, padding: '1px 5px' }}>⌘K</kbd>
+      </button>
       <div style={{ height: 1, background: 'var(--border)', margin: '18px 4px 12px' }}/>
 
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -2563,6 +2572,79 @@ function sortFiles(files, sort) {
   return copy;
 }
 
+// ───── Global search (⌘K / Ctrl+K palette) ─────────────────────────────────
+const eur = (n) => Number(n || 0).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+
+function GlobalSearch({ onClose, onPickFile, onPickFolder, onGoto }) {
+  const [q, setQ] = useState('');
+  const [res, setRes] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef(null);
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) { setRes(null); setLoading(false); return; }
+    let off = false; setLoading(true);
+    const t = setTimeout(() => {
+      API.search(term)
+        .then((d) => { if (!off) setRes(d); })
+        .catch(() => { if (!off) setRes(null); })
+        .finally(() => { if (!off) setLoading(false); });
+    }, 220);
+    return () => { off = true; clearTimeout(t); };
+  }, [q]);
+
+  const groups = res ? [
+    { key: 'folders',   label: 'Ordner',     icon: Ic.folder,  items: (res.folders || []).map((f) => ({ id: 'fo' + f.id, icon: Ic.folder, title: f.name, sub: 'Ordner', onPick: () => onPickFolder(f) })) },
+    { key: 'files',     label: 'Dateien',    icon: Ic.fileGen, items: (res.files || []).map((f) => ({ id: 'fi' + f.id, icon: f.kind === 'image' ? Ic.fileImg : Ic.fileGen, title: f.name, sub: humanSize(f.size || 0), onPick: () => onPickFile(f) })) },
+    { key: 'documents', label: 'Rechnungen & Angebote', icon: Ic.filePdf, items: (res.documents || []).map((d) => ({ id: 'do' + d.id, icon: Ic.filePdf, title: (d.type === 'offer' ? 'Angebot ' : 'Rechnung ') + d.number, sub: [d.client, eur(d.gross), d.paid ? 'bezahlt' : 'offen'].filter(Boolean).join(' · '), onPick: () => onGoto('accounting', { type: d.type, id: d.id }) })) },
+    { key: 'expenses',  label: 'Ausgaben',   icon: Ic.archive, items: (res.expenses || []).map((e) => ({ id: 'ex' + e.id, icon: Ic.archive, title: e.vendor || e.description || 'Ausgabe', sub: [e.category, eur(e.gross)].filter(Boolean).join(' · '), onPick: () => onGoto('accounting', { type: 'expense', id: e.id }) })) },
+    { key: 'contacts',  label: 'Kontakte',   icon: Ic.users,   items: (res.contacts || []).map((c) => ({ id: 'co' + c.id, icon: Ic.users, title: c.name, sub: [c.email, c.city].filter(Boolean).join(' · ') || (c.is_customer ? 'Kunde' : 'Kontakt'), onPick: () => onGoto('contacts', { id: c.id }) })) },
+  ].filter((g) => g.items.length) : [];
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose} style={{ alignItems: 'flex-start', paddingTop: '10vh' }}>
+      <Glass style={{ width: '100%', maxWidth: 620, borderRadius: 'var(--r-xl)', padding: 0, overflow: 'hidden', maxHeight: '76vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>
+          <span style={{ color: 'var(--fg-3)', display: 'flex' }}>{loading ? Ic.loader(18) : Ic.search(18)}</span>
+          <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && onClose()}
+            placeholder="Dateien, Rechnungen, Ausgaben, Kontakte…"
+            style={{ flex: 1, height: 32, border: 'none', outline: 'none', background: 'transparent', fontSize: 16, color: 'var(--fg)' }}/>
+          <kbd style={{ fontSize: 11, color: 'var(--fg-3)', border: '1px solid var(--border)', borderRadius: 6, padding: '2px 6px' }}>Esc</kbd>
+        </div>
+        <div style={{ overflowY: 'auto', padding: 8 }}>
+          {q.trim().length < 2 && (
+            <div style={{ padding: 28, textAlign: 'center', color: 'var(--fg-3)', fontSize: 13 }}>Mindestens 2 Zeichen eingeben…</div>
+          )}
+          {q.trim().length >= 2 && !loading && total === 0 && (
+            <div style={{ padding: 28, textAlign: 'center', color: 'var(--fg-3)', fontSize: 13 }}>Nichts gefunden zu „{q.trim()}".</div>
+          )}
+          {groups.map((g) => (
+            <div key={g.key} style={{ marginBottom: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 10px 4px', fontSize: 11, fontWeight: 600, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--fg-3)' }}>
+                <span style={{ display: 'flex' }}>{g.icon(13)}</span>{g.label}
+              </div>
+              {g.items.map((it) => (
+                <button key={it.id} onClick={() => { it.onPick(); onClose(); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: 'var(--r-sm)', background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--fg)' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-hi)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+                  <span style={{ color: 'var(--fg-2)', display: 'flex', flexShrink: 0 }}>{it.icon(17)}</span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.title}</span>
+                    {it.sub && <span style={{ display: 'block', fontSize: 12, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.sub}</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
 // ───── Dashboard (router shell) ────────────────────────────────────────────
 export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const [view, setView] = useState('grid');
@@ -2570,6 +2652,14 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const [search, setSearch] = useState('');
   const [nav, setNav] = useState(() => { try { const s = JSON.parse(localStorage.getItem('nyza.nav') || 'null'); if (s && s.name) return s; } catch {} return { name: 'files' }; }); // {name:'files'|'shared'|'links'|'activity'|'folder'|'apps'|'app-*', id?}
   useEffect(() => { try { localStorage.setItem('nyza.nav', JSON.stringify(nav)); } catch {} }, [nav]);
+  // ⌘K / Ctrl+K opens the global search palette from anywhere.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); setSearchOpen((v) => !v); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   const [stats, setStats] = useState(null);
   const [folders, setFolders] = useState([]);
 
@@ -2593,6 +2683,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const [showUploadProgress, setShowUploadProgress] = useState(false);
   const [reviewFiles, setReviewFiles] = useState(null);
   const [showMore, setShowMore] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [showFab, setShowFab] = useState(false);
   const [showNewFolderMobile, setShowNewFolderMobile] = useState(false);
   const isMobile = useIsMobile();
@@ -2788,6 +2879,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         <Sidebar active={activeNav} stats={stats} user={user} onTheme={onTheme} theme={theme}
           onNavigate={(n) => { setNav(n); setSearch(''); }}
           onUpload={() => triggerUpload(null)}
+          onSearch={() => setSearchOpen(true)}
           onSecurity={() => setShowSecurity(true)}
           onProfile={() => setShowProfile(true)}
           onLogout={() => { setToken(null); location.reload(); }}/>
@@ -2936,6 +3028,13 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           allFolders={allFolders}
           excludeId={moveTarget.kind === 'folder' ? moveTarget.folder.id : null}
           onMove={doMove} onClose={() => setMoveTarget(null)}/>
+      )}
+      {searchOpen && (
+        <GlobalSearch
+          onClose={() => setSearchOpen(false)}
+          onPickFile={(f) => openViewer(f)}
+          onPickFolder={(f) => { setNav({ name: 'folder', id: f.id }); setSearch(''); }}
+          onGoto={(app) => { setNav({ name: 'app-' + app }); setSearch(''); }}/>
       )}
       {viewing && (
         <MediaViewer items={viewing.items} startIndex={viewing.index}

@@ -229,7 +229,12 @@ final class WebDavRoutes
         $xml = '<?xml version="1.0" encoding="utf-8"?>' . "\n"
              . '<D:multistatus xmlns:D="DAV:">' . implode('', $entries) . '</D:multistatus>';
         $res->getBody()->write($xml);
-        return $res->withHeader('Content-Type', 'application/xml; charset=utf-8')->withStatus(207);
+        return $res
+            ->withHeader('Content-Type', 'application/xml; charset=utf-8')
+            // Finder/Explorer cache directory listings aggressively; tell them not
+            // to so deletes/uploads from the web show up without a remount.
+            ->withHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+            ->withStatus(207);
     }
 
     private static function childFolders(int $uid, ?int $parent): array

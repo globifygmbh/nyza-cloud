@@ -33,6 +33,7 @@ use Nyza\Routes\PushRoutes;
 use Nyza\Routes\ReminderRoutes;
 use Nyza\Routes\ReportRoutes;
 use Nyza\Routes\RoadmapRoutes;
+use Nyza\Routes\SearchRoutes;
 use Nyza\Routes\SettingsRoutes;
 use Nyza\Routes\ShareRoutes;
 use Nyza\Routes\SubscriptionRoutes;
@@ -231,6 +232,7 @@ ReminderRoutes::mount($app);
 ImportRoutes::mount($app);
 LedgerRoutes::mount($app);
 SettingsRoutes::mount($app);
+SearchRoutes::mount($app);
 PushRoutes::mount($app);
 WebDavRoutes::mount($app);
 
