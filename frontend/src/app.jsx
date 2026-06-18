@@ -5396,6 +5396,9 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const [expEditing, setExpEditing] = useState(null);
   const [companies, setCompanies] = useState([]);
   const [activeCompany, setActiveCompany] = useState(() => getCompany());
+  const docTags = useEntityTags('document', activeCompany);
+  const expTags = useEntityTags('expense', activeCompany);
+  const [tagTarget, setTagTarget] = useState(null); // { type, id, name }
 
   const load = useCallback(() => {
     if (tab === 'products') { API.products().then((d) => setProducts(d.products || [])).catch(() => setProducts([])); return; }
@@ -5502,12 +5505,14 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                       {x.has_receipt && <span title="Beleg vorhanden" style={{ color: 'var(--fg-3)', display: 'inline-flex' }}>{Ic.paperclip ? Ic.paperclip(13) : Ic.fileGen(13)}</span>}
                     </div>
                     <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{x.category}{x.contact_name ? ' · ' + x.contact_name : ''}{!x.deductible ? ' · keine Vorsteuer' : ''}</div>
+                    {expTags.idsFor(x.id).length > 0 && <div style={{ marginTop: 5 }}><TagChips ids={expTags.idsFor(x.id)} tags={expTags.tags} small/></div>}
                   </div>
                   <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: x.paid_at ? 'color-mix(in oklab, #22c55e 18%, transparent)' : 'var(--surface-hi)', color: x.paid_at ? '#22c55e' : 'var(--fg-3)', textTransform: 'uppercase', flexShrink: 0 }}>{x.paid_at ? 'Bezahlt' : 'Offen'}</span>
                   <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', width: 110, textAlign: 'right', flexShrink: 0 }}>{fmtEUR(x.gross)}</div>
                   <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
                     ...(x.has_receipt ? [{ label: 'Beleg ansehen', icon: Ic.eye(15), onClick: () => window.open(API.expenseReceiptUrl(x.id, false), '_blank') }] : []),
                     { label: x.paid_at ? 'Als offen markieren' : 'Als bezahlt markieren', icon: Ic.check(15), onClick: () => toggleExpPaid(x) },
+                    { label: 'Tags…', icon: Ic.bolt(15), onClick: () => setTagTarget({ type: 'expense', id: x.id, name: x.vendor || x.category }) },
                     { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => setExpEditing(x) },
                     { separator: true },
                     { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => delExp(x) },
@@ -5571,6 +5576,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.contact_name || d.client_snapshot?.name || 'Ohne Kunde'}</div>
                     <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{fmtDateShort(d.doc_date)}</div>
+                    {docTags.idsFor(d.id).length > 0 && <div style={{ marginTop: 5 }}><TagChips ids={docTags.idsFor(d.id)} tags={docTags.tags} small/></div>}
                   </div>
                   <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + st.color + ' 18%, transparent)', color: st.color, textTransform: 'uppercase', flexShrink: 0 }}>{st.label}</span>
                   {d.reminder_stage > 0 && <span title="Mahnstufe" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, #ef4444 18%, transparent)', color: '#ef4444', flexShrink: 0 }}>{d.reminder_stage}. MAHN.</span>}
@@ -5582,6 +5588,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                     { label: 'PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.docPdfUrl(d.id, false), '_blank') },
                     { label: 'PDF herunterladen', icon: Ic.download(15), onClick: () => { window.location.href = API.docPdfUrl(d.id, true); } },
                     { label: d.archived_file_id ? 'Erneut im DMS archivieren' : 'Im DMS archivieren', icon: Ic.archive(15), onClick: () => archiveDoc(d) },
+                    { label: 'Tags…', icon: Ic.bolt(15), onClick: () => setTagTarget({ type: 'document', id: d.id, name: d.number }) },
                     { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => openDoc(d.id) },
                     ...(d.type === 'invoice' ? [{ label: d.paid_at ? 'Als offen markieren' : 'Als bezahlt markieren', icon: Ic.check(15), onClick: () => togglePaid(d) }] : []),
                     ...(d.type === 'invoice' && !d.paid_at && (d.reminder_stage || 0) < 3 ? [{ label: (d.reminder_stage || 0) + 1 + '. Mahnung erstellen', icon: Ic.clock(15), onClick: () => createReminder(d) }] : []),
@@ -5603,6 +5610,13 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
       {subEditing && <SubscriptionModal sub={subEditing} contacts={contacts} onSave={saveSub} onClose={() => setSubEditing(null)}/>}
       {expEditing && <ExpenseModal exp={expEditing} contacts={contacts} onSave={saveExp} onClose={() => setExpEditing(null)} onChanged={load}/>}
       {importOpen && <ImportModal onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); }}/>}
+      {tagTarget && (() => {
+        const h = tagTarget.type === 'expense' ? expTags : docTags;
+        return <TagPickerModal title={'Tags · ' + tagTarget.name} tags={h.tags}
+          selectedIds={new Set(h.idsFor(tagTarget.id))}
+          onToggle={(t, on) => h.toggle(tagTarget.id, t, on)} onCreate={h.createTag}
+          onClose={() => setTagTarget(null)}/>;
+      })()}
     </>
   );
 }
