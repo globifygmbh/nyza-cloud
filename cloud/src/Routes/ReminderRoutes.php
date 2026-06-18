@@ -50,12 +50,12 @@ final class ReminderRoutes
         $stage = count($existing) + 1;
         if ($stage > 3) return Json::err($res, 'Maximal 3 Mahnstufen', 422);
 
-        $company = self::company($uid);
+        $company = \Nyza\CompanyContext::profile((int)($doc['company_id'] ?? 0));
         $fee = (float)($company['reminder_fee_' . $stage] ?? 0);
         $due = date('Y-m-d', strtotime('+14 days'));
 
-        Database::pdo()->prepare('INSERT INTO reminders (user_id, document_id, stage, fee, due_date) VALUES (?, ?, ?, ?, ?)')
-            ->execute([$uid, (int)$doc['id'], $stage, $fee, $due]);
+        Database::pdo()->prepare('INSERT INTO reminders (user_id, company_id, document_id, stage, fee, due_date) VALUES (?, ?, ?, ?, ?, ?)')
+            ->execute([$uid, (int)($doc['company_id'] ?? 0) ?: null, (int)$doc['id'], $stage, $fee, $due]);
         $id = (int)Database::pdo()->lastInsertId();
         return Json::ok($res, ['reminder' => self::one($uid, $id), 'stage' => $stage], 201);
     }
@@ -77,7 +77,7 @@ final class ReminderRoutes
         $doc = self::doc($uid, (int)$r['document_id']);
         if (!$doc) return Json::err($res, 'Not found', 404);
 
-        $company = self::company($uid);
+        $company = \Nyza\CompanyContext::profile((int)($doc['company_id'] ?? 0));
         $all = self::forDoc($uid, (int)$doc['id']);
         $cumFee = 0.0;
         foreach ($all as $x) { if ((int)$x['stage'] <= (int)$r['stage']) $cumFee += (float)$x['fee']; }
