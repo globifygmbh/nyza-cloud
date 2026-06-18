@@ -46,7 +46,7 @@ final class ReportRoutes
         $expenseNet = (float)$exp['net']; $vst = (float)$exp['vst'];
 
         // Open / overdue receivables (current state, not year-bound).
-        $term = self::paymentTermDays($uid);
+        $term = CompanyContext::paymentTermDays($uid);
         $open = self::row($pdo, "SELECT COALESCE(SUM(gross),0) total, COUNT(*) cnt FROM documents WHERE company_id=? AND type='invoice' AND paid_at IS NULL", [$uid]);
         $over = self::row($pdo, "SELECT COALESCE(SUM(gross),0) total, COUNT(*) cnt FROM documents WHERE company_id=? AND type='invoice' AND paid_at IS NULL AND doc_date IS NOT NULL AND DATE_ADD(doc_date, INTERVAL ? DAY) < CURDATE()", [$uid, $term]);
 
@@ -257,18 +257,6 @@ final class ReportRoutes
         $s = $pdo->prepare($sql);
         $s->execute($params);
         return $s->fetch() ?: [];
-    }
-
-    private static function paymentTermDays(int $uid): int
-    {
-        $s = Database::pdo()->prepare("SELECT data FROM app_settings WHERE company_id=? AND ns='company'");
-        $s->execute([$uid]);
-        $row = $s->fetch();
-        if ($row && $row['data']) {
-            $d = json_decode((string)$row['data'], true);
-            if (is_array($d) && !empty($d['payment_term_days']) && (int)$d['payment_term_days'] > 0) return (int)$d['payment_term_days'];
-        }
-        return 14;
     }
 
     /** Approximate the headline VAT rate from net + tax (for the export column). */

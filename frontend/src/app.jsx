@@ -5404,7 +5404,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
     if (tab === 'products') { API.products().then((d) => setProducts(d.products || [])).catch(() => setProducts([])); return; }
     if (tab === 'subscriptions') { setSubs(null); API.subscriptions().then((d) => setSubs(d.subscriptions || [])).catch(() => setSubs([])); return; }
     if (tab === 'expenses') { setExps(null); API.expenses().then((d) => setExps(d.expenses || [])).catch(() => setExps([])); return; }
-    if (tab === 'reports') { setRep(null); API.report(repYear, periodOpts(repPeriod)).then((d) => setRep(d)).catch(() => setRep(null)); return; }
+    if (tab === 'reports') { setRep(null); API.report(repYear, periodOpts(repPeriod)).then((d) => setRep(d)).catch((e) => { setRep(null); toast(e.message || 'Auswertung konnte nicht geladen werden', 'error'); }); return; }
     setDocs(null);
     API.documents(tab).then((d) => setDocs(d.documents || [])).catch(() => setDocs([]));
   }, [tab, repYear, repPeriod, activeCompany]);
