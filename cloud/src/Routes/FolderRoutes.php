@@ -68,11 +68,12 @@ final class FolderRoutes
         $kind = in_array($b['kind'] ?? 'normal', ['normal', 'gallery'], true) ? $b['kind'] : 'normal';
         $tone = in_array($b['tone'] ?? 'violet', self::TONES, true) ? $b['tone'] : 'violet';
         $parent = isset($b['parent_id']) ? (int)$b['parent_id'] : null;
+        $autoRename = !empty($b['auto_rename']) ? 1 : 0;
 
         $stmt = Database::pdo()->prepare(
-            'INSERT INTO folders (user_id, parent_id, name, kind, tone) VALUES (?, ?, ?, ?, ?)'
+            'INSERT INTO folders (user_id, parent_id, name, kind, tone, auto_rename) VALUES (?, ?, ?, ?, ?, ?)'
         );
-        $stmt->execute([$uid, $parent, $name, $kind, $tone]);
+        $stmt->execute([$uid, $parent, $name, $kind, $tone, $autoRename]);
         $id = (int)Database::pdo()->lastInsertId();
         return Json::ok($res, ['folder' => self::fetchOne($uid, $id)], 201);
     }
@@ -140,12 +141,13 @@ final class FolderRoutes
         }
 
         $tone = (isset($b['tone']) && in_array($b['tone'], self::TONES, true)) ? $b['tone'] : null;
+        $autoRename = array_key_exists('auto_rename', $b) ? (!empty($b['auto_rename']) ? 1 : 0) : null;
         $pdo = Database::pdo();
         $stmt = $pdo->prepare(
-            'UPDATE folders SET name = COALESCE(?, name), kind = COALESCE(?, kind), tone = COALESCE(?, tone), updated_at = CURRENT_TIMESTAMP '
+            'UPDATE folders SET name = COALESCE(?, name), kind = COALESCE(?, kind), tone = COALESCE(?, tone), auto_rename = COALESCE(?, auto_rename), updated_at = CURRENT_TIMESTAMP '
             . 'WHERE id = ? AND user_id = ?'
         );
-        $stmt->execute([$b['name'] ?? null, $b['kind'] ?? null, $tone, $id, $uid]);
+        $stmt->execute([$b['name'] ?? null, $b['kind'] ?? null, $tone, $autoRename, $id, $uid]);
 
         if ($movingParent) {
             $pdo->prepare('UPDATE folders SET parent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')

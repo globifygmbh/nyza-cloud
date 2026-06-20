@@ -2500,11 +2500,12 @@ export function RenameFolderModal({ folder, onClose, onSaved }) {
   const [name, setName] = useState(folder.name);
   const [kind, setKind] = useState(folder.kind || 'normal');
   const [tone, setTone] = useState(folder.tone || 'violet');
+  const [autoRename, setAutoRename] = useState(!!folder.auto_rename);
   const [busy, setBusy] = useState(false);
   const save = async () => {
     if (!name.trim()) return;
     setBusy(true);
-    try { await API.renameFolder(folder.id, { name: name.trim(), kind, tone }); toast('Gespeichert', 'success'); onSaved && onSaved(); onClose(); }
+    try { await API.renameFolder(folder.id, { name: name.trim(), kind, tone, auto_rename: autoRename ? 1 : 0 }); toast('Gespeichert', 'success'); onSaved && onSaved(); onClose(); }
     catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
   };
   return (
@@ -2526,6 +2527,10 @@ export function RenameFolderModal({ folder, onClose, onSaved }) {
               {FOLDER_COLOR_KEYS.map((k) => <option key={k} value={k}>{FOLDER_TONES[k].label}</option>)}
             </select>
           </div>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', fontSize: 13, color: 'var(--fg-2)', padding: '4px 2px' }}>
+            <input type="checkbox" checked={autoRename} onChange={(e) => setAutoRename(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)', marginTop: 1 }}/>
+            <span>Belege automatisch umbenennen (OCR)<br/><span style={{ fontSize: 11, color: 'var(--fg-4)' }}>Neue Fotos/PDFs werden zu „Datum_Lieferant_Betrag" umbenannt.</span></span>
+          </label>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
             <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
             <Btn variant="primary" disabled={busy || !name.trim()} onClick={save} icon={busy ? Ic.loader(15) : null}>Speichern</Btn>

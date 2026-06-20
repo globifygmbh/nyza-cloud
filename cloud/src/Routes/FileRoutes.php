@@ -870,7 +870,45 @@ final class FileRoutes
         $pdo->prepare('UPDATE users SET storage_used = storage_used + ? WHERE id = ?')->execute([$size, $uid]);
         $pdo->prepare("INSERT INTO activity (user_id, kind, payload) VALUES (?, 'file_uploaded', ?)")
             ->execute([$uid, json_encode(['file_id' => $id, 'name' => $name, 'size' => $size])]);
+        self::maybeAutoRename($uid, $id, $folder, $name, $mime, $rel);
         return $id;
+    }
+
+    /**
+     * In folders flagged auto_rename, OCR an uploaded receipt (image/PDF) and
+     * rename it to "YYYY-MM-DD_Vendor_amount.ext". Silently no-ops when the
+     * folder isn't flagged, OCR is unavailable or nothing useful was read.
+     */
+    private static function maybeAutoRename(int $uid, int $id, ?int $folder, string $name, string $mime, string $rel): void
+    {
+        if ($folder === null) return;
+        $m = strtolower($mime);
+        if (!str_starts_with($m, 'image/') && !str_contains($m, 'pdf')) return;
+        $s = Database::pdo()->prepare('SELECT auto_rename FROM folders WHERE id = ? AND user_id = ?');
+        $s->execute([$folder, $uid]);
+        $row = $s->fetch();
+        if (!$row || (int)$row['auto_rename'] !== 1) return;
+        if (!\Nyza\Ocr::available()) return;
+        try {
+            $text = \Nyza\Ocr::extractText(Storage::abs($rel), $mime);
+            if (trim($text) === '') return;
+            $sug = \Nyza\Ocr::parse($text);
+            $ext = pathinfo($name, PATHINFO_EXTENSION);
+            $date = $sug['date'] ?: date('Y-m-d');
+            $vendor = '';
+            if (!empty($sug['vendor'])) {
+                $vendor = trim(preg_replace('/\s+/', ' ', preg_replace('/[^\p{L}0-9 ]+/u', '', (string)$sug['vendor'])));
+                $vendor = str_replace(' ', '-', mb_substr($vendor, 0, 40));
+            }
+            $amount = $sug['gross'] !== null ? number_format((float)$sug['gross'], 2, ',', '') . '€' : '';
+            $parts = array_values(array_filter([$date, $vendor, $amount], static fn($p) => $p !== ''));
+            if (!$parts) return;
+            $base = implode('_', $parts);
+            $newName = self::uniqueName($uid, $folder, $base . ($ext !== '' ? '.' . $ext : ''));
+            if ($newName !== $name) {
+                Database::pdo()->prepare('UPDATE files SET name = ? WHERE id = ? AND user_id = ?')->execute([$newName, $id, $uid]);
+            }
+        } catch (\Throwable $e) { /* best-effort; keep original name */ }
     }
 
     /**
