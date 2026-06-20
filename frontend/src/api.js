@@ -371,6 +371,13 @@ export const API = {
   ocrStatus: () => request('/api/ocr/status'),
   ocrReceipt: (file) => { const fd = new FormData(); fd.append('file', file); return request('/api/ocr/receipt', { method: 'POST', body: fd }); },
   ocrReceiptFile: (fileId) => request('/api/ocr/receipt-file', { method: 'POST', body: { file_id: fileId } }),
+  // ───── E-signatures ─────
+  signatures:      () => request('/api/signatures'),
+  createSignature: (body) => request('/api/signatures', { method: 'POST', body }),
+  deleteSignature: (id) => request('/api/signatures/' + id, { method: 'DELETE' }),
+  signInfo:        (token) => request('/api/sign/' + token),
+  signSubmit:      (token, body) => request('/api/sign/' + token, { method: 'POST', body }),
+  signFileUrl:     (token) => url('/api/sign/' + token + '/file'),
   expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
 
   // Buchhaltung · Auswertung

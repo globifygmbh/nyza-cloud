@@ -36,6 +36,7 @@ use Nyza\Routes\ReportRoutes;
 use Nyza\Routes\RoadmapRoutes;
 use Nyza\Routes\SearchRoutes;
 use Nyza\Routes\SettingsRoutes;
+use Nyza\Routes\SignatureRoutes;
 use Nyza\Routes\ShareRoutes;
 use Nyza\Routes\SubscriptionRoutes;
 use Nyza\Routes\TagRoutes;
@@ -237,6 +238,7 @@ SettingsRoutes::mount($app);
 SearchRoutes::mount($app);
 TagRoutes::mount($app);
 OcrRoutes::mount($app);
+SignatureRoutes::mount($app);
 PushRoutes::mount($app);
 WebDavRoutes::mount($app);
 

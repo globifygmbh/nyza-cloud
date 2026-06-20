@@ -587,3 +587,106 @@ function UploadSuccess({ uploads, onMore }) {
     </div>
   );
 }
+
+// ───── Public e-signature page (/sign/:token) ───────────────────────────────
+function SignaturePad({ canvasRef, onChange }) {
+  const drawing = useRef(false);
+  const last = useRef(null);
+  useEffect(() => {
+    const c = canvasRef.current; if (!c) return;
+    const ratio = window.devicePixelRatio || 1;
+    const rect = c.getBoundingClientRect();
+    c.width = rect.width * ratio; c.height = rect.height * ratio;
+    const ctx = c.getContext('2d');
+    ctx.scale(ratio, ratio);
+    ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111';
+  }, []);
+  const pos = (e) => { const r = canvasRef.current.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const down = (e) => { e.preventDefault(); drawing.current = true; last.current = pos(e); canvasRef.current.setPointerCapture?.(e.pointerId); };
+  const move = (e) => {
+    if (!drawing.current) return;
+    const p = pos(e); const ctx = canvasRef.current.getContext('2d');
+    ctx.beginPath(); ctx.moveTo(last.current.x, last.current.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+    last.current = p; onChange && onChange();
+  };
+  const up = () => { drawing.current = false; };
+  return (
+    <canvas ref={canvasRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up}
+      style={{ width: '100%', height: 180, background: '#fff', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', touchAction: 'none', cursor: 'crosshair', display: 'block' }}/>
+  );
+}
+
+export function PublicSignPage({ token }) {
+  const [info, setInfo] = useState(undefined);
+  const [name, setName] = useState('');
+  const [consent, setConsent] = useState(false);
+  const [hasDrawn, setHasDrawn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const canvasRef = useRef(null);
+  useEffect(() => { applyAccent('violet'); }, []);
+  useEffect(() => {
+    API.signInfo(token).then((d) => { setInfo(d.request); setName(d.request.signer_name || ''); }).catch(() => setInfo(null));
+  }, [token]);
+
+  if (info === undefined) return <CenteredLoader/>;
+  if (info === null) return <CenteredMessage title="Nicht gefunden" desc="Dieser Signatur-Link ist ungültig oder wurde entfernt."/>;
+  if (done || info.status === 'signed') return <CenteredMessage title="Unterschrieben ✓" desc="Vielen Dank! Das Dokument wurde erfolgreich signiert. Du kannst dieses Fenster schließen."/>;
+
+  const clear = () => { const c = canvasRef.current; c.getContext('2d').clearRect(0, 0, c.width, c.height); setHasDrawn(false); };
+  const submit = async () => {
+    if (!name.trim()) { toast('Bitte Namen eingeben', 'error'); return; }
+    if (!hasDrawn) { toast('Bitte unterschreiben', 'error'); return; }
+    if (!consent) { toast('Bitte Zustimmung bestätigen', 'error'); return; }
+    setBusy(true);
+    try {
+      const signature = canvasRef.current.toDataURL('image/png');
+      await API.signSubmit(token, { name: name.trim(), signature });
+      setDone(true);
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+
+  const isPdf = (info.file_mime || '').includes('pdf');
+  const isImg = (info.file_mime || '').startsWith('image/');
+  return (
+    <div style={{ minHeight: '100%', display: 'flex', justifyContent: 'center', padding: '32px 16px', position: 'relative', zIndex: 1 }}>
+      <div style={{ width: '100%', maxWidth: 760 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}><NyzaWordmark size={16}/></div>
+        <Glass style={{ borderRadius: 'var(--r-xl)', padding: 28 }}>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, letterSpacing: -0.5, margin: 0 }}>{info.title}</h1>
+          {info.message && <p style={{ fontSize: 14, color: 'var(--fg-2)', marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{info.message}</p>}
+
+          {info.has_file && (
+            <div style={{ marginTop: 18, borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)' }}>
+              {isPdf ? <iframe title="Dokument" src={API.signFileUrl(token)} style={{ width: '100%', height: 420, border: 'none', background: '#fff' }}/>
+                : isImg ? <img src={API.signFileUrl(token)} alt={info.file_name} style={{ width: '100%', display: 'block' }}/>
+                : <a href={API.signFileUrl(token)} target="_blank" rel="noreferrer" style={{ display: 'block', padding: 16, fontSize: 13, color: 'var(--accent)' }}>{Ic.download(14)} {info.file_name} öffnen</a>}
+            </div>
+          )}
+
+          <div style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Vollständiger Name</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Vor- und Nachname"
+                style={{ height: 42, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)' }}/>
+            </label>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Unterschrift</span>
+                <button onClick={clear} style={{ fontSize: 12, color: 'var(--fg-3)', background: 'none', border: 'none', cursor: 'pointer' }}>Löschen</button>
+              </div>
+              <SignaturePad canvasRef={canvasRef} onChange={() => setHasDrawn(true)}/>
+              <div style={{ fontSize: 11, color: 'var(--fg-4)', marginTop: 6 }}>Mit Maus oder Finger im weißen Feld unterschreiben.</div>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', fontSize: 13, color: 'var(--fg-2)' }}>
+              <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)', marginTop: 1 }}/>
+              <span>Ich bestätige, dass ich dieses Dokument elektronisch unterzeichne und damit einverstanden bin.</span>
+            </label>
+            <Btn variant="primary" size="lg" full disabled={busy} onClick={submit} icon={busy ? Ic.loader(16) : Ic.check(16)}>Rechtsverbindlich unterschreiben</Btn>
+          </div>
+        </Glass>
+        <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--fg-4)', marginTop: 14 }}>Sicher signiert über Nyza Cloud</div>
+      </div>
+    </div>
+  );
+}

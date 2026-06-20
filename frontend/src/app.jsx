@@ -3196,6 +3196,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-calendar' && (
           <KalenderApp onBack={() => setNav({ name: 'apps' })}/>
         )}
+        {nav.name === 'app-signatures' && (
+          <SignaturesApp onBack={() => setNav({ name: 'apps' })} basePath={basePath}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -3349,6 +3352,7 @@ function fileMenuItems(file, o) {
     o.onShareInternal && { label: 'Intern teilen (Mitglieder)', icon: Ic.users(15), onClick: () => o.onShareInternal(file) },
     o.onMove && { label: 'Verschieben', icon: Ic.folder(15), onClick: () => o.onMove(file) },
     o.onTags && { label: 'Tags…', icon: Ic.bolt(15), onClick: () => o.onTags(file) },
+    o.onSign && { label: 'Zur Unterschrift…', icon: Ic.check(15), onClick: () => o.onSign(file) },
     o.onVersions && { label: 'Versionsverlauf', icon: Ic.clock(15), onClick: () => o.onVersions(file) },
     { separator: true },
     o.onDelete && { label: 'In den Papierkorb', icon: Ic.trash(15), danger: true, onClick: () => o.onDelete(file) },
@@ -3635,6 +3639,7 @@ function FolderView({
   const { tags, idsFor, createTag, toggle: toggleTag } = useEntityTags('file', refreshTick);
   const [tagFilter, setTagFilter] = useState(null);   // tagId | null
   const [tagTarget, setTagTarget] = useState(null);   // file being tagged
+  const [signTarget, setSignTarget] = useState(null); // file to send for signature
 
   const load = useCallback(() => {
     setLoading(true);
@@ -3672,7 +3677,7 @@ function FolderView({
       multi, count: selected.size,
       onOpen: (x) => onOpenFile(x, files), onDownload: onDownloadFile, onUnzip,
       onToggleStar, onShare: onShareFile, onShareInternal: onShareInternalFile, onMove: (x) => onMoveFiles([x.id]),
-      onVersions, onDelete: onDeleteFile, onLabel: onLabelFile, onTags: (x) => setTagTarget(x),
+      onVersions, onDelete: onDeleteFile, onLabel: onLabelFile, onTags: (x) => setTagTarget(x), onSign: (x) => setSignTarget(x),
       onZip: doZip, onMoveMany: () => onMoveFiles([...selected]), onDeleteMany: doBulkDelete,
       onPin: onPinFile,
     }));
@@ -3764,6 +3769,9 @@ function FolderView({
           onToggle={(t, on) => toggleTag(tagTarget.id, t, on)}
           onCreate={createTag}
           onClose={() => setTagTarget(null)}/>
+      )}
+      {signTarget && (
+        <SignatureCreateModal fileId={signTarget.id} fileName={signTarget.name} onClose={() => setSignTarget(null)}/>
       )}
     </>
   );
@@ -3954,6 +3962,7 @@ function AppsView({ onOpenApp }) {
     { id: 'settings', label: 'Einstellungen', desc: 'Konfiguration',     icon: Ic.cog(26),    grad: 'linear-gradient(135deg, oklch(0.6 0.02 260), oklch(0.5 0.02 260))' },
     { id: 'accounting', label: 'Buchhaltung', desc: 'Rechnungen & Angebote', icon: Ic.archive(26), grad: 'linear-gradient(135deg, oklch(0.74 0.17 155), oklch(0.68 0.15 175))' },
     { id: 'calendar',   label: 'Kalender',     desc: 'Termine & Events',       icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.72 0.2 350), oklch(0.66 0.2 320))' },
+    { id: 'signatures', label: 'Signaturen',   desc: 'E-Signatur per Link',     icon: Ic.check(26),   grad: 'linear-gradient(135deg, oklch(0.7 0.17 300), oklch(0.64 0.16 265))' },
   ];
   const soon = [];
   const Tile = ({ a, disabled }) => (
@@ -7054,6 +7063,112 @@ function EventModal({ ev, contacts, onSave, onDelete, onClose }) {
         </div>
       </Glass>
     </div>
+  );
+}
+
+// ───── E-signatures app ─────────────────────────────────────────────────────
+const signLink = (token) => location.origin + (BASE || '') + '/sign/' + token;
+const SIG_STATUS = {
+  pending: { label: 'Offen', color: 'var(--fg-3)' },
+  signed:  { label: 'Unterschrieben', color: '#22c55e' },
+  declined:{ label: 'Abgelehnt', color: '#ef4444' },
+};
+
+function SignatureCreateModal({ fileId = null, fileName = '', onCreated, onClose }) {
+  const [title, setTitle] = useState(fileName ? fileName.replace(/\.[A-Za-z0-9]+$/, '') : '');
+  const [chosen, setChosen] = useState(fileId ? { id: fileId, name: fileName } : null);
+  const [signerName, setSignerName] = useState('');
+  const [signerEmail, setSignerEmail] = useState('');
+  const [message, setMessage] = useState('');
+  const [picking, setPicking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState(null);
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+  const create = async () => {
+    if (!title.trim() && !chosen) { toast('Titel oder Datei wählen', 'error'); return; }
+    setBusy(true);
+    try {
+      const d = await API.createSignature({ file_id: chosen?.id || null, title: title.trim(), signer_name: signerName.trim() || null, signer_email: signerEmail.trim() || null, message: message.trim() || null });
+      setCreated(d.request); onCreated && onCreated();
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 460, borderRadius: 'var(--r-xl)', padding: 24 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.check(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Zur Unterschrift senden</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        {created ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 13, color: 'var(--fg-2)' }}>Link erstellt — teile ihn mit dem Unterzeichner:</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <code style={{ flex: 1, fontSize: 12, wordBreak: 'break-all', background: 'var(--surface-hi)', padding: '10px 12px', borderRadius: 8 }}>{signLink(created.token)}</code>
+            </div>
+            <Btn variant="primary" full icon={Ic.copy(14)} onClick={() => { navigator.clipboard?.writeText(signLink(created.token)); toast('Link kopiert', 'success'); }}>Link kopieren</Btn>
+            <Btn variant="ghost" full onClick={onClose}>Fertig</Btn>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Titel</span><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="z. B. Angebot 2026-001" style={fld}/></label>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 6 }}>Dokument (optional)</div>
+              {chosen
+                ? <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}><FileIcon kind="document" size={15}/><span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{chosen.name}</span><span onClick={() => setChosen(null)} style={{ cursor: 'pointer', color: 'var(--fg-4)' }}>{Ic.close(14)}</span></div>
+                : <Btn variant="glass" size="sm" icon={Ic.folder(13)} onClick={() => setPicking(true)}>Aus DMS wählen</Btn>}
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Name (optional)</span><input value={signerName} onChange={(e) => setSignerName(e.target.value)} style={fld}/></label>
+              <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>E-Mail (optional)</span><input value={signerEmail} onChange={(e) => setSignerEmail(e.target.value)} style={fld}/></label>
+            </div>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Nachricht (optional)</span><textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={2} placeholder="Kurzer Hinweis für den Unterzeichner" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/></label>
+            <Btn variant="primary" full disabled={busy} onClick={create} icon={busy ? Ic.loader(15) : Ic.check(15)}>Signatur-Link erstellen</Btn>
+          </div>
+        )}
+        {picking && <DmsFilePicker onPick={(f) => { setChosen({ id: f.id, name: f.name }); if (!title.trim()) setTitle(f.name.replace(/\.[A-Za-z0-9]+$/, '')); setPicking(false); }} onClose={() => setPicking(false)}/>}
+      </Glass>
+    </div>
+  );
+}
+
+function SignaturesApp({ onBack }) {
+  const [items, setItems] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const load = () => API.signatures().then((d) => setItems(d.requests || [])).catch(() => setItems([]));
+  useEffect(() => { load(); }, []);
+  const del = async (s) => { if (!await confirmDialog({ title: 'Löschen?', message: `„${s.title}" wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteSignature(s.id); load(); } catch (e) { toast(e.message, 'error'); } };
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Signaturen']} right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setCreating(true)}>Neue Signatur</Btn>}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        {items === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+          : items.length === 0 ? <EmptyHint icon={Ic.check(40)} title="Keine Signaturanfragen" desc="Sende ein Dokument per Link zur Unterschrift — der Unterzeichner zeichnet mit dem Finger, das signierte Zertifikat landet im DMS."
+              actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setCreating(true)}>Neue Signatur</Btn>}/>
+          : (
+            <div style={{ display: 'grid', gap: 8, maxWidth: 820 }}>
+              {items.map((s) => {
+                const st = SIG_STATUS[s.status] || SIG_STATUS.pending;
+                return (
+                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>
+                        {s.signed_name ? 'von ' + s.signed_name + (s.signed_at ? ' · ' + fmtDateShort(s.signed_at) : '') : (s.signer_name || s.signer_email || 'Kein Empfänger')}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + st.color + ' 18%, transparent)', color: st.color, textTransform: 'uppercase', flexShrink: 0 }}>{st.label}</span>
+                    {s.status === 'pending' && <IconBtn size={30} title="Link kopieren" onClick={() => { navigator.clipboard?.writeText(signLink(s.token)); toast('Link kopiert', 'success'); }}>{Ic.copy(15)}</IconBtn>}
+                    {s.signed_file_id && <IconBtn size={30} title="Signiertes Zertifikat" onClick={() => window.open(fileDownload(s.signed_file_id), '_blank')}>{Ic.download(15)}</IconBtn>}
+                    <IconBtn size={30} title="Löschen" onClick={() => del(s)}>{Ic.trash(14)}</IconBtn>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+      </div>
+      {creating && <SignatureCreateModal onCreated={load} onClose={() => setCreating(false)}/>}
+    </>
   );
 }
 
