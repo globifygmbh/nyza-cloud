@@ -73,15 +73,16 @@ final class UploadLinkRoutes
         $maxSize = isset($b['max_file_size']) ? (int)$b['max_file_size'] : null;
         $notify = isset($b['notify_email']) ? (int)(bool)$b['notify_email'] : 1;
         $reqName = isset($b['require_uploader_name']) ? (int)(bool)$b['require_uploader_name'] : 0;
+        $checklist = self::encodeChecklist($b['checklist'] ?? null);
 
         $ins = Database::pdo()->prepare(
             'INSERT INTO upload_links '
-            . '(user_id, folder_id, token, title, description, password_hash, expires_at, max_files, max_file_size, notify_email, require_uploader_name) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            . '(user_id, folder_id, token, title, description, password_hash, expires_at, max_files, max_file_size, notify_email, require_uploader_name, checklist) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $ins->execute([
             $uid, $folderId, $token, $title, $b['description'] ?? null,
-            $passwordHash, $expires, $maxFiles, $maxSize, $notify, $reqName,
+            $passwordHash, $expires, $maxFiles, $maxSize, $notify, $reqName, $checklist,
         ]);
         $id = (int)Database::pdo()->lastInsertId();
 
@@ -103,6 +104,19 @@ final class UploadLinkRoutes
         Database::pdo()->prepare('DELETE FROM upload_links WHERE id = ? AND user_id = ?')
             ->execute([(int)$args['id'], $uid]);
         return Json::ok($res, ['ok' => true]);
+    }
+
+    /** Normalise a checklist [{label}] into [{key,label}] JSON, or null. */
+    private static function encodeChecklist($items): ?string
+    {
+        if (!is_array($items) || !$items) return null;
+        $out = [];
+        foreach ($items as $i => $it) {
+            $label = is_array($it) ? trim((string)($it['label'] ?? '')) : trim((string)$it);
+            if ($label === '') continue;
+            $out[] = ['key' => 'i' . $i . substr(md5($label . $i), 0, 4), 'label' => mb_substr($label, 0, 160)];
+        }
+        return $out ? json_encode($out, JSON_UNESCAPED_UNICODE) : null;
     }
 
     private static function loadByToken(string $token): ?array
@@ -151,7 +165,21 @@ final class UploadLinkRoutes
         $owner->execute([(int)$link['user_id']]);
         $ownerRow = $owner->fetch();
 
+        // Checklist + per-item upload counts (visible to anyone with the link).
+        $checklist = json_decode((string)($link['checklist'] ?? ''), true);
+        if (is_array($checklist) && $checklist) {
+            $counts = [];
+            $cs = Database::pdo()->prepare('SELECT checklist_key, COUNT(*) c FROM files WHERE upload_link_id = ? AND deleted_at IS NULL AND checklist_key IS NOT NULL GROUP BY checklist_key');
+            $cs->execute([(int)$link['id']]);
+            foreach ($cs->fetchAll() as $r) $counts[(string)$r['checklist_key']] = (int)$r['c'];
+            foreach ($checklist as &$item) $item['count'] = $counts[$item['key'] ?? ''] ?? 0;
+            unset($item);
+        } else {
+            $checklist = [];
+        }
+
         return Json::ok($res, [
+            'checklist' => $checklist,
             'token' => $link['token'],
             'title' => $link['title'],
             'description' => $link['description'],
@@ -198,7 +226,7 @@ final class UploadLinkRoutes
         $rel = Storage::relPath((int)$link['user_id'], $name);
         $files->moveTo(Storage::abs($rel));
 
-        return self::recordFile($link, $rel, $name, $mime, $size, $b['uploader_name'] ?? null, $res);
+        return self::recordFile($link, $rel, $name, $mime, $size, $b['uploader_name'] ?? null, $res, $b['checklist_key'] ?? null);
     }
 
     public static function chunkInit(Request $req, Response $res, array $args): Response
@@ -225,11 +253,11 @@ final class UploadLinkRoutes
         touch($tempPath);
 
         Database::pdo()->prepare(
-            'INSERT INTO upload_sessions (id, upload_link_id, user_id, folder_id, file_name, total_size, chunk_size, temp_path, uploader_name) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO upload_sessions (id, upload_link_id, user_id, folder_id, file_name, total_size, chunk_size, temp_path, uploader_name, checklist_key) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )->execute([
             $sid, (int)$link['id'], (int)$link['user_id'], (int)$link['folder_id'],
-            $name, $size, $chunkSize, $tempPath, $b['uploader_name'] ?? null,
+            $name, $size, $chunkSize, $tempPath, $b['uploader_name'] ?? null, $b['checklist_key'] ?? null,
         ]);
 
         return Json::ok($res, ['session_id' => $sid, 'received' => 0, 'chunk_size' => $chunkSize], 201);
@@ -310,23 +338,23 @@ final class UploadLinkRoutes
 
         Database::pdo()->prepare("UPDATE upload_sessions SET status = 'finalized' WHERE id = ?")->execute([$sid]);
 
-        return self::recordFile($link, $rel, $name, $mime, $size, $s['uploader_name'], $res);
+        return self::recordFile($link, $rel, $name, $mime, $size, $s['uploader_name'], $res, $s['checklist_key'] ?? null);
     }
 
-    private static function recordFile(array $link, string $rel, string $name, string $mime, int $size, ?string $uploaderName, Response $res): Response
+    private static function recordFile(array $link, string $rel, string $name, string $mime, int $size, ?string $uploaderName, Response $res, ?string $checklistKey = null): Response
     {
         $kind = Storage::kindFromMime($mime);
         $hue = (crc32($name) % 360);
 
         $pdo = Database::pdo();
         $ins = $pdo->prepare(
-            'INSERT INTO files (user_id, folder_id, name, storage_path, mime_type, size, kind, hue, upload_link_id, uploader_name) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO files (user_id, folder_id, name, storage_path, mime_type, size, kind, hue, upload_link_id, uploader_name, checklist_key) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $ins->execute([
             (int)$link['user_id'], (int)$link['folder_id'],
             $name, $rel, $mime, $size, $kind, $hue,
-            (int)$link['id'], $uploaderName,
+            (int)$link['id'], $uploaderName, $checklistKey ?: null,
         ]);
         $id = (int)$pdo->lastInsertId();
 

@@ -62,7 +62,7 @@ export async function uploadClient(token, file, opts, onProgress) {
   if (file.size > CHUNK_THRESHOLD) {
     return chunked(file, {
       init: (b) => API.clientChunkInit(token, {
-        ...b, password: opts.password, uploader_name: opts.uploaderName,
+        ...b, password: opts.password, uploader_name: opts.uploaderName, checklist_key: opts.checklistKey,
       }),
       append: (sid, blob, cb) => API.clientChunkAppend(token, sid, blob, cb),
       finalize: (sid) => API.clientChunkFinalize(token, sid),

@@ -388,7 +388,13 @@ export function PublicUploadPage({ token }) {
   const [uploads, setUploads] = useState([]);
   const [done, setDone] = useState(false);
   const [review, setReview] = useState(null);
+  const [counts, setCounts] = useState({});
+  const [itemBusy, setItemBusy] = useState({});
   const cameraRef = useRef(null);
+  useEffect(() => {
+    const cl = state.data?.checklist;
+    if (cl && cl.length) { const c = {}; cl.forEach((it) => { c[it.key] = it.count || 0; }); setCounts(c); }
+  }, [state.status]);
 
   const load = () => {
     setState({ status: 'loading' });
@@ -477,7 +483,22 @@ export function PublicUploadPage({ token }) {
     if (allOk) setTimeout(() => setDone(true), 600);
   };
 
+  const uploadForItem = async (key, files) => {
+    if (link.requires_uploader_name && !uploaderName.trim()) { toast('Bitte zuerst deinen Namen eingeben', 'error'); return; }
+    setItemBusy((b) => ({ ...b, [key]: true }));
+    let ok = 0;
+    for (const f of files) {
+      try { await uploadClient(token, f, { password, uploaderName: uploaderName || undefined, checklistKey: key }); ok++; }
+      catch (err) { toast(err.message, 'error'); }
+    }
+    setCounts((c) => ({ ...c, [key]: (c[key] || 0) + ok }));
+    setItemBusy((b) => ({ ...b, [key]: false }));
+    if (ok) toast(ok + (ok === 1 ? ' Datei' : ' Dateien') + ' hochgeladen', 'success');
+  };
+
   if (done) return <UploadSuccess uploads={uploads} onMore={() => { setDone(false); setUploads([]); load(); }}/>;
+
+  const checklist = link.checklist || [];
 
   return (
     <div style={{ height: '100%', overflow: 'auto', position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -522,7 +543,31 @@ export function PublicUploadPage({ token }) {
               borderRadius: 'var(--r-md)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)' }}/>
         )}
 
-        {uploads.length > 0 ? (
+        {checklist.length > 0 ? (
+          <div style={{ width: '100%', maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {checklist.map((it) => {
+              const n = counts[it.key] || 0;
+              const done = n > 0;
+              const busy = !!itemBusy[it.key];
+              return (
+                <Glass key={it.key} style={{ borderRadius: 'var(--r-lg)', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, border: done ? '1px solid color-mix(in oklab, var(--success) 50%, var(--border))' : undefined }}>
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: done ? 'var(--success)' : 'var(--surface-hi)', color: done ? '#fff' : 'var(--fg-3)', border: done ? 'none' : '1px solid var(--border)' }}>{done ? Ic.check(15) : null}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14.5, fontWeight: 540 }}>{it.label}</div>
+                    <div style={{ fontSize: 12, color: done ? 'var(--success)' : 'var(--fg-3)', marginTop: 2 }}>{done ? n + (n === 1 ? ' Datei hochgeladen' : ' Dateien hochgeladen') : 'Noch keine Datei'}</div>
+                  </div>
+                  <label style={{ flexShrink: 0 }}>
+                    <input type="file" multiple style={{ display: 'none' }} onChange={(e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; if (fs.length) uploadForItem(it.key, fs); }}/>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 36, padding: '0 14px', borderRadius: 'var(--r-sm)', cursor: busy ? 'default' : 'pointer', fontSize: 13, fontWeight: 540, background: done ? 'var(--surface-hi)' : 'var(--accent-grad)', color: done ? 'var(--fg)' : '#fff', border: done ? '1px solid var(--border)' : 'none', opacity: busy ? 0.6 : 1 }}>
+                      {busy ? Ic.loader(14) : (done ? Ic.plus(14) : Ic.upload(14))}{done ? 'Weitere' : 'Hochladen'}
+                    </span>
+                  </label>
+                </Glass>
+              );
+            })}
+            <div style={{ fontSize: 12, color: 'var(--fg-4)', textAlign: 'center', marginTop: 6 }}>Pro Punkt kannst du mehrere Dateien hochladen.</div>
+          </div>
+        ) : uploads.length > 0 ? (
           <div style={{ width: '100%', maxWidth: 720 }}>
             <Glass style={{ borderRadius: 'var(--r-xl)', padding: 24 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

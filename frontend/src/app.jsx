@@ -2409,14 +2409,19 @@ export function UploadLinkModal({ folders, defaultFolderId, onClose, onCreated, 
   const [withMaxFiles, setWithMaxFiles] = useState(true);
   const [withMaxFileSize, setWithMaxFileSize] = useState(true);
   const [reqName, setReqName] = useState(false);
+  const [checklistMode, setChecklistMode] = useState(false);
+  const [checklist, setChecklist] = useState(['']);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState(null);
 
   const create = async () => {
     if (!folderId) { toast('Zielordner wählen', 'error'); return; }
+    const items = checklist.map((x) => x.trim()).filter(Boolean);
+    if (checklistMode && !items.length) { toast('Mindestens einen Checklisten-Punkt angeben', 'error'); return; }
     setBusy(true);
     try {
       const body = { folder_id: folderId, title, description: description || null, require_uploader_name: reqName };
+      if (checklistMode && items.length) body.checklist = items.map((label) => ({ label }));
       if (withPassword && password) body.password = password;
       if (withExpiry && expiresAt) body.expires_at = expiresAt + ' 23:59:59';
       if (withMaxFiles) body.max_files = Number(maxFiles);
@@ -2467,6 +2472,26 @@ export function UploadLinkModal({ folders, defaultFolderId, onClose, onCreated, 
                   </select>
                 </Field>
               )}
+              <div>
+                <div style={{ display: 'inline-flex', gap: 4, padding: 4, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+                  {[['simple', 'Einfacher Upload'], ['checklist', 'Checkliste']].map(([k, l]) => {
+                    const on = (k === 'checklist') === checklistMode;
+                    return <button key={k} type="button" onClick={() => setChecklistMode(k === 'checklist')} style={{ height: 30, padding: '0 14px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 540, background: on ? 'var(--accent-grad)' : 'transparent', color: on ? '#fff' : 'var(--fg-2)' }}>{l}</button>;
+                  })}
+                </div>
+                {checklistMode && (
+                  <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>Punkte, die der Kunde abarbeitet — pro Punkt kann er mehrere Dateien hochladen, danach ist der Punkt erledigt.</div>
+                    {checklist.map((item, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 8 }}>
+                        <input value={item} onChange={(e) => setChecklist((s) => s.map((x, idx) => idx === i ? e.target.value : x))} placeholder={'z. B. ' + (i === 0 ? 'Personalausweis' : i === 1 ? 'Gewerbeschein' : 'Dokument')} style={{ flex: 1, height: 38, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13.5, color: 'var(--fg)' }}/>
+                        <IconBtn size={38} title="Entfernen" onClick={() => setChecklist((s) => s.length > 1 ? s.filter((_, idx) => idx !== i) : [''])} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>{Ic.trash(14)}</IconBtn>
+                      </div>
+                    ))}
+                    <Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setChecklist((s) => [...s, ''])} style={{ alignSelf: 'flex-start' }}>Punkt hinzufügen</Btn>
+                  </div>
+                )}
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <ConstraintBox icon={Ic.lock} title="Passwort" enabled={withPassword} onToggle={() => setWithPassword(!withPassword)}>
                   {withPassword && <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" style={{ width: '100%', marginTop: 6, height: 32, padding: '0 10px', borderRadius: 'var(--r-xs)', background: 'var(--bg)', border: '1px solid var(--border)', outline: 'none', fontSize: 12, color: 'var(--fg)' }}/>}

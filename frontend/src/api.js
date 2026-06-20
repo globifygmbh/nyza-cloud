@@ -249,7 +249,7 @@ export const API = {
     request('/api/u/' + token + '/unlock', { method: 'POST', body: { password }, skipAuth: true }),
   clientUpload: (token, file, opts = {}, onProgress) =>
     upload('/api/u/' + token + '/upload', file, {
-      password: opts.password, uploader_name: opts.uploaderName,
+      password: opts.password, uploader_name: opts.uploaderName, checklist_key: opts.checklistKey,
     }, onProgress),
   // Client chunked/resumable upload
   clientChunkInit:     (token, body) => pub('/api/u/' + token + '/chunk/init', body),
