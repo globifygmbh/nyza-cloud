@@ -3202,6 +3202,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-forms' && (
           <FormsApp onBack={() => setNav({ name: 'apps' })}/>
         )}
+        {nav.name === 'app-vault' && (
+          <VaultApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -3962,6 +3965,7 @@ function AppsView({ onOpenApp }) {
     { id: 'calendar',   label: 'Kalender',     desc: 'Termine & Events',       icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.72 0.2 350), oklch(0.66 0.2 320))' },
     { id: 'signatures', label: 'Signaturen',   desc: 'E-Signatur per Link',     icon: Ic.check(26),   grad: 'linear-gradient(135deg, oklch(0.7 0.17 300), oklch(0.64 0.16 265))' },
     { id: 'forms',      label: 'Formulare',    desc: 'Intake-Formulare',        icon: Ic.list(26),    grad: 'linear-gradient(135deg, oklch(0.72 0.16 210), oklch(0.66 0.17 185))' },
+    { id: 'vault',      label: 'Zugänge',      desc: 'Passwörter & Logins',     icon: Ic.lock(26),    grad: 'linear-gradient(135deg, oklch(0.66 0.13 280), oklch(0.56 0.1 250))' },
   ];
   const soon = [];
   const Tile = ({ a, disabled }) => (
@@ -7368,6 +7372,156 @@ function FormSubmissionsModal({ form, onClose }) {
                 ))}
               </div>
             )}
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+// ───── Zugänge (credential vault) ────────────────────────────────────────────
+const copyText = (v) => { if (v == null || v === '') return; navigator.clipboard?.writeText(String(v)); toast('Kopiert', 'success'); };
+
+function VaultField({ label, value, secret }) {
+  const [show, setShow] = useState(false);
+  if (value == null || value === '') return null;
+  const masked = secret && !show;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid var(--border)' }}>
+      <span style={{ width: 110, flexShrink: 0, fontSize: 12, color: 'var(--fg-3)' }}>{label}</span>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontFamily: secret ? 'var(--font-mono)' : 'inherit', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{masked ? '••••••••••' : value}</span>
+      {secret && <IconBtn size={28} title={show ? 'Verbergen' : 'Anzeigen'} onClick={() => setShow((s) => !s)}>{Ic.eye(14)}</IconBtn>}
+      <IconBtn size={28} title="Kopieren" onClick={() => copyText(value)}>{Ic.copy(14)}</IconBtn>
+    </div>
+  );
+}
+
+function VaultApp({ onBack }) {
+  const [items, setItems] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [viewing, setViewing] = useState(null);
+  const load = () => API.vault().then((d) => setItems(d.entries || [])).catch(() => setItems([]));
+  useEffect(() => { load(); }, []);
+  const del = async (e) => { if (!await confirmDialog({ title: 'Zugang löschen?', message: `„${e.title}" wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteVault(e.id); load(); } catch (err) { toast(err.message, 'error'); } };
+  const open = async (e) => { try { const d = await API.vaultEntry(e.id); setViewing(d.entry); } catch (err) { toast(err.message, 'error'); } };
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Zugänge']} right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({})}>Neuer Zugang</Btn>}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        {items === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+          : items.length === 0 ? <EmptyHint icon={Ic.lock(40)} title="Keine Zugänge" desc="Speichere Logins, Passwörter und Links — verschlüsselt in der Datenbank."
+              actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({})}>Neuer Zugang</Btn>}/>
+          : (
+            <div style={{ display: 'grid', gap: 8, maxWidth: 720 }}>
+              {items.map((e) => (
+                <div key={e.id} className="nyza-listrow" onClick={() => open(e)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Ic.lock(15)}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.title}</div>
+                    {(e.username || e.email) && <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{e.username || e.email}</div>}
+                  </div>
+                  <span className="task-kebab" title="Bearbeiten" onClick={(ev) => { ev.stopPropagation(); open(e); }} style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex' }}>{Ic.more(16)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
+      {viewing && <VaultViewModal entry={viewing} onEdit={() => { setEditing(viewing); setViewing(null); }} onClose={() => setViewing(null)}/>}
+      {editing && <VaultEntryModal entry={editing} onSaved={() => { setEditing(null); load(); }} onClose={() => setEditing(null)}/>}
+    </>
+  );
+}
+
+function VaultViewModal({ entry, onEdit, onClose }) {
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 460, borderRadius: 'var(--r-xl)', padding: 24, maxHeight: '90vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.lock(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{entry.title}</h2>
+          <IconBtn size={32} title="Bearbeiten" onClick={onEdit}>{Ic.fileGen(16)}</IconBtn>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <VaultField label="Benutzer" value={entry.username}/>
+          <VaultField label="E-Mail" value={entry.email}/>
+          <VaultField label="Passwort" value={entry.password} secret/>
+          {entry.url && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid var(--border)' }}>
+              <span style={{ width: 110, flexShrink: 0, fontSize: 12, color: 'var(--fg-3)' }}>Link</span>
+              <a href={/^https?:\/\//.test(entry.url) ? entry.url : 'https://' + entry.url} target="_blank" rel="noreferrer" style={{ flex: 1, minWidth: 0, fontSize: 13.5, color: 'var(--accent)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.url}</a>
+              <IconBtn size={28} title="Kopieren" onClick={() => copyText(entry.url)}>{Ic.copy(14)}</IconBtn>
+            </div>
+          )}
+          {(entry.fields || []).map((f, i) => <VaultField key={i} label={f.label} value={f.value} secret={f.secret}/>)}
+          {entry.notes && (
+            <div style={{ padding: '10px 0', borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, color: 'var(--fg-3)', marginBottom: 4 }}>Notizen</div>
+              <div style={{ fontSize: 13, color: 'var(--fg-2)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{entry.notes}</div>
+            </div>
+          )}
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+function VaultEntryModal({ entry, onSaved, onClose }) {
+  const [title, setTitle] = useState(entry.title || '');
+  const [username, setUsername] = useState(entry.username || '');
+  const [email, setEmail] = useState(entry.email || '');
+  const [url, setUrl] = useState(entry.url || '');
+  const [password, setPassword] = useState(entry.password || '');
+  const [notes, setNotes] = useState(entry.notes || '');
+  const [fields, setFields] = useState(entry.fields || []);
+  const [showPw, setShowPw] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+  const gen = () => { const c = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*'; let p = ''; const a = crypto.getRandomValues(new Uint32Array(20)); for (let i = 0; i < 20; i++) p += c[a[i] % c.length]; setPassword(p); setShowPw(true); };
+  const save = async () => {
+    if (!title.trim()) { toast('Titel erforderlich', 'error'); return; }
+    setBusy(true);
+    const payload = { title: title.trim(), username: username.trim() || null, email: email.trim() || null, url: url.trim() || null, password, notes, fields: fields.filter((f) => (f.label || f.value)) };
+    try { if (entry.id) await API.updateVault(entry.id, payload); else await API.createVault(payload); onSaved(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 480, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.lock(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{entry.id ? 'Zugang bearbeiten' : 'Neuer Zugang'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Titel</span><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="z. B. Hosting-Account" style={fld}/></label>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Benutzer</span><input value={username} onChange={(e) => setUsername(e.target.value)} style={fld}/></label>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>E-Mail</span><input value={email} onChange={(e) => setEmail(e.target.value)} style={fld}/></label>
+          </div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Passwort</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} style={{ ...fld, flex: 1, fontFamily: 'var(--font-mono)' }}/>
+              <IconBtn size={42} title={showPw ? 'Verbergen' : 'Anzeigen'} onClick={() => setShowPw((s) => !s)} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>{Ic.eye(15)}</IconBtn>
+              <IconBtn size={42} title="Generieren" onClick={gen} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>{Ic.bolt(15)}</IconBtn>
+            </div>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Link</span><input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" style={fld}/></label>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}><span style={{ flex: 1, fontSize: 12.5, fontWeight: 600 }}>Weitere Felder</span><Btn variant="glass" size="sm" icon={Ic.plus(12)} onClick={() => setFields((s) => [...s, { label: '', value: '', secret: false }])}>Feld</Btn></div>
+            {fields.map((f, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+                <input value={f.label} onChange={(e) => setFields((s) => s.map((x, idx) => idx === i ? { ...x, label: e.target.value } : x))} placeholder="Bezeichnung" style={{ ...fld, width: 130 }}/>
+                <input value={f.value} onChange={(e) => setFields((s) => s.map((x, idx) => idx === i ? { ...x, value: e.target.value } : x))} placeholder="Wert" style={{ ...fld, flex: 1 }}/>
+                <IconBtn size={32} title={f.secret ? 'Geheim' : 'Sichtbar'} onClick={() => setFields((s) => s.map((x, idx) => idx === i ? { ...x, secret: !x.secret } : x))} style={{ color: f.secret ? 'var(--accent)' : undefined }}>{Ic.lock(14)}</IconBtn>
+                <IconBtn size={32} title="Entfernen" onClick={() => setFields((s) => s.filter((_, idx) => idx !== i))}>{Ic.trash(13)}</IconBtn>
+              </div>
+            ))}
+          </div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Notizen</span><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/></label>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={save} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
         </div>
       </Glass>
     </div>

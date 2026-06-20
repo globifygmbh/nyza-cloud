@@ -391,6 +391,12 @@ export const API = {
   formFileUrl:    (fid, download) => url('/api/forms/files/' + fid) + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
   publicForm:     (token) => request('/api/form/' + token),
   submitForm:     (token, formData) => request('/api/form/' + token, { method: 'POST', body: formData }),
+  // ───── Vault (Zugänge) ─────
+  vault:          () => request('/api/vault'),
+  vaultEntry:     (id) => request('/api/vault/' + id),
+  createVault:    (body) => request('/api/vault', { method: 'POST', body }),
+  updateVault:    (id, body) => request('/api/vault/' + id, { method: 'PATCH', body }),
+  deleteVault:    (id) => request('/api/vault/' + id, { method: 'DELETE' }),
   expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
 
   // Buchhaltung · Auswertung

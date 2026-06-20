@@ -44,6 +44,7 @@ use Nyza\Routes\TagRoutes;
 use Nyza\Routes\TaskRoutes;
 use Nyza\Routes\TimeRoutes;
 use Nyza\Routes\UploadLinkRoutes;
+use Nyza\Routes\VaultRoutes;
 use Nyza\Routes\WebDavRoutes;
 use Nyza\SetupWizard;
 use Slim\Factory\AppFactory;
@@ -241,6 +242,7 @@ TagRoutes::mount($app);
 OcrRoutes::mount($app);
 SignatureRoutes::mount($app);
 FormRoutes::mount($app);
+VaultRoutes::mount($app);
 PushRoutes::mount($app);
 WebDavRoutes::mount($app);
 
