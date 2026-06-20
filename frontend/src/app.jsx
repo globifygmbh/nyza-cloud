@@ -1512,6 +1512,10 @@ function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDr
           <div style={{ position: 'absolute', top: 10, left: 10, color: 'var(--accent)', background: 'rgba(0,0,0,0.45)', borderRadius: 999, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}
             title="Angepinnt">{Ic.pin(13)}</div>
         )}
+        {!!folder.locked && (
+          <div style={{ position: 'absolute', top: 10, left: folder.pinned ? 42 : 10, color: '#fff', background: 'rgba(0,0,0,0.5)', borderRadius: 999, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}
+            title="Gesperrt">{Ic.lock(13)}</div>
+        )}
       </div>
       <div style={{ padding: '14px 16px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
@@ -2566,6 +2570,42 @@ export function RenameFolderModal({ folder, onClose, onSaved }) {
   );
 }
 
+// Set or remove a folder's vault password.
+function FolderLockModal({ folder, mode, onClose, onDone }) {
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const remove = mode === 'remove';
+  const submit = async () => {
+    if (!pw) return;
+    if (!remove && pw !== pw2) { toast('Passwörter stimmen nicht überein', 'error'); return; }
+    setBusy(true);
+    try {
+      if (remove) { await API.unlockFolder(folder.id, pw); try { sessionStorage.removeItem('nyza.flock.' + folder.id); } catch {} toast('Sperre entfernt', 'success'); }
+      else { await API.lockFolder(folder.id, pw); try { sessionStorage.setItem('nyza.flock.' + folder.id, pw); } catch {} toast('Ordner gesperrt', 'success'); }
+      onDone && onDone(); onClose();
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const fld = { height: 42, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)' };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 400, borderRadius: 'var(--r-xl)', padding: 26 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.lock(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>{remove ? 'Sperre entfernen' : 'Ordner sperren'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginBottom: 14 }}>{remove ? 'Aktuelles Passwort eingeben, um die Sperre zu entfernen.' : `„${folder.name}" verlangt künftig dieses Passwort, bevor der Inhalt sichtbar wird.`}</div>
+        <form onSubmit={(e) => { e.preventDefault(); submit(); }} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <input type="password" autoFocus value={pw} onChange={(e) => setPw(e.target.value)} placeholder={remove ? 'Passwort' : 'Neues Passwort'} style={fld}/>
+          {!remove && <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="Passwort wiederholen" style={fld}/>}
+          <Btn variant="primary" full type="submit" disabled={busy || !pw} icon={busy ? Ic.loader(15) : Ic.lock(15)}>{remove ? 'Entfernen' : 'Sperren'}</Btn>
+        </form>
+      </Glass>
+    </div>
+  );
+}
+
 // ───── Move modal (folder picker) ───────────────────────────────────────────
 // `excludeId` removes a folder + its descendants from the targets (moving a
 // folder into its own subtree is invalid). `allowRoot` adds a top-level target.
@@ -2910,6 +2950,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const [showProfile, setShowProfile] = useState(false);
   const [showSecurity, setShowSecurity] = useState(false);
   const [renameFolderTarget, setRenameFolderTarget] = useState(null);
+  const [lockTarget, setLockTarget] = useState(null); // { folder, mode }
   const [moveTarget, setMoveTarget] = useState(null); // { kind:'folder'|'files', folder?, ids? }
   const [allFolders, setAllFolders] = useState([]);
   const [viewing, setViewing] = useState(null); // { items, index }
@@ -3134,6 +3175,8 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onRenameFolder={(f) => setRenameFolderTarget(f)}
             onMoveFolder={(f) => openMove({ kind: 'folder', folder: f })}
             onFolderColor={setFolderColor}
+            onLockFolder={(f) => setLockTarget({ folder: f, mode: 'set' })}
+            onUnlockFolder={(f) => setLockTarget({ folder: f, mode: 'remove' })}
             onMoveFiles={(ids) => openMove({ kind: 'files', ids })}
             onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner in den Papierkorb?', message: `„${f.name}" und alle enthaltenen Dateien werden in den Papierkorb verschoben. Du kannst sie dort wiederherstellen.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner in den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onNewFolder={async (name, kind, tone, templateId) => { try { const d = await API.newFolder({ name, kind, tone }); if (templateId) { const tpls = JSON.parse(localStorage.getItem('nyza.folderTemplates') || '[]'); const tpl = tpls.find((t) => t.id === templateId); if (tpl) { for (const sub of (tpl.folders || [])) { await API.newFolder({ name: sub, kind: 'normal', tone: 'violet', parent_id: d.folder.id }).catch(() => {}); } } } toast('Ordner erstellt', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
@@ -3185,6 +3228,8 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onDownloadFile={downloadOne}
             onMoveFolder={(f) => openMove({ kind: 'folder', folder: f })}
             onRenameFolder={(f) => setRenameFolderTarget(f)}
+            onLockFolder={(f) => setLockTarget({ folder: f, mode: 'set' })}
+            onUnlockFolder={(f) => setLockTarget({ folder: f, mode: 'remove' })}
             onShareFolderItem={(f) => setShareTarget({ folder: f })}
             onFolderColor={setFolderColor}
             onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner in den Papierkorb?', message: `„${f.name}" und alle enthaltenen Dateien werden in den Papierkorb verschoben.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner in den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
@@ -3265,6 +3310,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         onChangePassword={() => setShowPasswordModal(true)}/>}
       {renameFolderTarget && (
         <RenameFolderModal folder={renameFolderTarget} onClose={() => setRenameFolderTarget(null)} onSaved={refreshAll}/>
+      )}
+      {lockTarget && (
+        <FolderLockModal folder={lockTarget.folder} mode={lockTarget.mode} onClose={() => setLockTarget(null)} onDone={refreshAll}/>
       )}
       {versionsTarget && (
         <VersionHistoryModal file={versionsTarget} onClose={() => setVersionsTarget(null)} onChanged={refreshAll}/>
@@ -3401,6 +3449,9 @@ function folderMenuItems(folder, o) {
     o.onMove && { label: 'Verschieben', icon: Ic.folder(15), onClick: () => o.onMove(folder) },
     o.onShare && { label: 'Teilen (Link)', icon: Ic.share(15), onClick: () => o.onShare(folder) },
     o.onShareInternal && { label: 'Intern teilen (Mitglieder)', icon: Ic.users(15), onClick: () => o.onShareInternal(folder) },
+    o.onLock && (folder.locked
+      ? { label: 'Sperre entfernen', icon: Ic.lock(15), onClick: () => o.onUnlock(folder) }
+      : { label: 'Sperren (Passwort)…', icon: Ic.lock(15), onClick: () => o.onLock(folder) }),
     o.onColor && { separator: true },
     o.onColor && { header: 'Farbe' },
     o.onColor && { swatches: FOLDER_SWATCHES, current: folder.tone || 'violet', onPick: (key) => o.onColor(folder, key) },
@@ -3414,7 +3465,7 @@ function FilesView({
   user, stats, folders, view, setView, sort, setSort, search, setSearch, refreshTick,
   onOpenFolder, onShareFolder, onRenameFolder, onMoveFolder, onFolderColor, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
   onOpenFile, onShareFile, onShareInternalFile, onShareInternalFolder, onDeleteFile, onToggleStar, onDropFiles, onUnzip, onVersions, onDownloadFile,
-  onPinFile, onPinFolder,
+  onPinFile, onPinFolder, onLockFolder, onUnlockFolder,
 }) {
   const [recent, setRecent] = useState([]);
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -3460,6 +3511,7 @@ function FilesView({
 
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
     onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolder, onShareInternal: onShareInternalFolder, onColor: onFolderColor, onDelete: onDeleteFolder, onPin: onPinFolder,
+    onLock: onLockFolder, onUnlock: onUnlockFolder,
   }));
   const bgCtx = (e) => {
     if (e.target.closest('[data-fid]') || e.target.closest('[data-folder-card]')) return;
@@ -3662,7 +3714,7 @@ function FolderView({
   folderId, view, setView, sort, setSort, search, setSearch, refreshTick,
   onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onMoveFiles, onUploadLink, onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, afterChange,
   onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onShareFolderItem, onShareInternalFile, onShareInternalFolder, onDeleteFolder, onFolderColor, onLabelFile,
-  onPinFile, onPinFolder,
+  onPinFile, onPinFolder, onLockFolder, onUnlockFolder,
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -3674,12 +3726,43 @@ function FolderView({
   const { tags, idsFor, createTag, toggle: toggleTag } = useEntityTags('file', refreshTick);
   const [tagFilter, setTagFilter] = useState(null);   // tagId | null
   const [tagTarget, setTagTarget] = useState(null);   // file being tagged
+  const [locked, setLocked] = useState(false);
+  const [pin, setPin] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
-    API.folder(folderId).then((d) => { setData(d); setLoading(false); }).catch((e) => { toast(e.message, 'error'); setLoading(false); });
+    API.folder(folderId)
+      .then((d) => { setData(d); setLocked(false); setLoading(false); })
+      .catch((e) => { if (e.status === 423 || e.code === 'locked') { setLocked(true); setData(null); } else { toast(e.message, 'error'); } setLoading(false); });
   }, [folderId]);
   useEffect(() => { load(); setSelected(new Set()); }, [load, refreshTick]);
+
+  const submitPin = () => {
+    if (!pin) return;
+    try { sessionStorage.setItem('nyza.flock.' + folderId, pin); } catch {}
+    setPin(''); load();
+  };
+
+  if (locked) {
+    return (
+      <>
+        <TopBar crumbs={[{ label: 'Meine Dateien', onClick: onBack }, '🔒 Gesperrt']}/>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <Glass style={{ width: '100%', maxWidth: 380, borderRadius: 'var(--r-xl)', padding: 32, textAlign: 'center' }}>
+            <div style={{ width: 56, height: 56, borderRadius: 'var(--r-lg)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px', boxShadow: '0 12px 32px -8px var(--accent-glow)' }}>{Ic.lock(24)}</div>
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 600, margin: 0 }}>Gesperrter Ordner</h2>
+            <p style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: 8 }}>Bitte Ordner-Passwort eingeben.</p>
+            <form onSubmit={(e) => { e.preventDefault(); submitPin(); }} style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <input type="password" autoFocus value={pin} onChange={(e) => setPin(e.target.value)} placeholder="Passwort"
+                style={{ height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', textAlign: 'center' }}/>
+              <Btn variant="primary" size="lg" full type="submit" disabled={!pin} icon={Ic.lock(15)}>Entsperren</Btn>
+              <Btn variant="ghost" size="sm" onClick={onBack}>Zurück</Btn>
+            </form>
+          </Glass>
+        </div>
+      </>
+    );
+  }
 
   if (loading && !data) {
     return (<><TopBar crumbs={[{ label: 'Meine Dateien', onClick: onBack }, '…']}/><div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px' }}><SkeletonGrid/></div></>);
@@ -3718,6 +3801,7 @@ function FolderView({
   };
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
     onOpen: onOpenFolder, onRename: onRenameFolder, onMove: onMoveFolder, onShare: onShareFolderItem, onShareInternal: onShareInternalFolder, onColor: onFolderColor, onDelete: onDeleteFolder, onPin: onPinFolder,
+    onLock: onLockFolder, onUnlock: onUnlockFolder,
   }));
   const bgCtx = (e) => {
     if (e.target.closest('[data-fid]')) return;

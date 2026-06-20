@@ -24,6 +24,8 @@ final class FolderRoutes
             $g->get('/{id}',      [self::class, 'show']);
             $g->patch('/{id}',    [self::class, 'rename']);
             $g->post('/{id}/pin', [self::class, 'pin']);
+            $g->post('/{id}/lock',   [self::class, 'lock']);
+            $g->post('/{id}/unlock', [self::class, 'unlock']);
             $g->post('/{id}/restore', [self::class, 'restore']);
             $g->delete('/{id}',   [self::class, 'delete']);
         })->add(new AuthMiddleware());
@@ -43,7 +45,7 @@ final class FolderRoutes
                 . 'FROM folders f WHERE user_id = ? AND deleted_at IS NULL ORDER BY name'
             );
             $stmt->execute([$uid]);
-            return Json::ok($res, ['folders' => $stmt->fetchAll()]);
+            return Json::ok($res, ['folders' => array_map([self::class, 'decorate'], $stmt->fetchAll())]);
         }
 
         $parent = $qp['parent_id'] ?? null;
@@ -55,7 +57,15 @@ final class FolderRoutes
              . 'ORDER BY pinned DESC, updated_at DESC';
         $stmt = $pdo->prepare($sql);
         $stmt->execute($parent === null ? [$uid] : [$uid, (int)$parent]);
-        return Json::ok($res, ['folders' => $stmt->fetchAll()]);
+        return Json::ok($res, ['folders' => array_map([self::class, 'decorate'], $stmt->fetchAll())]);
+    }
+
+    /** Strip the lock hash from a folder row and expose a `locked` boolean. */
+    public static function decorate(array $f): array
+    {
+        $f['locked'] = !empty($f['lock_hash']);
+        unset($f['lock_hash']);
+        return $f;
     }
 
     public static function create(Request $req, Response $res): Response
@@ -75,7 +85,7 @@ final class FolderRoutes
         );
         $stmt->execute([$uid, $parent, $name, $kind, $tone, $autoRename]);
         $id = (int)Database::pdo()->lastInsertId();
-        return Json::ok($res, ['folder' => self::fetchOne($uid, $id)], 201);
+        return Json::ok($res, ['folder' => self::decorate(self::fetchOne($uid, $id) ?: [])], 201);
     }
 
     public static function show(Request $req, Response $res, array $args): Response
@@ -92,6 +102,15 @@ final class FolderRoutes
         }
         if (!$folder) return Json::err($res, 'Not found', 404);
 
+        // Locked Vault: require the folder password before listing contents.
+        if (!empty($folder['lock_hash'])) {
+            $pass = $req->getHeaderLine('X-Folder-Pass');
+            if ($pass === '') $pass = (string)($req->getQueryParams()['pass'] ?? '');
+            if ($pass === '' || !password_verify($pass, (string)$folder['lock_hash'])) {
+                return Json::err($res, 'Ordner gesperrt', 423, 'locked');
+            }
+        }
+
         // Once access is confirmed, list the folder's ACTUAL contents (owner's
         // files / subfolders) by folder_id — not by the viewer's user_id — so a
         // shared folder shows what's really inside it. deleted_at still filtered.
@@ -100,9 +119,9 @@ final class FolderRoutes
         $sub = Database::pdo()->prepare('SELECT * FROM folders WHERE parent_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC');
         $sub->execute([$id]);
         return Json::ok($res, [
-            'folder' => $folder,
+            'folder' => self::decorate($folder),
             'files' => $files->fetchAll(),
-            'subfolders' => $sub->fetchAll(),
+            'subfolders' => array_map([self::class, 'decorate'], $sub->fetchAll()),
         ]);
     }
 
@@ -153,7 +172,37 @@ final class FolderRoutes
             $pdo->prepare('UPDATE folders SET parent_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
                 ->execute([$newParent, $id, $uid]);
         }
-        return Json::ok($res, ['folder' => self::fetchOne($uid, $id)]);
+        return Json::ok($res, ['folder' => self::decorate(self::fetchOne($uid, $id) ?: [])]);
+    }
+
+    /** Set or change the folder's vault password. */
+    public static function lock(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
+        $b = (array)$req->getParsedBody();
+        $pw = (string)($b['password'] ?? '');
+        if (strlen($pw) < 4) return Json::err($res, 'Passwort zu kurz (min. 4 Zeichen)', 422);
+        Database::pdo()->prepare('UPDATE folders SET lock_hash = ? WHERE id = ? AND user_id = ?')
+            ->execute([password_hash($pw, PASSWORD_BCRYPT), $id, $uid]);
+        return Json::ok($res, ['ok' => true]);
+    }
+
+    /** Remove the lock (requires the current password). */
+    public static function unlock(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        $f = self::fetchOne($uid, $id);
+        if (!$f) return Json::err($res, 'Not found', 404);
+        $b = (array)$req->getParsedBody();
+        $pw = (string)($b['password'] ?? '');
+        if (!empty($f['lock_hash']) && !password_verify($pw, (string)$f['lock_hash'])) {
+            return Json::err($res, 'Falsches Passwort', 403);
+        }
+        Database::pdo()->prepare('UPDATE folders SET lock_hash = NULL WHERE id = ? AND user_id = ?')->execute([$id, $uid]);
+        return Json::ok($res, ['ok' => true]);
     }
 
     /** All descendant folder ids of $id (excluding $id), breadth-first. */

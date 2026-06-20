@@ -155,9 +155,11 @@ export const API = {
   // Folders
   folders:      (parent) => request('/api/folders' + (parent ? '?parent_id=' + parent : '')),
   allFolders:   ()       => request('/api/folders?all=1'),
-  folder:       (id)     => request('/api/folders/' + id),
+  folder:       (id)     => { let h; try { const p = sessionStorage.getItem('nyza.flock.' + id); if (p) h = { 'X-Folder-Pass': p }; } catch {} return request('/api/folders/' + id, h ? { headers: h } : {}); },
   newFolder:    (body)   => request('/api/folders', { method: 'POST', body }),
   renameFolder: (id, body) => request('/api/folders/' + id, { method: 'PATCH', body }),
+  lockFolder:   (id, password) => request('/api/folders/' + id + '/lock', { method: 'POST', body: { password } }),
+  unlockFolder: (id, password) => request('/api/folders/' + id + '/unlock', { method: 'POST', body: { password } }),
   moveFolder:   (id, parentId) => request('/api/folders/' + id, { method: 'PATCH', body: { parent_id: parentId } }),
   deleteFolder: (id)     => request('/api/folders/' + id, { method: 'DELETE' }),
 
