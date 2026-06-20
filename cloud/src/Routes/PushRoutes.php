@@ -264,7 +264,11 @@ final class PushRoutes
             }
         }
 
-        return ['checked_users' => $checked, 'sent' => $sent];
+        // Auto-import Belege from flagged mailboxes (best-effort; needs php-imap).
+        $belege = 0;
+        try { $belege = \Nyza\Routes\MailRoutes::cronImport(); } catch (\Throwable $e) {}
+
+        return ['checked_users' => $checked, 'sent' => $sent, 'belege_imported' => $belege];
     }
 
     /** Timed events starting within the next 15 minutes → reminder. */

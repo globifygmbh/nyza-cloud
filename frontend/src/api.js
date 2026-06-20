@@ -399,6 +399,16 @@ export const API = {
   createVault:    (body) => request('/api/vault', { method: 'POST', body }),
   updateVault:    (id, body) => request('/api/vault/' + id, { method: 'PATCH', body }),
   deleteVault:    (id) => request('/api/vault/' + id, { method: 'DELETE' }),
+  // ───── Mail ─────
+  mailboxes:      () => request('/api/mail/mailboxes'),
+  createMailbox:  (body) => request('/api/mail/mailboxes', { method: 'POST', body }),
+  updateMailbox:  (id, body) => request('/api/mail/mailboxes/' + id, { method: 'PATCH', body }),
+  deleteMailbox:  (id) => request('/api/mail/mailboxes/' + id, { method: 'DELETE' }),
+  mailMessages:   (id) => request('/api/mail/mailboxes/' + id + '/messages'),
+  mailRead:       (id, uid) => request('/api/mail/mailboxes/' + id + '/messages/' + uid),
+  mailAttachmentUrl: (id, uid, part) => url('/api/mail/mailboxes/' + id + '/messages/' + uid + '/attachment') + '?part=' + encodeURIComponent(part) + '&token=' + (getToken() || ''),
+  mailSend:       (id, body) => request('/api/mail/mailboxes/' + id + '/send', { method: 'POST', body }),
+  mailFetchBelege:(id) => request('/api/mail/mailboxes/' + id + '/fetch-belege', { method: 'POST', body: {} }),
   expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
 
   // Buchhaltung · Auswertung

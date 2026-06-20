@@ -3280,6 +3280,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-vault' && (
           <VaultApp onBack={() => setNav({ name: 'apps' })}/>
         )}
+        {nav.name === 'app-mail' && (
+          <MailApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -4080,6 +4083,7 @@ function AppsView({ onOpenApp }) {
     { id: 'signatures', label: 'Signaturen',   desc: 'E-Signatur per Link',     icon: Ic.check(26),   grad: 'linear-gradient(135deg, oklch(0.7 0.17 300), oklch(0.64 0.16 265))' },
     { id: 'forms',      label: 'Formulare',    desc: 'Intake-Formulare',        icon: Ic.list(26),    grad: 'linear-gradient(135deg, oklch(0.72 0.16 210), oklch(0.66 0.17 185))' },
     { id: 'vault',      label: 'Zugänge',      desc: 'Passwörter & Logins',     icon: Ic.lock(26),    grad: 'linear-gradient(135deg, oklch(0.66 0.13 280), oklch(0.56 0.1 250))' },
+    { id: 'mail',       label: 'Mail',         desc: 'Postfächer & Belege',     icon: Ic.inbox(26),   grad: 'linear-gradient(135deg, oklch(0.7 0.16 30), oklch(0.62 0.19 12))' },
   ];
   const soon = [];
   const Tile = ({ a, disabled }) => (
@@ -7636,6 +7640,217 @@ function VaultEntryModal({ entry, onSaved, onClose }) {
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
           <Btn variant="primary" disabled={busy} onClick={save} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+// ───── Mail app ───────────────────────────────────────────────────────────────
+function MailApp({ onBack }) {
+  const [boxes, setBoxes] = useState(null);
+  const [imapAvail, setImapAvail] = useState(true);
+  const [active, setActive] = useState(null);
+  const [msgs, setMsgs] = useState(null);
+  const [reading, setReading] = useState(null);
+  const [composing, setComposing] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [fetching, setFetching] = useState(false);
+
+  const loadBoxes = () => API.mailboxes().then((d) => { setBoxes(d.mailboxes || []); setImapAvail(!!d.imap_available); setActive((a) => a || (d.mailboxes?.[0]?.id ?? null)); }).catch(() => setBoxes([]));
+  useEffect(() => { loadBoxes(); }, []);
+  const box = (boxes || []).find((b) => b.id === active) || null;
+  const loadMsgs = () => { if (!box || !box.imap_host) { setMsgs([]); return; } setMsgs(null); API.mailMessages(box.id).then((d) => setMsgs(d.messages || [])).catch((e) => { setMsgs([]); toast(e.message, 'error'); }); };
+  useEffect(() => { setReading(null); loadMsgs(); }, [active]);
+
+  const openMsg = async (m) => { try { const d = await API.mailRead(box.id, m.uid); setReading(d.message); setMsgs((s) => (s || []).map((x) => x.uid === m.uid ? { ...x, seen: true } : x)); } catch (e) { toast(e.message, 'error'); } };
+  const fetchBelege = async () => { setFetching(true); try { const d = await API.mailFetchBelege(box.id); toast(d.imported + (d.imported === 1 ? ' Beleg importiert' : ' Belege importiert'), 'success'); } catch (e) { toast(e.message, 'error'); } finally { setFetching(false); } };
+
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Mail']} right={
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {boxes && boxes.length > 0 && (
+            <select value={active || ''} onChange={(e) => setActive(Number(e.target.value))} style={{ height: 32, padding: '0 10px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 12.5, color: 'var(--fg)', fontFamily: 'inherit', cursor: 'pointer', maxWidth: 200 }}>
+              {boxes.map((b) => <option key={b.id} value={b.id}>{b.name}{b.is_belege ? ' · Belege' : ''}</option>)}
+            </select>
+          )}
+          {box && <Btn variant="glass" size="sm" icon={Ic.cog(13)} onClick={() => setEditing(box)}>Bearbeiten</Btn>}
+          {box && <Btn variant="primary" size="sm" icon={Ic.upload(13)} onClick={() => setComposing(true)}>Verfassen</Btn>}
+          <Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setEditing({})}>Postfach</Btn>
+        </div>
+      }/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        {!imapAvail && boxes && boxes.length > 0 && (
+          <div style={{ marginBottom: 16, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'color-mix(in oklab, #eab308 14%, var(--surface))', border: '1px solid color-mix(in oklab, #eab308 40%, var(--border))', fontSize: 12.5, color: 'var(--fg-2)' }}>
+            {Ic.bolt(13)} Postfach-Abruf (IMAP) benötigt die PHP-Erweiterung <b>php-imap</b> am Server. Senden (SMTP) und Belege-Import funktionieren erst danach.
+          </div>
+        )}
+        {boxes === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+          : boxes.length === 0 ? <EmptyHint icon={Ic.inbox(40)} title="Kein Postfach" desc="Verbinde ein E-Mail-Konto (IMAP/SMTP). Du kannst mehrere Postfächer anlegen und ein Belege-Postfach festlegen, dessen Anhänge automatisch als offene Belege gebucht werden."
+              actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({})}>Postfach hinzufügen</Btn>}/>
+          : (
+            <div style={{ display: 'grid', gridTemplateColumns: reading ? '320px 1fr' : '1fr', gap: 16, maxWidth: 1100 }}>
+              <div>
+                {box?.is_belege && box.belege_folder_id && (
+                  <div style={{ marginBottom: 12 }}><Btn variant="glass" size="sm" disabled={fetching} icon={fetching ? Ic.loader(13) : Ic.download(13)} onClick={fetchBelege}>Belege jetzt abrufen</Btn></div>
+                )}
+                {!box?.imap_host ? <div style={{ fontSize: 13, color: 'var(--fg-3)', padding: 16 }}>Für dieses Postfach ist kein IMAP-Server hinterlegt — Posteingang nicht verfügbar. (Senden geht trotzdem.)</div>
+                  : msgs === null ? <div style={{ color: 'var(--fg-3)', padding: 16 }}>{Ic.loader(20)}</div>
+                  : msgs.length === 0 ? <div style={{ fontSize: 13, color: 'var(--fg-3)', padding: 16 }}>Posteingang leer.</div>
+                  : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {msgs.map((m) => (
+                        <div key={m.uid} onClick={() => openMsg(m)} style={{ padding: '10px 12px', borderRadius: 'var(--r-sm)', background: reading?.uid === m.uid ? 'var(--surface-hi)' : 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            {!m.seen && <span style={{ width: 7, height: 7, borderRadius: 4, background: 'var(--accent)', flexShrink: 0 }}/>}
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: m.seen ? 400 : 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.subject}</span>
+                            {m.attachments > 0 && <span style={{ color: 'var(--fg-3)', flexShrink: 0 }}>{Ic.fileGen(12)}</span>}
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 3, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                            <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.from}</span>
+                            <span style={{ flexShrink: 0 }}>{m.date}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+              </div>
+              {reading && (
+                <Glass style={{ borderRadius: 'var(--r-lg)', padding: 20, alignSelf: 'flex-start' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{reading.subject || '(kein Betreff)'}</h2>
+                      <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 4 }}>{reading.from} · {reading.date}</div>
+                    </div>
+                    <IconBtn size={30} title="Antworten" onClick={() => setComposing({ to: reading.from.replace(/.*<(.+)>.*/, '$1'), subject: 'Re: ' + reading.subject })}>{Ic.share(15)}</IconBtn>
+                    <IconBtn size={30} onClick={() => setReading(null)}>{Ic.close(15)}</IconBtn>
+                  </div>
+                  {reading.attachments?.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                      {reading.attachments.map((a) => (
+                        <a key={a.part} href={API.mailAttachmentUrl(box.id, reading.uid, a.part)} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--accent)' }}>{Ic.download(12)} {a.name} <span style={{ color: 'var(--fg-4)' }}>({humanSize(a.size)})</span></a>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 13.5, color: 'var(--fg-2)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.5 }}>{reading.body || '(kein Textinhalt)'}</div>
+                </Glass>
+              )}
+            </div>
+          )}
+      </div>
+      {editing && <MailboxModal mailbox={editing} onSaved={() => { setEditing(null); loadBoxes(); }} onDeleted={() => { setEditing(null); setActive(null); loadBoxes(); }} onClose={() => setEditing(null)}/>}
+      {composing && box && <ComposeModal mailbox={box} initial={typeof composing === 'object' ? composing : null} onClose={() => setComposing(false)}/>}
+    </>
+  );
+}
+
+function MailboxModal({ mailbox, onSaved, onDeleted, onClose }) {
+  const isNew = !mailbox.id;
+  const [f, setF] = useState({
+    name: mailbox.name || '', email: mailbox.email || '',
+    imap_host: mailbox.imap_host || '', imap_port: mailbox.imap_port || 993, imap_user: mailbox.imap_user || '', imap_pass: '', imap_ssl: mailbox.imap_ssl != null ? !!mailbox.imap_ssl : true,
+    smtp_host: mailbox.smtp_host || '', smtp_port: mailbox.smtp_port || 465, smtp_user: mailbox.smtp_user || '', smtp_pass: '', smtp_secure: mailbox.smtp_secure || 'ssl',
+    from_name: mailbox.from_name || '', is_belege: !!mailbox.is_belege, belege_folder_id: mailbox.belege_folder_id || '',
+  });
+  const [folders, setFolders] = useState([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { API.allFolders().then((d) => setFolders(d.folders || [])).catch(() => {}); }, []);
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const fld = { height: 40, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13.5, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+  const lbl = { fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' };
+  const save = async () => {
+    if (!f.email.trim()) { toast('E-Mail erforderlich', 'error'); return; }
+    setBusy(true);
+    const body = { ...f, belege_folder_id: f.belege_folder_id || null };
+    if (!body.imap_pass) delete body.imap_pass;
+    if (!body.smtp_pass) delete body.smtp_pass;
+    try { if (isNew) await API.createMailbox(body); else await API.updateMailbox(mailbox.id, body); onSaved(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const del = async () => { if (!await confirmDialog({ title: 'Postfach löschen?', message: `„${f.name || f.email}" wird entfernt.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteMailbox(mailbox.id); onDeleted(); } catch (e) { toast(e.message, 'error'); } };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 520, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.inbox(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{isNew ? 'Postfach hinzufügen' : 'Postfach bearbeiten'}</h2>
+          {!isNew && <IconBtn size={32} title="Löschen" onClick={del}>{Ic.trash(16)}</IconBtn>}
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={lbl}>Anzeigename</span><input value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="z. B. Büro" style={fld}/></label>
+            <label style={{ flex: 1.4, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={lbl}>E-Mail</span><input value={f.email} onChange={(e) => set('email', e.target.value)} placeholder="name@firma.at" style={fld}/></label>
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--fg-3)', marginTop: 4 }}>Empfang (IMAP)</div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <label style={{ flex: 2, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={lbl}>IMAP-Server</span><input value={f.imap_host} onChange={(e) => set('imap_host', e.target.value)} placeholder="imap.firma.at" style={fld}/></label>
+            <label style={{ width: 80, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={lbl}>Port</span><input type="number" value={f.imap_port} onChange={(e) => set('imap_port', e.target.value)} style={fld}/></label>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={lbl}>Benutzer</span><input value={f.imap_user} onChange={(e) => set('imap_user', e.target.value)} placeholder="(meist E-Mail)" style={fld}/></label>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={lbl}>Passwort</span><input type="password" value={f.imap_pass} onChange={(e) => set('imap_pass', e.target.value)} placeholder={mailbox.has_imap_pass ? '•••••••• (unverändert)' : ''} style={fld}/></label>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}><input type="checkbox" checked={f.imap_ssl} onChange={(e) => set('imap_ssl', e.target.checked)} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }}/> SSL/TLS (Port 993)</label>
+
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--fg-3)', marginTop: 4 }}>Versand (SMTP)</div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <label style={{ flex: 2, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={lbl}>SMTP-Server</span><input value={f.smtp_host} onChange={(e) => set('smtp_host', e.target.value)} placeholder="smtp.firma.at" style={fld}/></label>
+            <label style={{ width: 80, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={lbl}>Port</span><input type="number" value={f.smtp_port} onChange={(e) => set('smtp_port', e.target.value)} style={fld}/></label>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={lbl}>Passwort</span><input type="password" value={f.smtp_pass} onChange={(e) => set('smtp_pass', e.target.value)} placeholder={mailbox.has_smtp_pass ? '•••••••• (unverändert)' : ''} style={fld}/></label>
+            <label style={{ width: 110, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={lbl}>Sicherheit</span><select value={f.smtp_secure} onChange={(e) => set('smtp_secure', e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value="ssl">SSL</option><option value="tls">STARTTLS</option><option value="none">Keine</option></select></label>
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, cursor: 'pointer' }}><input type="checkbox" checked={f.is_belege} onChange={(e) => set('is_belege', e.target.checked)} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }}/> Als <b>Belege-Postfach</b> verwenden</label>
+            {f.is_belege && (
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 10 }}><span style={lbl}>Belege-Ordner (Anhänge landen hier + werden als offener Beleg gebucht)</span>
+                <select value={f.belege_folder_id} onChange={(e) => set('belege_folder_id', e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value="">— Ordner wählen —</option>{folders.map((fo) => <option key={fo.id} value={fo.id}>{fo.name}</option>)}</select>
+              </label>
+            )}
+          </div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={save} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+function ComposeModal({ mailbox, initial, onClose }) {
+  const [to, setTo] = useState(initial?.to || '');
+  const [cc, setCc] = useState('');
+  const [subject, setSubject] = useState(initial?.subject || '');
+  const [body, setBody] = useState('');
+  const [busy, setBusy] = useState(false);
+  const fld = { padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+  const send = async () => {
+    if (!to.trim()) { toast('Empfänger fehlt', 'error'); return; }
+    setBusy(true);
+    try { await API.mailSend(mailbox.id, { to, cc, subject, body }); toast('Gesendet', 'success'); onClose(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 560, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Neue E-Mail · {mailbox.email}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+          <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="An (Komma-getrennt)" style={fld}/>
+          <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Cc (optional)" style={fld}/>
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Betreff" style={fld}/>
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={8} placeholder="Nachricht…" style={{ ...fld, resize: 'vertical' }}/>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={send} icon={busy ? Ic.loader(15) : Ic.upload(15)}>Senden</Btn>
         </div>
       </Glass>
     </div>
