@@ -381,6 +381,16 @@ export const API = {
   docSignUpload:   (id, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/documents/' + id + '/sign-upload', { method: 'POST', body: fd }); },
   markDocSigned:   (id) => request('/api/documents/' + id + '/mark-signed', { method: 'POST', body: {} }),
   unmarkDocSigned: (id) => request('/api/documents/' + id + '/unmark-signed', { method: 'POST', body: {} }),
+  // ───── Forms ─────
+  forms:          () => request('/api/forms'),
+  createForm:     (body) => request('/api/forms', { method: 'POST', body }),
+  getForm:        (id) => request('/api/forms/' + id),
+  updateForm:     (id, body) => request('/api/forms/' + id, { method: 'PATCH', body }),
+  deleteForm:     (id) => request('/api/forms/' + id, { method: 'DELETE' }),
+  formSubmissions:(id) => request('/api/forms/' + id + '/submissions'),
+  formFileUrl:    (fid, download) => url('/api/forms/files/' + fid) + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
+  publicForm:     (token) => request('/api/form/' + token),
+  submitForm:     (token, formData) => request('/api/form/' + token, { method: 'POST', body: formData }),
   expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
 
   // Buchhaltung · Auswertung

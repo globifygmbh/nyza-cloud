@@ -3199,6 +3199,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-signatures' && (
           <SignaturesApp onBack={() => setNav({ name: 'apps' })} basePath={basePath}/>
         )}
+        {nav.name === 'app-forms' && (
+          <FormsApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -3958,6 +3961,7 @@ function AppsView({ onOpenApp }) {
     { id: 'accounting', label: 'Buchhaltung', desc: 'Rechnungen & Angebote', icon: Ic.archive(26), grad: 'linear-gradient(135deg, oklch(0.74 0.17 155), oklch(0.68 0.15 175))' },
     { id: 'calendar',   label: 'Kalender',     desc: 'Termine & Events',       icon: Ic.clock(26),   grad: 'linear-gradient(135deg, oklch(0.72 0.2 350), oklch(0.66 0.2 320))' },
     { id: 'signatures', label: 'Signaturen',   desc: 'E-Signatur per Link',     icon: Ic.check(26),   grad: 'linear-gradient(135deg, oklch(0.7 0.17 300), oklch(0.64 0.16 265))' },
+    { id: 'forms',      label: 'Formulare',    desc: 'Intake-Formulare',        icon: Ic.list(26),    grad: 'linear-gradient(135deg, oklch(0.72 0.16 210), oklch(0.66 0.17 185))' },
   ];
   const soon = [];
   const Tile = ({ a, disabled }) => (
@@ -7211,6 +7215,162 @@ function SignaturesApp({ onBack }) {
       </div>
       {creating && <SignatureCreateModal onCreated={load} onClose={() => setCreating(false)}/>}
     </>
+  );
+}
+
+// ───── Forms app ─────────────────────────────────────────────────────────────
+const formLink = (token) => location.origin + (BASE || '') + '/f/' + token;
+const FIELD_TYPES = [
+  ['text', 'Text'], ['textarea', 'Textfeld (mehrzeilig)'], ['email', 'E-Mail'], ['number', 'Nummer'],
+  ['name', 'Name'], ['date', 'Datum'], ['select', 'Auswahl'], ['checkbox', 'Checkbox'], ['file', 'Datei-Upload'],
+];
+const newFieldKey = () => 'f' + Math.random().toString(36).slice(2, 8);
+
+function FormsApp({ onBack }) {
+  const [items, setItems] = useState(null);
+  const [editing, setEditing] = useState(null); // form object or {} for new
+  const [subsFor, setSubsFor] = useState(null);
+  const load = () => API.forms().then((d) => setItems(d.forms || [])).catch(() => setItems([]));
+  useEffect(() => { load(); }, []);
+  const del = async (f) => { if (!await confirmDialog({ title: 'Formular löschen?', message: `„${f.title}" inkl. Einreichungen wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteForm(f.id); load(); } catch (e) { toast(e.message, 'error'); } };
+  const toggleActive = async (f) => { try { await API.updateForm(f.id, { active: f.active ? 0 : 1 }); load(); } catch (e) { toast(e.message, 'error'); } };
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Formulare']} right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ title: '', description: '', fields: [], active: 1 })}>Neues Formular</Btn>}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        {items === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+          : items.length === 0 ? <EmptyHint icon={Ic.list(40)} title="Keine Formulare" desc="Erstelle ein öffentliches Formular (Kontakt, Onboarding …) und teile den Link. Antworten inkl. Anhänge landen hier."
+              actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({ title: '', description: '', fields: [], active: 1 })}>Neues Formular</Btn>}/>
+          : (
+            <div style={{ display: 'grid', gap: 8, maxWidth: 820 }}>
+              {items.map((f) => (
+                <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                  <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setSubsFor(f)}>
+                    <div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.title}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{f.submissions} Einreichungen · {f.fields.length} Felder</div>
+                  </div>
+                  <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: f.active ? 'color-mix(in oklab, #22c55e 18%, transparent)' : 'var(--surface-hi)', color: f.active ? '#22c55e' : 'var(--fg-3)', textTransform: 'uppercase', flexShrink: 0, cursor: 'pointer' }} onClick={() => toggleActive(f)}>{f.active ? 'Aktiv' : 'Inaktiv'}</span>
+                  <IconBtn size={30} title="Link kopieren" onClick={() => { navigator.clipboard?.writeText(formLink(f.token)); toast('Link kopiert', 'success'); }}>{Ic.copy(15)}</IconBtn>
+                  <IconBtn size={30} title="Einreichungen" onClick={() => setSubsFor(f)}>{Ic.inbox(15)}</IconBtn>
+                  <IconBtn size={30} title="Bearbeiten" onClick={() => setEditing(f)}>{Ic.fileGen(15)}</IconBtn>
+                  <IconBtn size={30} title="Löschen" onClick={() => del(f)}>{Ic.trash(14)}</IconBtn>
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
+      {editing && <FormBuilderModal form={editing} onSaved={() => { setEditing(null); load(); }} onClose={() => setEditing(null)}/>}
+      {subsFor && <FormSubmissionsModal form={subsFor} onClose={() => setSubsFor(null)}/>}
+    </>
+  );
+}
+
+function FormBuilderModal({ form, onSaved, onClose }) {
+  const [title, setTitle] = useState(form.title || '');
+  const [description, setDescription] = useState(form.description || '');
+  const [active, setActive] = useState(form.active != null ? !!form.active : true);
+  const [fields, setFields] = useState(() => (form.fields || []).map((f) => ({ ...f, key: f.key || newFieldKey() })));
+  const [busy, setBusy] = useState(false);
+  const fld = { height: 40, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13.5, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+  const addField = () => setFields((s) => [...s, { key: newFieldKey(), type: 'text', label: 'Neues Feld', required: false, placeholder: '', options: [] }]);
+  const upd = (i, patch) => setFields((s) => s.map((f, idx) => idx === i ? { ...f, ...patch } : f));
+  const move = (i, dir) => setFields((s) => { const a = [...s]; const j = i + dir; if (j < 0 || j >= a.length) return s; [a[i], a[j]] = [a[j], a[i]]; return a; });
+  const remove = (i) => setFields((s) => s.filter((_, idx) => idx !== i));
+  const save = async () => {
+    if (!title.trim()) { toast('Titel erforderlich', 'error'); return; }
+    setBusy(true);
+    const payload = { title: title.trim(), description: description.trim() || null, active: active ? 1 : 0, fields };
+    try { if (form.id) await API.updateForm(form.id, payload); else await API.createForm(payload); onSaved(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 600, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.list(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{form.id ? 'Formular bearbeiten' : 'Neues Formular'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Titel</span><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="z. B. Neukunden-Onboarding" style={{ ...fld, height: 42 }}/></label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Beschreibung</span><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="Optionaler Einleitungstext" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/></label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13.5 }}><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)' }}/> Aktiv (öffentlich erreichbar)</label>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}><span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>Felder</span><Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={addField}>Feld</Btn></div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {fields.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Noch keine Felder — füge welche hinzu.</div>}
+              {fields.map((f, i) => (
+                <div key={f.key} style={{ borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', padding: 12 }}>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <input value={f.label} onChange={(e) => upd(i, { label: e.target.value })} placeholder="Feldbezeichnung" style={{ ...fld, flex: 1 }}/>
+                    <select value={f.type} onChange={(e) => upd(i, { type: e.target.value })} style={{ ...fld, width: 160, cursor: 'pointer' }}>{FIELD_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+                  </div>
+                  {f.type === 'select' && (
+                    <input value={(f.options || []).join(', ')} onChange={(e) => upd(i, { options: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) })} placeholder="Optionen, durch Komma getrennt" style={{ ...fld, marginBottom: 8 }}/>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, cursor: 'pointer', color: 'var(--fg-2)' }}><input type="checkbox" checked={!!f.required} onChange={(e) => upd(i, { required: e.target.checked })} style={{ width: 15, height: 15, accentColor: 'var(--accent)' }}/> Pflichtfeld</label>
+                    <span style={{ flex: 1 }}/>
+                    <IconBtn size={26} title="Hoch" onClick={() => move(i, -1)}>{Ic.chevronU(14)}</IconBtn>
+                    <IconBtn size={26} title="Runter" onClick={() => move(i, 1)}>{Ic.chevronD(14)}</IconBtn>
+                    <IconBtn size={26} title="Entfernen" onClick={() => remove(i)}>{Ic.trash(13)}</IconBtn>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={save} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+function FormSubmissionsModal({ form, onClose }) {
+  const [subs, setSubs] = useState(null);
+  useEffect(() => { API.formSubmissions(form.id).then((d) => setSubs(d.submissions || [])).catch(() => setSubs([])); }, [form.id]);
+  const labelFor = (k) => (form.fields.find((f) => f.key === k)?.label) || k;
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 640, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Einreichungen · {form.title}</h2>
+          <Btn variant="glass" size="sm" icon={Ic.copy(13)} onClick={() => { navigator.clipboard?.writeText(formLink(form.token)); toast('Link kopiert', 'success'); }}>Link</Btn>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: 18, overflowY: 'auto' }}>
+          {subs === null ? <div style={{ color: 'var(--fg-3)', padding: 16 }}>{Ic.loader(20)}</div>
+            : subs.length === 0 ? <div style={{ fontSize: 13, color: 'var(--fg-3)', textAlign: 'center', padding: 24 }}>Noch keine Einreichungen.</div>
+            : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {subs.map((s) => (
+                  <div key={s.id} style={{ borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '12px 14px' }}>
+                    <div style={{ fontSize: 11, color: 'var(--fg-4)', marginBottom: 8 }}>{new Date(s.created_at.replace(' ', 'T')).toLocaleString('de-DE')}</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                      {Object.entries(s.data).map(([k, v]) => (
+                        <div key={k} style={{ display: 'flex', gap: 10, fontSize: 13 }}>
+                          <span style={{ width: 150, flexShrink: 0, color: 'var(--fg-3)' }}>{labelFor(k)}</span>
+                          <span style={{ flex: 1, color: 'var(--fg)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{String(v) || '—'}</span>
+                        </div>
+                      ))}
+                      {s.files.map((f) => (
+                        <div key={f.id} style={{ display: 'flex', gap: 10, fontSize: 13, alignItems: 'center' }}>
+                          <span style={{ width: 150, flexShrink: 0, color: 'var(--fg-3)' }}>{labelFor(f.field_key)}</span>
+                          <a href={API.formFileUrl(f.id, false)} target="_blank" rel="noreferrer" style={{ flex: 1, color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>{Ic.download(13)} {f.name} <span style={{ color: 'var(--fg-4)' }}>({humanSize(f.size)})</span></a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+        </div>
+      </Glass>
+    </div>
   );
 }
 

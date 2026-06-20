@@ -25,6 +25,7 @@ use Nyza\Routes\DocumentRoutes;
 use Nyza\Routes\ExpenseRoutes;
 use Nyza\Routes\FileRoutes;
 use Nyza\Routes\FolderRoutes;
+use Nyza\Routes\FormRoutes;
 use Nyza\Routes\ImportRoutes;
 use Nyza\Routes\InternalShareRoutes;
 use Nyza\Routes\LedgerRoutes;
@@ -239,6 +240,7 @@ SearchRoutes::mount($app);
 TagRoutes::mount($app);
 OcrRoutes::mount($app);
 SignatureRoutes::mount($app);
+FormRoutes::mount($app);
 PushRoutes::mount($app);
 WebDavRoutes::mount($app);
 

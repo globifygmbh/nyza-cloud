@@ -690,3 +690,77 @@ export function PublicSignPage({ token }) {
     </div>
   );
 }
+
+// ───── Public form page (/f/:token) ─────────────────────────────────────────
+export function PublicFormPage({ token }) {
+  const [form, setForm] = useState(undefined);
+  const [vals, setVals] = useState({});
+  const [files, setFiles] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  useEffect(() => { applyAccent('violet'); }, []);
+  useEffect(() => { API.publicForm(token).then((d) => setForm(d.form)).catch(() => setForm(null)); }, [token]);
+
+  if (form === undefined) return <CenteredLoader/>;
+  if (form === null) return <CenteredMessage title="Nicht verfügbar" desc="Dieses Formular existiert nicht oder ist deaktiviert."/>;
+  if (done) return <CenteredMessage title="Danke! ✓" desc="Deine Antwort wurde übermittelt. Du kannst dieses Fenster schließen."/>;
+
+  const set = (k, v) => setVals((s) => ({ ...s, [k]: v }));
+  const submit = async () => {
+    for (const f of form.fields) {
+      if (!f.required) continue;
+      if (f.type === 'file') { if (!files[f.key]) { toast('Bitte Datei wählen: ' + f.label, 'error'); return; } }
+      else if (!String(vals[f.key] ?? '').trim() && !(f.type === 'checkbox' && vals[f.key])) { toast('Bitte ausfüllen: ' + f.label, 'error'); return; }
+    }
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      for (const f of form.fields) {
+        if (f.type === 'file') { if (files[f.key]) fd.append('field_' + f.key, files[f.key]); }
+        else if (f.type === 'checkbox') fd.append('field_' + f.key, vals[f.key] ? 'Ja' : 'Nein');
+        else fd.append('field_' + f.key, vals[f.key] ?? '');
+      }
+      await API.submitForm(token, fd);
+      setDone(true);
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+
+  const fld = { height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+  const renderField = (f) => {
+    const common = { value: vals[f.key] ?? '', onChange: (e) => set(f.key, e.target.value), placeholder: f.placeholder || '', style: fld };
+    switch (f.type) {
+      case 'textarea': return <textarea {...common} rows={4} style={{ ...fld, height: 'auto', padding: '12px 14px', resize: 'vertical' }}/>;
+      case 'email': return <input type="email" {...common}/>;
+      case 'number': return <input type="number" {...common}/>;
+      case 'date': return <input type="date" {...common}/>;
+      case 'select': return <select {...common} style={{ ...fld, cursor: 'pointer' }}><option value="">— wählen —</option>{(f.options || []).map((o, i) => <option key={i} value={o}>{o}</option>)}</select>;
+      case 'checkbox': return <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, cursor: 'pointer' }}><input type="checkbox" checked={!!vals[f.key]} onChange={(e) => set(f.key, e.target.checked)} style={{ width: 18, height: 18, accentColor: 'var(--accent)' }}/> Ja</label>;
+      case 'file': return <input type="file" onChange={(e) => setFiles((s) => ({ ...s, [f.key]: e.target.files?.[0] || null }))} style={{ ...fld, height: 'auto', padding: 10 }}/>;
+      default: return <input type="text" {...common}/>;
+    }
+  };
+
+  return (
+    <div style={{ minHeight: '100%', display: 'flex', justifyContent: 'center', padding: '32px 16px', position: 'relative', zIndex: 1 }}>
+      <div style={{ width: '100%', maxWidth: 600 }}>
+        <div style={{ marginBottom: 18 }}><NyzaWordmark size={16}/></div>
+        <Glass style={{ borderRadius: 'var(--r-xl)', padding: 28 }}>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, letterSpacing: -0.6, margin: 0 }}>{form.title}</h1>
+          {form.description && <p style={{ fontSize: 14, color: 'var(--fg-2)', marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{form.description}</p>}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 22 }}>
+            {form.fields.map((f) => (
+              <label key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {f.type !== 'checkbox' && <span style={{ fontSize: 13, fontWeight: 540, color: 'var(--fg-2)' }}>{f.label}{f.required ? ' *' : ''}</span>}
+                {renderField(f)}
+                {f.type === 'checkbox' && f.required && <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>* erforderlich</span>}
+              </label>
+            ))}
+            {form.fields.length === 0 && <div style={{ fontSize: 13, color: 'var(--fg-3)' }}>Dieses Formular hat noch keine Felder.</div>}
+            <Btn variant="primary" size="lg" full disabled={busy} onClick={submit} icon={busy ? Ic.loader(16) : Ic.check(16)}>Absenden</Btn>
+          </div>
+        </Glass>
+        <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--fg-4)', marginTop: 14 }}>Erstellt mit Nyza Cloud</div>
+      </div>
+    </div>
+  );
+}
