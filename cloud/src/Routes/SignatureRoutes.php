@@ -57,9 +57,15 @@ final class SignatureRoutes
         $b = (array)$req->getParsedBody();
         $title = trim((string)($b['title'] ?? ''));
         $fileId = (int)($b['file_id'] ?? 0);
+        $docId = (int)($b['document_id'] ?? 0);
         $hash = null;
 
-        if ($fileId > 0) {
+        if ($docId > 0) {
+            $d = DocumentRoutes::docForSignature($cid, $docId);
+            if (!$d) return Json::err($res, 'Dokument nicht gefunden', 404);
+            if ($title === '') $title = ($d['type'] === 'offer' ? 'Angebot ' : 'Rechnung ') . $d['number'];
+            $fileId = 0;
+        } elseif ($fileId > 0) {
             $f = self::ownedFile($uid, $fileId);
             if (!$f) return Json::err($res, 'Datei nicht gefunden', 404);
             if ($title === '') $title = (string)$f['name'];
@@ -70,10 +76,10 @@ final class SignatureRoutes
 
         $token = bin2hex(random_bytes(20));
         Database::pdo()->prepare(
-            'INSERT INTO signature_requests (user_id, company_id, file_id, title, signer_name, signer_email, message, token, source_hash) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO signature_requests (user_id, company_id, file_id, document_id, title, signer_name, signer_email, message, token, source_hash) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         )->execute([
-            $uid, $cid, $fileId > 0 ? $fileId : null, mb_substr($title, 0, 255),
+            $uid, $cid, $fileId > 0 ? $fileId : null, $docId > 0 ? $docId : null, mb_substr($title, 0, 255),
             self::str($b['signer_name'] ?? null, 255), self::str($b['signer_email'] ?? null, 255),
             self::str($b['message'] ?? null, 2000), $token, $hash,
         ]);
@@ -95,22 +101,34 @@ final class SignatureRoutes
     {
         $r = self::byToken((string)$args['token']);
         if (!$r) return Json::err($res, 'Nicht gefunden', 404);
+        $isDoc = $r['document_id'] !== null;
         return Json::ok($res, ['request' => [
             'title'       => $r['title'],
             'message'     => $r['message'],
             'signer_name' => $r['signer_name'],
             'status'      => $r['status'],
             'signed_at'   => $r['signed_at'],
-            'has_file'    => $r['file_id'] !== null,
-            'file_name'   => $r['file_name'] ?? null,
-            'file_mime'   => $r['file_mime'] ?? null,
+            'has_file'    => $isDoc || $r['file_id'] !== null,
+            'file_name'   => $isDoc ? ($r['title'] . '.pdf') : ($r['file_name'] ?? null),
+            'file_mime'   => $isDoc ? 'application/pdf' : ($r['file_mime'] ?? null),
         ]]);
     }
 
     public static function publicFile(Request $req, Response $res, array $args): Response
     {
         $r = self::byToken((string)$args['token']);
-        if (!$r || $r['file_id'] === null) return Json::err($res, 'Nicht gefunden', 404);
+        if (!$r) return Json::err($res, 'Nicht gefunden', 404);
+        // Invoice/offer: render the live document PDF.
+        if ($r['document_id'] !== null) {
+            $d = DocumentRoutes::docForSignature((int)$r['company_id'], (int)$r['document_id']);
+            if (!$d) return Json::err($res, 'Nicht gefunden', 404);
+            $bytes = DocumentRoutes::pdfBytesFor((int)$r['user_id'], (int)$r['company_id'], $d);
+            $res->getBody()->write($bytes);
+            return $res->withHeader('Content-Type', 'application/pdf')
+                ->withHeader('Content-Disposition', 'inline; filename="' . addslashes((string)$d['number']) . '.pdf"')
+                ->withStatus(200);
+        }
+        if ($r['file_id'] === null) return Json::err($res, 'Nicht gefunden', 404);
         $abs = Storage::abs($r['storage_path']);
         if (!is_file($abs)) return Json::err($res, 'Nicht gefunden', 404);
         $mime = $r['file_mime'] ?: 'application/octet-stream';
@@ -136,7 +154,19 @@ final class SignatureRoutes
 
         $ip = self::clientIp($req);
         $when = date('Y-m-d H:i:s');
-        $fileId = self::buildCertificate($r, $name, $sig, $ip, $when);
+
+        if ($r['document_id'] !== null) {
+            // Embed the signature into the invoice/offer PDF and replace the
+            // document's archived PDF + mark it signed.
+            $d = DocumentRoutes::docForSignature((int)$r['company_id'], (int)$r['document_id']);
+            if (!$d) return Json::err($res, 'Dokument nicht gefunden', 404);
+            $bytes = DocumentRoutes::pdfBytesFor((int)$r['user_id'], (int)$r['company_id'], $d, [
+                'image' => $sig, 'name' => $name, 'date' => date('d.m.Y H:i', strtotime($when)) . ' Uhr', 'ip' => $ip,
+            ]);
+            $fileId = DocumentRoutes::applySignedPdf((int)$r['user_id'], (int)$r['company_id'], $d, $bytes);
+        } else {
+            $fileId = self::buildCertificate($r, $name, $sig, $ip, $when);
+        }
 
         Database::pdo()->prepare(
             'UPDATE signature_requests SET status = ?, signed_name = ?, signed_at = ?, signer_ip = ?, signed_file_id = ? WHERE id = ?'

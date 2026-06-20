@@ -3352,7 +3352,6 @@ function fileMenuItems(file, o) {
     o.onShareInternal && { label: 'Intern teilen (Mitglieder)', icon: Ic.users(15), onClick: () => o.onShareInternal(file) },
     o.onMove && { label: 'Verschieben', icon: Ic.folder(15), onClick: () => o.onMove(file) },
     o.onTags && { label: 'Tags…', icon: Ic.bolt(15), onClick: () => o.onTags(file) },
-    o.onSign && { label: 'Zur Unterschrift…', icon: Ic.check(15), onClick: () => o.onSign(file) },
     o.onVersions && { label: 'Versionsverlauf', icon: Ic.clock(15), onClick: () => o.onVersions(file) },
     { separator: true },
     o.onDelete && { label: 'In den Papierkorb', icon: Ic.trash(15), danger: true, onClick: () => o.onDelete(file) },
@@ -3639,7 +3638,6 @@ function FolderView({
   const { tags, idsFor, createTag, toggle: toggleTag } = useEntityTags('file', refreshTick);
   const [tagFilter, setTagFilter] = useState(null);   // tagId | null
   const [tagTarget, setTagTarget] = useState(null);   // file being tagged
-  const [signTarget, setSignTarget] = useState(null); // file to send for signature
 
   const load = useCallback(() => {
     setLoading(true);
@@ -3677,7 +3675,7 @@ function FolderView({
       multi, count: selected.size,
       onOpen: (x) => onOpenFile(x, files), onDownload: onDownloadFile, onUnzip,
       onToggleStar, onShare: onShareFile, onShareInternal: onShareInternalFile, onMove: (x) => onMoveFiles([x.id]),
-      onVersions, onDelete: onDeleteFile, onLabel: onLabelFile, onTags: (x) => setTagTarget(x), onSign: (x) => setSignTarget(x),
+      onVersions, onDelete: onDeleteFile, onLabel: onLabelFile, onTags: (x) => setTagTarget(x),
       onZip: doZip, onMoveMany: () => onMoveFiles([...selected]), onDeleteMany: doBulkDelete,
       onPin: onPinFile,
     }));
@@ -3769,9 +3767,6 @@ function FolderView({
           onToggle={(t, on) => toggleTag(tagTarget.id, t, on)}
           onCreate={createTag}
           onClose={() => setTagTarget(null)}/>
-      )}
-      {signTarget && (
-        <SignatureCreateModal fileId={signTarget.id} fileName={signTarget.name} onClose={() => setSignTarget(null)}/>
       )}
     </>
   );
@@ -5408,6 +5403,9 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const docTags = useEntityTags('document', activeCompany);
   const expTags = useEntityTags('expense', activeCompany);
   const [tagTarget, setTagTarget] = useState(null); // { type, id, name }
+  const [signDoc, setSignDoc] = useState(null);     // document to send for signature
+  const signUpRef = useRef(null);
+  const signUpDocId = useRef(null);
 
   const load = useCallback(() => {
     if (tab === 'products') { API.products().then((d) => setProducts(d.products || [])).catch(() => setProducts([])); return; }
@@ -5437,6 +5435,10 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const lastReminderPdf = async (doc) => { try { const d = await API.documentReminders(doc.id); const last = (d.reminders || []).slice(-1)[0]; if (last) window.open(API.reminderPdfUrl(last.id, false), '_blank'); } catch (e) { toast(e.message, 'error'); } };
   const removeLastReminder = async (doc) => { try { const d = await API.documentReminders(doc.id); const last = (d.reminders || []).slice(-1)[0]; if (last) { await API.deleteReminder(last.id); toast('Mahnung entfernt', 'success'); load(); } } catch (e) { toast(e.message, 'error'); } };
   const archiveDoc = async (doc) => { try { await API.archiveDocument(doc.id); toast('PDF im DMS archiviert', 'success'); load(); } catch (e) { toast(e.message, 'error'); } };
+  const markSigned = async (doc) => { try { await API.markDocSigned(doc.id); toast('Als unterschrieben markiert', 'success'); load(); } catch (e) { toast(e.message, 'error'); } };
+  const unmarkSigned = async (doc) => { try { await API.unmarkDocSigned(doc.id); toast('Zurückgesetzt', 'success'); load(); } catch (e) { toast(e.message, 'error'); } };
+  const uploadSignedFor = (doc) => { signUpDocId.current = doc.id; signUpRef.current && signUpRef.current.click(); };
+  const onSignUpload = async (e) => { const f = e.target.files && e.target.files[0]; const id = signUpDocId.current; e.target.value = ''; if (!f || !id) return; try { await API.docSignUpload(id, f); toast('Signiertes PDF angehängt', 'success'); load(); } catch (err) { toast(err.message, 'error'); } };
   const delProduct = async (p) => { if (!await confirmDialog({ title: 'Produkt löschen?', message: `„${p.name}" wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteProduct(p.id); API.products().then((d) => setProducts(d.products || [])); } catch (e) { toast(e.message, 'error'); } };
   const saveProduct = async (data) => { try { if (data.id) await API.updateProduct(data.id, data); else await API.newProduct(data); setProdEditing(null); API.products().then((d) => setProducts(d.products || [])); } catch (e) { toast(e.message, 'error'); } };
   const saveSub = async (data) => { try { if (data.id) await API.updateSubscription(data.id, data); else await API.newSubscription(data); setSubEditing(null); load(); } catch (e) { toast(e.message, 'error'); } };
@@ -5588,6 +5590,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                     {docTags.idsFor(d.id).length > 0 && <div style={{ marginTop: 5 }}><TagChips ids={docTags.idsFor(d.id)} tags={docTags.tags} small/></div>}
                   </div>
                   <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + st.color + ' 18%, transparent)', color: st.color, textTransform: 'uppercase', flexShrink: 0 }}>{st.label}</span>
+                  {d.signed_at && <span title="Unterschrieben" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, #7c3aed 20%, transparent)', color: '#7c3aed', textTransform: 'uppercase', flexShrink: 0 }}>✓ Signiert</span>}
                   {d.reminder_stage > 0 && <span title="Mahnstufe" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, #ef4444 18%, transparent)', color: '#ef4444', flexShrink: 0 }}>{d.reminder_stage}. MAHN.</span>}
                   <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', width: 110, textAlign: 'right', flexShrink: 0 }}>{fmtEUR(d.gross)}</div>
                   {d.archived_file_id ? <span title="Im DMS archiviert" style={{ color: '#22c55e', display: 'inline-flex', flexShrink: 0 }}>{Ic.archive(15)}</span> : null}
@@ -5598,6 +5601,14 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                     { label: 'PDF herunterladen', icon: Ic.download(15), onClick: () => { window.location.href = API.docPdfUrl(d.id, true); } },
                     { label: d.archived_file_id ? 'Erneut im DMS archivieren' : 'Im DMS archivieren', icon: Ic.archive(15), onClick: () => archiveDoc(d) },
                     { label: 'Tags…', icon: Ic.bolt(15), onClick: () => setTagTarget({ type: 'document', id: d.id, name: d.number }) },
+                    { separator: true },
+                    { label: 'Zur Unterschrift senden', icon: Ic.check(15), onClick: () => setSignDoc(d) },
+                    { label: 'Signiertes PDF hochladen', icon: Ic.upload(15), onClick: () => uploadSignedFor(d) },
+                    ...(d.signed_file_id ? [{ label: 'Signiertes PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.fileRawUrl(d.signed_file_id) + '?token=' + (getToken() || ''), '_blank') }] : []),
+                    d.signed_at
+                      ? { label: 'Signatur zurücksetzen', icon: Ic.rotate(15), onClick: () => unmarkSigned(d) }
+                      : { label: 'Als unterschrieben markieren', icon: Ic.check(15), onClick: () => markSigned(d) },
+                    { separator: true },
                     { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => openDoc(d.id) },
                     ...(d.type === 'invoice' ? [{ label: d.paid_at ? 'Als offen markieren' : 'Als bezahlt markieren', icon: Ic.check(15), onClick: () => togglePaid(d) }] : []),
                     ...(d.type === 'invoice' && !d.paid_at && (d.reminder_stage || 0) < 3 ? [{ label: (d.reminder_stage || 0) + 1 + '. Mahnung erstellen', icon: Ic.clock(15), onClick: () => createReminder(d) }] : []),
@@ -5626,6 +5637,8 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
           onToggle={(t, on) => h.toggle(tagTarget.id, t, on)} onCreate={h.createTag}
           onClose={() => setTagTarget(null)}/>;
       })()}
+      {signDoc && <SignatureCreateModal documentId={signDoc.id} documentLabel={(signDoc.type === 'offer' ? 'Angebot ' : 'Rechnung ') + signDoc.number} onClose={() => setSignDoc(null)}/>}
+      <input ref={signUpRef} type="file" accept="application/pdf,image/*" onChange={onSignUpload} style={{ display: 'none' }}/>
     </>
   );
 }
@@ -7074,21 +7087,36 @@ const SIG_STATUS = {
   declined:{ label: 'Abgelehnt', color: '#ef4444' },
 };
 
-function SignatureCreateModal({ fileId = null, fileName = '', onCreated, onClose }) {
-  const [title, setTitle] = useState(fileName ? fileName.replace(/\.[A-Za-z0-9]+$/, '') : '');
-  const [chosen, setChosen] = useState(fileId ? { id: fileId, name: fileName } : null);
+// Create a signature request for an invoice/offer. When `documentId` is given
+// (e.g. from the Buchhaltung context menu) the picker is skipped; otherwise the
+// user chooses company → document type → document.
+function SignatureCreateModal({ documentId = null, documentLabel = '', onCreated, onClose }) {
+  const preBound = !!documentId;
+  const [companies, setCompanies] = useState([]);
+  const [company, setCompanyId] = useState(() => getCompany() || '');
+  const [docType, setDocType] = useState('invoice');
+  const [docs, setDocs] = useState(preBound ? null : []);
+  const [chosen, setChosen] = useState(preBound ? { id: documentId, label: documentLabel } : null);
   const [signerName, setSignerName] = useState('');
   const [signerEmail, setSignerEmail] = useState('');
   const [message, setMessage] = useState('');
-  const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState(null);
   const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+
+  useEffect(() => { if (!preBound) API.companies().then((d) => { setCompanies(d.companies || []); if (!getCompany() && d.active) { setCompany(String(d.active)); setCompanyId(String(d.active)); } }).catch(() => {}); }, []);
+  useEffect(() => {
+    if (preBound) return;
+    if (company) setCompany(company);
+    setDocs(null); setChosen(null);
+    API.documents(docType).then((d) => setDocs(d.documents || [])).catch(() => setDocs([]));
+  }, [company, docType]);
+
   const create = async () => {
-    if (!title.trim() && !chosen) { toast('Titel oder Datei wählen', 'error'); return; }
+    if (!chosen) { toast('Bitte Dokument wählen', 'error'); return; }
     setBusy(true);
     try {
-      const d = await API.createSignature({ file_id: chosen?.id || null, title: title.trim(), signer_name: signerName.trim() || null, signer_email: signerEmail.trim() || null, message: message.trim() || null });
+      const d = await API.createSignature({ document_id: chosen.id, signer_name: signerName.trim() || null, signer_email: signerEmail.trim() || null, message: message.trim() || null });
       setCreated(d.request); onCreated && onCreated();
     } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
   };
@@ -7103,30 +7131,44 @@ function SignatureCreateModal({ fileId = null, fileName = '', onCreated, onClose
         {created ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ fontSize: 13, color: 'var(--fg-2)' }}>Link erstellt — teile ihn mit dem Unterzeichner:</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <code style={{ flex: 1, fontSize: 12, wordBreak: 'break-all', background: 'var(--surface-hi)', padding: '10px 12px', borderRadius: 8 }}>{signLink(created.token)}</code>
-            </div>
+            <code style={{ fontSize: 12, wordBreak: 'break-all', background: 'var(--surface-hi)', padding: '10px 12px', borderRadius: 8 }}>{signLink(created.token)}</code>
             <Btn variant="primary" full icon={Ic.copy(14)} onClick={() => { navigator.clipboard?.writeText(signLink(created.token)); toast('Link kopiert', 'success'); }}>Link kopieren</Btn>
             <Btn variant="ghost" full onClick={onClose}>Fertig</Btn>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Titel</span><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="z. B. Angebot 2026-001" style={fld}/></label>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 6 }}>Dokument (optional)</div>
-              {chosen
-                ? <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}><FileIcon kind="document" size={15}/><span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{chosen.name}</span><span onClick={() => setChosen(null)} style={{ cursor: 'pointer', color: 'var(--fg-4)' }}>{Ic.close(14)}</span></div>
-                : <Btn variant="glass" size="sm" icon={Ic.folder(13)} onClick={() => setPicking(true)}>Aus DMS wählen</Btn>}
-            </div>
+            {preBound ? (
+              <div style={{ fontSize: 13, color: 'var(--fg-2)', padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>{Ic.fileGen(14)} {documentLabel}</div>
+            ) : (
+              <>
+                {companies.length > 1 && (
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Firma</span>
+                    <select value={company} onChange={(e) => { setCompanyId(e.target.value); }} style={{ ...fld, cursor: 'pointer' }}>{companies.map((c) => <option key={c.id} value={String(c.id)}>{c.name}</option>)}</select>
+                  </label>
+                )}
+                <div style={{ display: 'inline-flex', gap: 4, padding: 4, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', alignSelf: 'flex-start' }}>
+                  {[['invoice', 'Rechnungen'], ['offer', 'Angebote']].map(([k, l]) => (
+                    <button key={k} onClick={() => setDocType(k)} style={{ height: 30, padding: '0 14px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 540, background: docType === k ? 'var(--accent-grad)' : 'transparent', color: docType === k ? '#fff' : 'var(--fg-2)' }}>{l}</button>
+                  ))}
+                </div>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Dokument</span>
+                  {docs === null ? <div style={{ color: 'var(--fg-3)', fontSize: 13 }}>{Ic.loader(16)}</div>
+                    : docs.length === 0 ? <div style={{ fontSize: 13, color: 'var(--fg-3)' }}>Keine {docType === 'offer' ? 'Angebote' : 'Rechnungen'} vorhanden.</div>
+                    : <select value={chosen?.id || ''} onChange={(e) => { const id = Number(e.target.value); const dd = docs.find((x) => x.id === id); setChosen(dd ? { id, label: dd.number } : null); }} style={{ ...fld, cursor: 'pointer' }}>
+                        <option value="">— wählen —</option>
+                        {docs.map((dd) => <option key={dd.id} value={dd.id}>{dd.number} · {(dd.contact_name || dd.client_snapshot?.name || 'Ohne Kunde')} · {fmtEUR(dd.gross)}</option>)}
+                      </select>}
+                </label>
+              </>
+            )}
             <div style={{ display: 'flex', gap: 10 }}>
               <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Name (optional)</span><input value={signerName} onChange={(e) => setSignerName(e.target.value)} style={fld}/></label>
               <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>E-Mail (optional)</span><input value={signerEmail} onChange={(e) => setSignerEmail(e.target.value)} style={fld}/></label>
             </div>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Nachricht (optional)</span><textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={2} placeholder="Kurzer Hinweis für den Unterzeichner" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/></label>
-            <Btn variant="primary" full disabled={busy} onClick={create} icon={busy ? Ic.loader(15) : Ic.check(15)}>Signatur-Link erstellen</Btn>
+            <Btn variant="primary" full disabled={busy || !chosen} onClick={create} icon={busy ? Ic.loader(15) : Ic.check(15)}>Signatur-Link erstellen</Btn>
           </div>
         )}
-        {picking && <DmsFilePicker onPick={(f) => { setChosen({ id: f.id, name: f.name }); if (!title.trim()) setTitle(f.name.replace(/\.[A-Za-z0-9]+$/, '')); setPicking(false); }} onClose={() => setPicking(false)}/>}
       </Glass>
     </div>
   );

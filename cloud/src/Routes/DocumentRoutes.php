@@ -37,6 +37,9 @@ final class DocumentRoutes
             $g->post('/{id}/convert',    [self::class, 'convert']);
             $g->get('/{id}/pdf',         [self::class, 'pdf']);
             $g->post('/{id}/archive',    [self::class, 'archive']);
+            $g->post('/{id}/sign-upload',  [self::class, 'signUpload']);
+            $g->post('/{id}/mark-signed',  [self::class, 'markSigned']);
+            $g->post('/{id}/unmark-signed',[self::class, 'unmarkSigned']);
         })->add(new AuthMiddleware());
     }
 
@@ -305,14 +308,14 @@ final class DocumentRoutes
      * Render the document to PDF bytes via Dompdf. Shared by the streaming pdf()
      * endpoint and the archive() action so both produce byte-identical output.
      */
-    private static function renderPdfBytes(int $uid, int $cid, array $doc): string
+    private static function renderPdfBytes(int $uid, int $cid, array $doc, ?array $sig = null): string
     {
         $company = CompanyContext::profile($cid);
         $items = self::loadItems((int)$doc['id']);
-        $html = self::renderHtml($uid, $doc, $items, $company);
+        $html = self::renderHtml($uid, $doc, $items, $company, $sig);
 
         $dompdf = new \Dompdf\Dompdf([
-            'isRemoteEnabled'      => false,
+            'isRemoteEnabled'      => $sig !== null,
             'isHtml5ParserEnabled' => true,
             'defaultFont'          => 'DejaVu Sans',
         ]);
@@ -403,6 +406,75 @@ final class DocumentRoutes
         $pdo->prepare("INSERT INTO activity (user_id, kind, payload) VALUES (?, 'file_uploaded', ?)")
             ->execute([$uid, json_encode(['file_id' => $id, 'name' => $name, 'size' => $size])]);
         return $id;
+    }
+
+    // ───── Signing (public helpers used by SignatureRoutes) ───────────────────
+    /** Fetch a document owned by the active company (for the signature flow). */
+    public static function docForSignature(int $cid, int $id): ?array
+    {
+        return self::fetchOne($cid, $id);
+    }
+
+    /** Render the document PDF, optionally with an embedded signature block. */
+    public static function pdfBytesFor(int $uid, int $cid, array $doc, ?array $sig = null): string
+    {
+        return self::renderPdfBytes($uid, $cid, $doc, $sig);
+    }
+
+    /**
+     * Persist a signed PDF (bytes) as the document's archived file, mark the
+     * document signed, and return the new DMS file id.
+     */
+    public static function applySignedPdf(int $uid, int $cid, array $doc, string $bytes): int
+    {
+        $year = self::archiveYear($doc['doc_date'] ?? null);
+        $sub = $doc['type'] === 'offer' ? 'Angebote' : 'Rechnungen';
+        $buchhaltungId = self::findOrCreateFolder($uid, null, 'Buchhaltung');
+        $subId = self::findOrCreateFolder($uid, $buchhaltungId, $sub);
+        $yearId = self::findOrCreateFolder($uid, $subId, $year);
+        $name = $doc['number'] . ' – signiert.pdf';
+        $rel = Storage::relPath($uid, $name);
+        file_put_contents(Storage::abs($rel), $bytes);
+        $fileId = self::insertArchiveFile($uid, $yearId, $name, $rel, strlen($bytes));
+        Database::pdo()->prepare('UPDATE documents SET signed_at = CURRENT_TIMESTAMP, signed_file_id = ?, archived_file_id = ? WHERE id = ? AND company_id = ?')
+            ->execute([$fileId, $fileId, (int)$doc['id'], $cid]);
+        return $fileId;
+    }
+
+    /** Upload a (manually) signed PDF, attach it and mark the document signed. */
+    public static function signUpload(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
+        $id = (int)$args['id'];
+        $d = self::fetchOne($cid, $id);
+        if (!$d) return Json::err($res, 'Not found', 404);
+        $file = $req->getUploadedFiles()['file'] ?? null;
+        if (!$file || $file->getError() !== UPLOAD_ERR_OK) return Json::err($res, 'Keine Datei', 422);
+        if ((int)$file->getSize() > 20 * 1024 * 1024) return Json::err($res, 'Datei zu groß (max 20 MB)', 413);
+        $bytes = (string)$file->getStream()->getContents();
+        $fileId = self::applySignedPdf($uid, $cid, $d, $bytes);
+        return Json::ok($res, ['document' => self::shapeFull($uid, $cid, self::fetchOne($cid, $id)), 'file_id' => $fileId]);
+    }
+
+    public static function markSigned(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
+        $id = (int)$args['id'];
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
+        Database::pdo()->prepare('UPDATE documents SET signed_at = CURRENT_TIMESTAMP WHERE id = ? AND company_id = ?')->execute([$id, $cid]);
+        return Json::ok($res, ['document' => self::shapeFull($uid, $cid, self::fetchOne($cid, $id))]);
+    }
+
+    public static function unmarkSigned(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
+        $id = (int)$args['id'];
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
+        Database::pdo()->prepare('UPDATE documents SET signed_at = NULL, signed_file_id = NULL WHERE id = ? AND company_id = ?')->execute([$id, $cid]);
+        return Json::ok($res, ['document' => self::shapeFull($uid, $cid, self::fetchOne($cid, $id))]);
     }
 
     // ───── Number counter ────────────────────────────────────────────────────
@@ -571,6 +643,8 @@ final class DocumentRoutes
             'payment_status'          => self::paymentStatus($r, $termDays),
             'reminder_stage'          => isset($r['reminder_stage']) && $r['reminder_stage'] !== null ? (int)$r['reminder_stage'] : 0,
             'archived_file_id'        => isset($r['archived_file_id']) && $r['archived_file_id'] !== null ? (int)$r['archived_file_id'] : null,
+            'signed_at'               => $r['signed_at'] ?? null,
+            'signed_file_id'          => isset($r['signed_file_id']) && $r['signed_file_id'] !== null ? (int)$r['signed_file_id'] : null,
             'created_at'              => $r['created_at'],
         ];
     }
@@ -700,7 +774,7 @@ final class DocumentRoutes
         }
     }
 
-    private static function renderHtml(int $uid, array $d, array $items, array $co): string
+    private static function renderHtml(int $uid, array $d, array $items, array $co, ?array $sig = null): string
     {
         $accent = self::ACCENT;
         $isOffer = $d['type'] === 'offer';
@@ -793,6 +867,13 @@ final class DocumentRoutes
         $intro = $d['intro_text'] !== null && $d['intro_text'] !== '' ? '<div class="intro">' . nl2br(self::e($d['intro_text'])) . '</div>' : '';
         $footerText = $d['footer_text'] !== null && $d['footer_text'] !== '' ? '<div class="footer-text">' . nl2br(self::e($d['footer_text'])) . '</div>' : '';
         $signature = $cv('signature_name') !== '' ? '<div class="signature">' . self::e($cv('signature_name')) . '</div>' : '';
+        $signedBlock = '';
+        if ($sig !== null && !empty($sig['image'])) {
+            $signedBlock = '<div class="esign"><img class="esign-img" src="' . $sig['image'] . '" alt="">'
+                . '<div class="esign-meta">Elektronisch signiert von <b>' . self::e((string)($sig['name'] ?? '')) . '</b>'
+                . ' &middot; ' . self::e((string)($sig['date'] ?? ''))
+                . (!empty($sig['ip']) ? ' &middot; IP ' . self::e((string)$sig['ip']) : '') . '</div></div>';
+        }
 
         // Meta rows (right).
         $metaRows = '<tr><td class="ml">' . self::e($numLabel) . '</td><td class="mv">' . self::e($d['number']) . '</td></tr>';
@@ -855,6 +936,9 @@ final class DocumentRoutes
   .clear { clear: both; }
   .footer-text { margin-top: 26px; font-size: 9.5px; }
   .signature { margin-top: 18px; font-weight: bold; }
+  .esign { margin-top: 30px; padding-top: 10px; border-top: 1px solid #ddd; }
+  .esign-img { max-height: 90px; max-width: 320px; }
+  .esign-meta { font-size: 10px; color: #555; margin-top: 4px; }
   .pagefoot { position: fixed; bottom: -22mm; left: 0; right: 0; height: 22mm;
     font-size: 7px; color: #999; border-top: 1px solid #e6e3f0; padding-top: 4px; }
   .pagefoot table { width: 100%; border-collapse: collapse; }
@@ -899,6 +983,7 @@ final class DocumentRoutes
 
   {$footerText}
   {$signature}
+  {$signedBlock}
 
   <div class="pagefoot"><table><tr>
     <td><div class="line">{$contactCol}</div></td>

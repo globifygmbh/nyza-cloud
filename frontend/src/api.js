@@ -378,6 +378,9 @@ export const API = {
   signInfo:        (token) => request('/api/sign/' + token),
   signSubmit:      (token, body) => request('/api/sign/' + token, { method: 'POST', body }),
   signFileUrl:     (token) => url('/api/sign/' + token + '/file'),
+  docSignUpload:   (id, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/documents/' + id + '/sign-upload', { method: 'POST', body: fd }); },
+  markDocSigned:   (id) => request('/api/documents/' + id + '/mark-signed', { method: 'POST', body: {} }),
+  unmarkDocSigned: (id) => request('/api/documents/' + id + '/unmark-signed', { method: 'POST', body: {} }),
   expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
 
   // Buchhaltung · Auswertung
