@@ -106,6 +106,12 @@ $serveSpa = function ($res, $extraHead = '') use ($assetsRoot, $basePath) {
     $html = str_replace('href="manifest.webmanifest"', 'href="' . $root . 'manifest.webmanifest"', $html);
     $html = str_replace('href="icon.svg"', 'href="' . $root . 'icon.svg"', $html);
 
+    // When per-link preview tags are supplied, drop the static <title> and
+    // description so the dynamic ones (in $extraHead) are authoritative.
+    if ($extraHead !== '') {
+        $html = preg_replace('#<title>.*?</title>#is', '', $html, 1);
+        $html = preg_replace('#<meta\s+name=["\']description["\'][^>]*>#i', '', $html, 1);
+    }
     $hint = '<script>window.NYZA_BASE=' . json_encode($basePath ?: '') . ';</script>' . $extraHead;
     $html = preg_replace('/<head([^>]*)>/i', '<head$1>' . $hint, $html, 1);
     $res->getBody()->write($html);

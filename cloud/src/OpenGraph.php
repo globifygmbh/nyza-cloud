@@ -67,7 +67,10 @@ final class OpenGraph
 
         if ($title === null || $title === '') return '';
         $e = static fn($s) => htmlspecialchars((string)$s, ENT_QUOTES);
-        $out = '<meta property="og:site_name" content="Nyza Cloud">'
+        $out = '<title>' . $e($title) . ' · Nyza Cloud</title>'
+             . '<meta name="description" content="' . $e($desc) . '">'
+             . '<meta property="og:site_name" content="Nyza Cloud">'
+             . '<meta property="og:type" content="website">'
              . '<meta property="og:title" content="' . $e($title) . '">'
              . '<meta property="og:description" content="' . $e($desc) . '">'
              . '<meta name="twitter:title" content="' . $e($title) . '">'
