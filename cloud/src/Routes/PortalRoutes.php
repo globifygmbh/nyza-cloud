@@ -107,11 +107,15 @@ final class PortalRoutes
         $b = (array)$req->getParsedBody();
         $folderId = !empty($b['folder_id']) ? (int)$b['folder_id'] : null;
         $fileId = !empty($b['file_id']) ? (int)$b['file_id'] : null;
-        if (!$folderId && !$fileId) return Json::err($res, 'folder_id oder file_id nötig', 422);
+        $sigId = !empty($b['signature_id']) ? (int)$b['signature_id'] : null;
+        $upId = !empty($b['upload_link_id']) ? (int)$b['upload_link_id'] : null;
+        if (!$folderId && !$fileId && !$sigId && !$upId) return Json::err($res, 'Kein Element', 422);
         // verify ownership of the referenced item
         if ($folderId) { $c = Database::pdo()->prepare('SELECT 1 FROM folders WHERE id = ? AND user_id = ?'); $c->execute([$folderId, $uid]); if (!$c->fetch()) return Json::err($res, 'Ordner nicht gefunden', 404); }
         if ($fileId) { $c = Database::pdo()->prepare('SELECT 1 FROM files WHERE id = ? AND user_id = ? AND deleted_at IS NULL'); $c->execute([$fileId, $uid]); if (!$c->fetch()) return Json::err($res, 'Datei nicht gefunden', 404); }
-        Database::pdo()->prepare('INSERT INTO portal_items (portal_id, folder_id, file_id) VALUES (?, ?, ?)')->execute([$id, $folderId, $fileId]);
+        if ($sigId) { $c = Database::pdo()->prepare('SELECT 1 FROM signature_requests WHERE id = ? AND user_id = ?'); $c->execute([$sigId, $uid]); if (!$c->fetch()) return Json::err($res, 'Signatur nicht gefunden', 404); }
+        if ($upId) { $c = Database::pdo()->prepare('SELECT 1 FROM upload_links WHERE id = ? AND user_id = ?'); $c->execute([$upId, $uid]); if (!$c->fetch()) return Json::err($res, 'Upload-Link nicht gefunden', 404); }
+        Database::pdo()->prepare('INSERT INTO portal_items (portal_id, folder_id, file_id, signature_id, upload_link_id) VALUES (?, ?, ?, ?, ?)')->execute([$id, $folderId, $fileId, $sigId, $upId]);
         return Json::ok($res, ['portal' => self::detail($uid, $id)], 201);
     }
 
@@ -154,6 +158,8 @@ final class PortalRoutes
                 'mime_type' => $f['mime_type'], 'hue' => (int)$f['hue'], 'taken_at' => $f['taken_at'] ?? null, 'created_at' => $f['created_at'] ?? null,
             ], $files),
             'documents' => self::collectDocuments($p),
+            'signatures' => self::collectLinks((int)$p['id'], 'signature'),
+            'uploads' => self::collectLinks((int)$p['id'], 'upload'),
         ]);
     }
 
@@ -205,6 +211,20 @@ final class PortalRoutes
             'doc_date' => $d['doc_date'], 'gross' => (float)$d['gross'],
             'paid' => !empty($d['paid_at']), 'signed' => !empty($d['signed_at']),
         ], $s->fetchAll());
+    }
+
+    /** Attached signature requests / upload links for the public portal page. */
+    private static function collectLinks(int $portalId, string $type): array
+    {
+        $pdo = Database::pdo();
+        if ($type === 'signature') {
+            $s = $pdo->prepare('SELECT sr.token, sr.title, sr.status FROM portal_items i JOIN signature_requests sr ON sr.id = i.signature_id WHERE i.portal_id = ?');
+            $s->execute([$portalId]);
+            return array_map(static fn($r) => ['token' => $r['token'], 'title' => $r['title'], 'status' => $r['status']], $s->fetchAll());
+        }
+        $s = $pdo->prepare('SELECT ul.token, ul.title FROM portal_items i JOIN upload_links ul ON ul.id = i.upload_link_id WHERE i.portal_id = ?');
+        $s->execute([$portalId]);
+        return array_map(static fn($r) => ['token' => $r['token'], 'title' => $r['title']], $s->fetchAll());
     }
 
     public static function publicDoc(Request $req, Response $res, array $args): Response
@@ -290,17 +310,24 @@ final class PortalRoutes
         if (!$p) return null;
         $out = self::shape($p);
         $items = Database::pdo()->prepare(
-            'SELECT i.id, i.folder_id, i.file_id, f.name AS folder_name, fi.name AS file_name, fi.kind AS file_kind '
-            . 'FROM portal_items i LEFT JOIN folders f ON f.id = i.folder_id LEFT JOIN files fi ON fi.id = i.file_id WHERE i.portal_id = ?'
+            'SELECT i.id, i.folder_id, i.file_id, i.signature_id, i.upload_link_id, '
+            . 'f.name AS folder_name, fi.name AS file_name, sr.title AS sig_title, ul.title AS up_title '
+            . 'FROM portal_items i '
+            . 'LEFT JOIN folders f ON f.id = i.folder_id '
+            . 'LEFT JOIN files fi ON fi.id = i.file_id '
+            . 'LEFT JOIN signature_requests sr ON sr.id = i.signature_id '
+            . 'LEFT JOIN upload_links ul ON ul.id = i.upload_link_id '
+            . 'WHERE i.portal_id = ?'
         );
         $items->execute([$id]);
-        $out['item_list'] = array_map(static fn($r) => [
-            'id' => (int)$r['id'],
-            'folder_id' => $r['folder_id'] !== null ? (int)$r['folder_id'] : null,
-            'file_id' => $r['file_id'] !== null ? (int)$r['file_id'] : null,
-            'name' => $r['folder_name'] ?? $r['file_name'] ?? '—',
-            'is_folder' => $r['folder_id'] !== null,
-        ], $items->fetchAll());
+        $out['item_list'] = array_map(static function ($r) {
+            $kind = $r['folder_id'] !== null ? 'folder' : ($r['file_id'] !== null ? 'file' : ($r['signature_id'] !== null ? 'signature' : 'upload'));
+            return [
+                'id' => (int)$r['id'], 'kind' => $kind,
+                'name' => $r['folder_name'] ?? $r['file_name'] ?? $r['sig_title'] ?? $r['up_title'] ?? '—',
+                'is_folder' => $r['folder_id'] !== null,
+            ];
+        }, $items->fetchAll());
         return $out;
     }
 

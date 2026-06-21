@@ -875,6 +875,10 @@ export function PublicPortalPage({ token }) {
 
   const files = data.files || [];
   const docs = data.documents || [];
+  const sigs = data.signatures || [];
+  const ups = data.uploads || [];
+  const base = (typeof window !== 'undefined' && window.NYZA_BASE) || '';
+  const ext = (kind, token) => location.origin + base + '/' + kind + '/' + token;
   return (
     <div style={{ height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
       <ShareHeader owner={data.owner}/>
@@ -901,6 +905,38 @@ export function PublicPortalPage({ token }) {
           </div>
         )}
 
+        {sigs.length > 0 && (
+          <div style={{ marginTop: 28 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>Zu unterschreiben</div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {sigs.map((s) => (
+                <div key={s.token} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                  <span style={{ color: 'var(--accent)' }}>{Ic.check(16)}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title}</div></div>
+                  {s.status === 'signed'
+                    ? <span style={{ fontSize: 11.5, fontWeight: 700, color: '#22c55e' }}>✓ Unterschrieben</span>
+                    : <Btn variant="primary" size="sm" icon={Ic.check(13)} onClick={() => { location.href = ext('sign', s.token); }}>Unterschreiben</Btn>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {ups.length > 0 && (
+          <div style={{ marginTop: 28 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>Dateien hochladen</div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {ups.map((u) => (
+                <div key={u.token} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                  <span style={{ color: 'var(--accent)' }}>{Ic.upload(16)}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.title}</div></div>
+                  <Btn variant="primary" size="sm" icon={Ic.upload(13)} onClick={() => { location.href = ext('u', u.token); }}>Hochladen</Btn>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {files.length > 0 && (
           <div style={{ marginTop: 32 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
@@ -920,7 +956,7 @@ export function PublicPortalPage({ token }) {
           </div>
         )}
 
-        {files.length === 0 && docs.length === 0 && (
+        {files.length === 0 && docs.length === 0 && sigs.length === 0 && ups.length === 0 && (
           <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--fg-3)' }}>Noch keine Inhalte freigegeben.</div>
         )}
       </div>

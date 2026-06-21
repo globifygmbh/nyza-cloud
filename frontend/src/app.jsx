@@ -8160,12 +8160,18 @@ function PortalEditModal({ portal, onSaved, onClose }) {
   const [password, setPassword] = useState('');
   const [contacts, setContacts] = useState([]);
   const [folders, setFolders] = useState([]);
+  const [sigs, setSigs] = useState([]);
+  const [uploads, setUploads] = useState([]);
   const [addFolder, setAddFolder] = useState('');
+  const [addSig, setAddSig] = useState('');
+  const [addUp, setAddUp] = useState('');
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {});
     API.allFolders().then((d) => setFolders(d.folders || [])).catch(() => {});
+    API.signatures().then((d) => setSigs(d.requests || [])).catch(() => {});
+    API.uploadLinks().then((d) => setUploads(d.upload_links || d.links || [])).catch(() => {});
   }, []);
   const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
   const reload = async () => { const d = await API.portal(p.id); setP(d.portal); };
@@ -8179,6 +8185,8 @@ function PortalEditModal({ portal, onSaved, onClose }) {
   const ensureSaved = async () => { if (p.id) { await saveBase(); return p.id; } const np = await saveBase(); return np.id; };
   const attachFolder = async () => { if (!addFolder) return; try { const id = await ensureSaved(); await API.portalAddItem(id, { folder_id: Number(addFolder) }); setAddFolder(''); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
   const attachFile = async (f) => { setPicking(false); try { const id = await ensureSaved(); await API.portalAddItem(id, { file_id: f.id }); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
+  const attachSig = async () => { if (!addSig) return; try { const id = await ensureSaved(); await API.portalAddItem(id, { signature_id: Number(addSig) }); setAddSig(''); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
+  const attachUp = async () => { if (!addUp) return; try { const id = await ensureSaved(); await API.portalAddItem(id, { upload_link_id: Number(addUp) }); setAddUp(''); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
   const removeItem = async (it) => { try { await API.portalRemoveItem(p.id, it.id); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
   const link = p.token ? portalLink(p.token) : '';
   return (
@@ -8209,16 +8217,24 @@ function PortalEditModal({ portal, onSaved, onClose }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
               {(p.item_list || []).map((it) => (
                 <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
-                  <span style={{ color: 'var(--fg-3)' }}>{it.is_folder ? Ic.folder(15) : Ic.fileGen(15)}</span>
-                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}</span>
+                  <span style={{ color: 'var(--fg-3)' }}>{(it.kind === 'folder' ? Ic.folder : it.kind === 'signature' ? Ic.check : it.kind === 'upload' ? Ic.inbox : Ic.fileGen)(15)}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}{it.kind === 'signature' ? ' · Signatur' : it.kind === 'upload' ? ' · Upload' : ''}</span>
                   <IconBtn size={28} title="Entfernen" onClick={() => removeItem(it)}>{Ic.close(14)}</IconBtn>
                 </div>
               ))}
             </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
               <select value={addFolder} onChange={(e) => setAddFolder(e.target.value)} style={{ ...fld, flex: 1, minWidth: 160, height: 38 }}><option value="">Ordner anhängen…</option>{folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select>
               <Btn variant="glass" size="sm" disabled={!addFolder} onClick={attachFolder} icon={Ic.plus(13)}>Ordner</Btn>
               <Btn variant="glass" size="sm" onClick={async () => { await ensureSaved(); setPicking(true); }} icon={Ic.fileGen(13)}>Datei</Btn>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+              <select value={addSig} onChange={(e) => setAddSig(e.target.value)} style={{ ...fld, flex: 1, minWidth: 160, height: 38 }}><option value="">Signatur-Anfrage…</option>{sigs.map((s) => <option key={s.id} value={s.id}>{s.title}{s.status === 'signed' ? ' ✓' : ''}</option>)}</select>
+              <Btn variant="glass" size="sm" disabled={!addSig} onClick={attachSig} icon={Ic.check(13)}>Signatur</Btn>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <select value={addUp} onChange={(e) => setAddUp(e.target.value)} style={{ ...fld, flex: 1, minWidth: 160, height: 38 }}><option value="">Upload-Anfrage…</option>{uploads.map((u) => <option key={u.id} value={u.id}>{u.title}</option>)}</select>
+              <Btn variant="glass" size="sm" disabled={!addUp} onClick={attachUp} icon={Ic.inbox(13)}>Upload</Btn>
             </div>
           </div>
         </div>
