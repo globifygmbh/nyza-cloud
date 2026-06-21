@@ -2082,7 +2082,7 @@ export function UploadReview({ files: initial, title = 'Diese Dateien hochladen?
         {conflictChoice && (
           <div style={{ padding: '0 24px 4px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>Bei gleichem Namen:</span>
-            {[['replace', 'Ersetzen (mit Version)'], ['keep_both', 'Beide behalten']].map(([k, l]) => (
+            {[['replace', 'Ersetzen (mit Version)'], ['skip', 'Überspringen'], ['keep_both', 'Beide behalten']].map(([k, l]) => (
               <button key={k} type="button" onClick={() => setMode(k)} style={{ height: 28, padding: '0 12px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, border: '1px solid ' + (mode === k ? 'transparent' : 'var(--border)'), background: mode === k ? 'var(--accent-grad)' : 'var(--surface-hi)', color: mode === k ? '#fff' : 'var(--fg-2)' }}>{l}</button>
             ))}
           </div>
@@ -3481,7 +3481,22 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
 
       {reviewFiles && (
         <UploadReview files={reviewFiles}
-          onConfirm={(files, mode) => { const fid = uploadTargetFolder.current; setReviewFiles(null); enqueueUploads(files.map((f) => ({ file: f, folderId: fid, mode }))); }}
+          onConfirm={async (files, mode) => {
+            const fid = uploadTargetFolder.current; setReviewFiles(null);
+            let list = files;
+            if (mode === 'skip') {
+              try {
+                const d = fid ? await API.folder(fid) : await API.files();
+                const have = new Set((d.files || []).map((f) => f.name));
+                const before = list.length;
+                list = list.filter((f) => !have.has(f.name));
+                const skipped = before - list.length;
+                if (skipped) toast(skipped + ' bereits vorhanden — übersprungen', 'success');
+                if (!list.length) return;
+              } catch {}
+            }
+            enqueueUploads(list.map((f) => ({ file: f, folderId: fid, mode })));
+          }}
           onCancel={() => setReviewFiles(null)}/>
       )}
 

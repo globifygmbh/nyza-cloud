@@ -415,7 +415,11 @@ final class FileRoutes
         // of creating a duplicate — unless the client asked to keep both, in which
         // case we uniquify the name. Quota is checked against the net size delta.
         $existing = self::existingInFolder($uid, $folder, $name);
-        if ($existing && (string)($b['mode'] ?? '') === 'keep_both') {
+        $mode = (string)($b['mode'] ?? '');
+        if ($existing && $mode === 'skip') {
+            return Json::ok($res, ['skipped' => true, 'file' => self::fetchOne($uid, (int)$existing['id'])], 200);
+        }
+        if ($existing && $mode === 'keep_both') {
             $name = self::uniqueName($uid, $folder, $name);
             $existing = null;
         }
@@ -829,7 +833,12 @@ final class FileRoutes
         $name = $s['file_name'];
         $b = (array) $req->getParsedBody();
         $existing = self::existingInFolder($uid, $folder, $name);
-        if ($existing && (string)($b['mode'] ?? '') === 'keep_both') {
+        $mode = (string)($b['mode'] ?? '');
+        if ($existing && $mode === 'skip') {
+            @unlink($abs); // discard the just-assembled blob; keep the existing file
+            return Json::ok($res, ['skipped' => true, 'file' => self::fetchOne($uid, (int)$existing['id'])], 200);
+        }
+        if ($existing && $mode === 'keep_both') {
             $name = self::uniqueName($uid, $folder, $name);
             $existing = null;
         }
