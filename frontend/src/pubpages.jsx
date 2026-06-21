@@ -838,3 +838,100 @@ export function PublicFormPage({ token }) {
     </div>
   );
 }
+
+// ───── Public customer portal (/portal/:token) ──────────────────────────────
+export function PublicPortalPage({ token }) {
+  const [data, setData] = useState(undefined);
+  const [needPw, setNeedPw] = useState(false);
+  const [pw, setPw] = useState('');
+  const [pwInput, setPwInput] = useState('');
+  const [viewing, setViewing] = useState(null);
+  useEffect(() => { applyAccent('violet'); }, []);
+  const load = (p) => {
+    API.publicPortal(token, p).then((d) => {
+      if (d.requires_password) { setNeedPw(true); setData(null); return; }
+      setNeedPw(false); setData(d); if (p !== undefined) setPw(p);
+    }).catch((e) => { if (e.status === 401) { setNeedPw(true); setData(null); } else setData(null); });
+  };
+  useEffect(() => { load(); }, [token]);
+
+  if (data === undefined && !needPw) return <CenteredLoader/>;
+  if (needPw) {
+    return (
+      <div style={{ minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, position: 'relative', zIndex: 1 }}>
+        <Glass style={{ width: '100%', maxWidth: 380, borderRadius: 'var(--r-xl)', padding: 32, textAlign: 'center' }}>
+          <div style={{ width: 56, height: 56, borderRadius: 'var(--r-lg)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px' }}>{Ic.lock(24)}</div>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, margin: 0 }}>Kundenportal</h1>
+          <p style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: 8 }}>Bitte Passwort eingeben.</p>
+          <form onSubmit={(e) => { e.preventDefault(); load(pwInput); }} style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <input type="password" autoFocus value={pwInput} onChange={(e) => setPwInput(e.target.value)} placeholder="Passwort" style={{ height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', textAlign: 'center' }}/>
+            <Btn variant="primary" size="lg" full type="submit" disabled={!pwInput}>Öffnen</Btn>
+          </form>
+        </Glass>
+      </div>
+    );
+  }
+  if (data === null) return <CenteredMessage title="Nicht verfügbar" desc="Dieses Portal existiert nicht."/>;
+
+  const files = data.files || [];
+  const docs = data.documents || [];
+  return (
+    <div style={{ height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
+      <ShareHeader owner={data.owner}/>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 28px 70px' }}>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 600, letterSpacing: -1.2, margin: 0 }}>{data.name}</h1>
+        {data.intro && <p style={{ fontSize: 14.5, color: 'var(--fg-2)', marginTop: 12, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{data.intro}</p>}
+
+        {docs.length > 0 && (
+          <div style={{ marginTop: 28 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>Rechnungen & Angebote</div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {docs.map((d) => (
+                <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                  <span style={{ color: 'var(--accent)' }}>{Ic.filePdf(16)}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 540 }}>{d.type === 'offer' ? 'Angebot ' : 'Rechnung '}{d.number}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{new Date(String(d.doc_date)).toLocaleDateString('de-DE')} · {Number(d.gross).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}{d.paid ? ' · bezahlt' : ''}</div>
+                  </div>
+                  <Btn variant="glass" size="sm" icon={Ic.eye(13)} onClick={() => window.open(API.portalDocUrl(token, d.id, pw, false), '_blank')}>Ansehen</Btn>
+                  <Btn variant="glass" size="sm" icon={Ic.download(13)} onClick={() => { location.href = API.portalDocUrl(token, d.id, pw, true); }}>PDF</Btn>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {files.length > 0 && (
+          <div style={{ marginTop: 32 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Dateien · {files.length}</div>
+              <Btn variant="primary" size="md" icon={Ic.download(16)} onClick={() => { location.href = API.portalZipUrl(token, pw); }}>Alle herunterladen</Btn>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
+              {files.map((f) => (
+                <div key={f.id} onClick={() => setViewing(f)} style={{ cursor: 'pointer', borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                  <div style={{ aspectRatio: '1/1', background: 'var(--surface-hi)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {f.kind === 'image' ? <img src={API.portalThumbUrl(token, f.id, pw)} alt={f.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/> : <FileIcon kind={f.kind} size={30} tint={f.hue}/>}
+                  </div>
+                  <div style={{ padding: '8px 10px', fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {files.length === 0 && docs.length === 0 && (
+          <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--fg-3)' }}>Noch keine Inhalte freigegeben.</div>
+        )}
+      </div>
+      {viewing && (() => {
+        const list = files.filter((f) => ['image', 'video', 'pdf', 'audio'].includes(f.kind));
+        const items = list.length ? list : [viewing];
+        return <MediaViewer items={items} startIndex={Math.max(0, items.findIndex((x) => x.id === viewing.id))}
+          srcFor={(f) => API.portalFileUrl(token, f.id, pw)} downloadFor={(f) => API.portalFileUrl(token, f.id, pw, true)}
+          info={false} onClose={() => setViewing(null)}/>;
+      })()}
+      <ShareFooter/>
+    </div>
+  );
+}

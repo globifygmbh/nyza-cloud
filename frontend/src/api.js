@@ -413,6 +413,20 @@ export const API = {
   mailAttachmentUrl: (id, uid, part) => url('/api/mail/mailboxes/' + id + '/messages/' + uid + '/attachment') + '?part=' + encodeURIComponent(part) + '&token=' + (getToken() || ''),
   mailSend:       (id, body) => request('/api/mail/mailboxes/' + id + '/send', { method: 'POST', body }),
   mailFetchBelege:(id) => request('/api/mail/mailboxes/' + id + '/fetch-belege', { method: 'POST', body: {} }),
+  // ───── Customer portals ─────
+  portals:        () => request('/api/portals'),
+  portal:         (id) => request('/api/portals/' + id),
+  createPortal:   (body) => request('/api/portals', { method: 'POST', body }),
+  updatePortal:   (id, body) => request('/api/portals/' + id, { method: 'PATCH', body }),
+  deletePortal:   (id) => request('/api/portals/' + id, { method: 'DELETE' }),
+  portalAddItem:  (id, body) => request('/api/portals/' + id + '/items', { method: 'POST', body }),
+  portalRemoveItem: (id, itemId) => request('/api/portals/' + id + '/items/' + itemId, { method: 'DELETE' }),
+  publicPortal:   (token, pw) => request('/api/portal/' + token + (pw ? '?p=' + encodeURIComponent(pw) : ''), { skipAuth: true }),
+  portalUnlock:   (token, password) => request('/api/portal/' + token + '/unlock', { method: 'POST', body: { password }, skipAuth: true }),
+  portalFileUrl:  (token, id, pw, dl) => url('/api/portal/' + token + '/file/' + id) + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', dl ? 'download=1' : ''].filter(Boolean).join('&'),
+  portalThumbUrl: (token, id, pw) => url('/api/portal/' + token + '/file/' + id + '/thumb') + (pw ? '?p=' + encodeURIComponent(pw) : ''),
+  portalZipUrl:   (token, pw, ids) => url('/api/portal/' + token + '/zip') + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', (ids && ids.length) ? 'ids=' + ids.join(',') : ''].filter(Boolean).join('&'),
+  portalDocUrl:   (token, docId, pw, dl) => url('/api/portal/' + token + '/doc/' + docId) + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', dl ? 'download=1' : ''].filter(Boolean).join('&'),
   expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
 
   // Buchhaltung · Auswertung

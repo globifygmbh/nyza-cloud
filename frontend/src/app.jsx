@@ -3425,6 +3425,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-mail' && (
           <MailApp onBack={() => setNav({ name: 'apps' })}/>
         )}
+        {nav.name === 'app-portal' && (
+          <KundenportalApp onBack={() => setNav({ name: 'apps' })} basePath={basePath}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -4270,6 +4273,7 @@ function AppsView({ onOpenApp }) {
     { id: 'forms',      label: 'Formulare',    desc: 'Intake-Formulare',        icon: Ic.list(26),    grad: 'linear-gradient(135deg, oklch(0.72 0.16 210), oklch(0.66 0.17 185))' },
     { id: 'vault',      label: 'Zugänge',      desc: 'Passwörter & Logins',     icon: Ic.lock(26),    grad: 'linear-gradient(135deg, oklch(0.66 0.13 280), oklch(0.56 0.1 250))' },
     { id: 'mail',       label: 'Mail',         desc: 'Postfächer & Belege',     icon: Ic.inbox(26),   grad: 'linear-gradient(135deg, oklch(0.7 0.16 30), oklch(0.62 0.19 12))' },
+    { id: 'portal',     label: 'Kundenportal', desc: 'Kunden-Zugänge',          icon: Ic.users(26),   grad: 'linear-gradient(135deg, oklch(0.68 0.15 165), oklch(0.6 0.13 200))' },
   ];
   const soon = [];
   const Tile = ({ a, disabled }) => (
@@ -8105,6 +8109,125 @@ function ComposeModal({ mailbox, initial, onClose }) {
           <Btn variant="primary" disabled={busy} onClick={send} icon={busy ? Ic.loader(15) : Ic.upload(15)}>Senden</Btn>
         </div>
       </Glass>
+    </div>
+  );
+}
+
+// ───── Kundenportal app ───────────────────────────────────────────────────────
+const portalLink = (token) => location.origin + (BASE || '') + '/portal/' + token;
+
+function KundenportalApp({ onBack }) {
+  const [items, setItems] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const load = () => API.portals().then((d) => setItems(d.portals || [])).catch(() => setItems([]));
+  useEffect(() => { load(); }, []);
+  const del = async (p) => { if (!await confirmDialog({ title: 'Portal löschen?', message: `„${p.name}" wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deletePortal(p.id); load(); } catch (e) { toast(e.message, 'error'); } };
+  const open = async (p) => { try { const d = await API.portal(p.id); setEditing(d.portal); } catch (e) { toast(e.message, 'error'); } };
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Kundenportal']} right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ _new: true })}>Neues Portal</Btn>}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        {items === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+          : items.length === 0 ? <EmptyHint icon={Ic.users(40)} title="Kein Kundenportal" desc="Lege pro Kunde ein passwortgeschütztes Portal an: seine Rechnungen/Angebote erscheinen automatisch, Ordner hängst du manuell an."
+              actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({ _new: true })}>Neues Portal</Btn>}/>
+          : (
+            <div style={{ display: 'grid', gap: 8, maxWidth: 760 }}>
+              {items.map((p) => (
+                <div key={p.id} className="nyza-listrow" onClick={() => open(p)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Ic.users(15)}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{p.contact_name ? p.contact_name + ' · ' : ''}{p.items} Ordner/Dateien{p.has_password ? ' · 🔒' : ''}</div>
+                  </div>
+                  <IconBtn size={30} title="Link kopieren" onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(portalLink(p.token)); toast('Link kopiert', 'success'); }}>{Ic.copy(15)}</IconBtn>
+                  <IconBtn size={30} title="Löschen" onClick={(e) => { e.stopPropagation(); del(p); }}>{Ic.trash(14)}</IconBtn>
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
+      {editing && <PortalEditModal portal={editing} onSaved={load} onClose={() => setEditing(null)}/>}
+    </>
+  );
+}
+
+function PortalEditModal({ portal, onSaved, onClose }) {
+  const isNew = !!portal._new;
+  const [p, setP] = useState(portal);
+  const [name, setName] = useState(portal.name || '');
+  const [contactId, setContactId] = useState(portal.contact_id ? String(portal.contact_id) : '');
+  const [intro, setIntro] = useState(portal.intro || '');
+  const [password, setPassword] = useState('');
+  const [contacts, setContacts] = useState([]);
+  const [folders, setFolders] = useState([]);
+  const [addFolder, setAddFolder] = useState('');
+  const [picking, setPicking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {});
+    API.allFolders().then((d) => setFolders(d.folders || [])).catch(() => {});
+  }, []);
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+  const reload = async () => { const d = await API.portal(p.id); setP(d.portal); };
+  const saveBase = async () => {
+    const body = { name: name.trim() || 'Kundenportal', contact_id: contactId || null, intro: intro.trim() || null };
+    if (password) body.password = password;
+    if (isNew) { const d = await API.createPortal(body); setP(d.portal); setPassword(''); onSaved && onSaved(); return d.portal; }
+    const d = await API.updatePortal(p.id, body); setP(d.portal); setPassword(''); onSaved && onSaved(); return d.portal;
+  };
+  const saveAndClose = async () => { setBusy(true); try { await saveBase(); toast('Gespeichert', 'success'); onClose(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
+  const ensureSaved = async () => { if (p.id) { await saveBase(); return p.id; } const np = await saveBase(); return np.id; };
+  const attachFolder = async () => { if (!addFolder) return; try { const id = await ensureSaved(); await API.portalAddItem(id, { folder_id: Number(addFolder) }); setAddFolder(''); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
+  const attachFile = async (f) => { setPicking(false); try { const id = await ensureSaved(); await API.portalAddItem(id, { file_id: f.id }); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
+  const removeItem = async (it) => { try { await API.portalRemoveItem(p.id, it.id); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
+  const link = p.token ? portalLink(p.token) : '';
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 540, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.users(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{isNew ? 'Neues Kundenportal' : 'Portal bearbeiten'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+          {link && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 8px 8px 14px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+              <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{link}</span>
+              <Btn variant="primary" size="sm" icon={Ic.copy(13)} onClick={() => { navigator.clipboard?.writeText(link); toast('Link kopiert', 'success'); }}>Kopieren</Btn>
+            </div>
+          )}
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="z. B. Familie Müller" style={fld}/></label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kunde (Rechnungen/Angebote erscheinen automatisch)</span>
+            <select value={contactId} onChange={(e) => setContactId(e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value="">— keiner —</option>{contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Begrüßungstext (optional)</span><textarea value={intro} onChange={(e) => setIntro(e.target.value)} rows={2} style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/></label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Passwort {p.has_password ? '(leer = unverändert)' : ''}</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={p.has_password ? '••••••••' : 'Zugangspasswort'} style={fld}/></label>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>Angehängte Ordner & Dateien</div>
+            {(p.item_list || []).length === 0 && <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginBottom: 8 }}>Noch nichts angehängt.</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+              {(p.item_list || []).map((it) => (
+                <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+                  <span style={{ color: 'var(--fg-3)' }}>{it.is_folder ? Ic.folder(15) : Ic.fileGen(15)}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}</span>
+                  <IconBtn size={28} title="Entfernen" onClick={() => removeItem(it)}>{Ic.close(14)}</IconBtn>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <select value={addFolder} onChange={(e) => setAddFolder(e.target.value)} style={{ ...fld, flex: 1, minWidth: 160, height: 38 }}><option value="">Ordner anhängen…</option>{folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select>
+              <Btn variant="glass" size="sm" disabled={!addFolder} onClick={attachFolder} icon={Ic.plus(13)}>Ordner</Btn>
+              <Btn variant="glass" size="sm" onClick={async () => { await ensureSaved(); setPicking(true); }} icon={Ic.fileGen(13)}>Datei</Btn>
+            </div>
+          </div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Schließen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={saveAndClose} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+      {picking && <DmsFilePicker onPick={attachFile} onClose={() => setPicking(false)}/>}
     </div>
   );
 }

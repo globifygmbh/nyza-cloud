@@ -32,6 +32,7 @@ use Nyza\Routes\LedgerRoutes;
 use Nyza\Routes\MailRoutes;
 use Nyza\Routes\OcrRoutes;
 use Nyza\Routes\ProductRoutes;
+use Nyza\Routes\PortalRoutes;
 use Nyza\Routes\PushRoutes;
 use Nyza\Routes\ReminderRoutes;
 use Nyza\Routes\ReportRoutes;
@@ -91,7 +92,7 @@ $assetsRoot = realpath(__DIR__ . '/assets');
  *  2. window.NYZA_BASE — exposed to JS so the API client and router can
  *     prepend the deploy prefix to fetch paths and route matchers.
  */
-$serveSpa = function ($res) use ($assetsRoot, $basePath) {
+$serveSpa = function ($res, $extraHead = '') use ($assetsRoot, $basePath) {
     $html = (string) file_get_contents($assetsRoot . '/index.html');
     $assetPrefix = ($basePath === '' || $basePath === '/') ? '/assets/' : $basePath . '/assets/';
     $html = preg_replace(
@@ -105,7 +106,7 @@ $serveSpa = function ($res) use ($assetsRoot, $basePath) {
     $html = str_replace('href="manifest.webmanifest"', 'href="' . $root . 'manifest.webmanifest"', $html);
     $html = str_replace('href="icon.svg"', 'href="' . $root . 'icon.svg"', $html);
 
-    $hint = '<script>window.NYZA_BASE=' . json_encode($basePath ?: '') . ';</script>';
+    $hint = '<script>window.NYZA_BASE=' . json_encode($basePath ?: '') . ';</script>' . $extraHead;
     $html = preg_replace('/<head([^>]*)>/i', '<head$1>' . $hint, $html, 1);
     $res->getBody()->write($html);
     return $res->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -245,6 +246,7 @@ SignatureRoutes::mount($app);
 MailRoutes::mount($app);
 FormRoutes::mount($app);
 VaultRoutes::mount($app);
+PortalRoutes::mount($app);
 PushRoutes::mount($app);
 WebDavRoutes::mount($app);
 
@@ -282,7 +284,7 @@ $app->get('/{path:.+}', function ($req, $res, $args) use ($assetsRoot, $serveSpa
         }
         // SPA fallback for client-side routes (/s/<token>, /u/<token>, etc).
         if (file_exists($assetsRoot . '/index.html')) {
-            return $serveSpa($res);
+            return $serveSpa($res, \Nyza\OpenGraph::tags($path, $basePath));
         }
     }
     return Json::err($res, 'Not found', 404);
