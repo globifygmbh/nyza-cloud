@@ -267,6 +267,9 @@ final class Mail
         $m->Subject = (string)($msg['subject'] ?? '');
         $m->Body = (string)($msg['body'] ?? '');
         $m->isHTML(false);
+        foreach ((array)($msg['attachments'] ?? []) as $a) {
+            if (!empty($a['data'])) $m->addStringAttachment($a['data'], (string)($a['name'] ?? 'anhang'), 'base64', (string)($a['mime'] ?? 'application/octet-stream'));
+        }
         $m->send();
     }
 

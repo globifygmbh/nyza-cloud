@@ -5716,6 +5716,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const expTags = useEntityTags('expense', activeCompany);
   const [tagTarget, setTagTarget] = useState(null); // { type, id, name }
   const [signDoc, setSignDoc] = useState(null);     // document to send for signature
+  const [emailDoc, setEmailDoc] = useState(null);   // document to email
   const signUpRef = useRef(null);
   const signUpDocId = useRef(null);
 
@@ -5911,6 +5912,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                   <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
                     { label: 'PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.docPdfUrl(d.id, false), '_blank') },
                     { label: 'PDF herunterladen', icon: Ic.download(15), onClick: () => { window.location.href = API.docPdfUrl(d.id, true); } },
+                    { label: 'Per E-Mail senden', icon: Ic.inbox(15), onClick: () => setEmailDoc(d) },
                     { label: d.archived_file_id ? 'Erneut im DMS archivieren' : 'Im DMS archivieren', icon: Ic.archive(15), onClick: () => archiveDoc(d) },
                     { label: 'Tags…', icon: Ic.bolt(15), onClick: () => setTagTarget({ type: 'document', id: d.id, name: d.number }) },
                     { separator: true },
@@ -5950,8 +5952,72 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
           onClose={() => setTagTarget(null)}/>;
       })()}
       {signDoc && <SignatureCreateModal documentId={signDoc.id} documentLabel={(signDoc.type === 'offer' ? 'Angebot ' : 'Rechnung ') + signDoc.number} onClose={() => setSignDoc(null)}/>}
+      {emailDoc && <DocEmailModal doc={emailDoc} companyName={(companies.find((c) => String(c.id) === String(activeCompany))?.name) || ''} onClose={() => setEmailDoc(null)}/>}
       <input ref={signUpRef} type="file" accept="application/pdf,image/*" onChange={onSignUpload} style={{ display: 'none' }}/>
     </>
+  );
+}
+
+function DocEmailModal({ doc, companyName, onClose }) {
+  const [boxes, setBoxes] = useState([]);
+  const [mbId, setMbId] = useState('');
+  const [to, setTo] = useState(doc.client_snapshot?.email || '');
+  const [cc, setCc] = useState('');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [tpl, setTpl] = useState(null);
+  const [saveTpl, setSaveTpl] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const isOffer = doc.type === 'offer';
+  const fill = (s) => String(s || '')
+    .replaceAll('{number}', doc.number || '')
+    .replaceAll('{kunde}', doc.contact_name || doc.client_snapshot?.name || '')
+    .replaceAll('{betrag}', fmtEUR(doc.gross || 0))
+    .replaceAll('{datum}', fmtDateShort(doc.doc_date) || '')
+    .replaceAll('{faellig}', (() => { if (!doc.doc_date) return ''; const d = new Date(doc.doc_date); d.setDate(d.getDate() + 14); return d.toLocaleDateString('de-DE'); })())
+    .replaceAll('{firma}', companyName || '');
+  useEffect(() => {
+    API.mailboxes().then((d) => { setBoxes(d.mailboxes || []); if (d.mailboxes?.[0]) setMbId(String(d.mailboxes[0].id)); }).catch(() => {});
+    API.docMailTemplates().then((d) => { const t = d.templates?.[doc.type] || {}; setTpl(d.templates); setSubject(fill(t.subject)); setBody(fill(t.body)); }).catch(() => {});
+  }, []);
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+  const send = async () => {
+    if (!to.trim()) { toast('Empfänger fehlt', 'error'); return; }
+    if (!mbId) { toast('Postfach wählen', 'error'); return; }
+    setBusy(true);
+    try {
+      await API.emailDocument(doc.id, { mailbox_id: Number(mbId), to: to.trim(), cc: cc.trim(), subject, body });
+      if (saveTpl) { const next = { ...(tpl || {}), [doc.type]: { subject, body } }; await API.saveDocMailTemplates(next).catch(() => {}); }
+      toast('E-Mail gesendet', 'success'); onClose();
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 560, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.inbox(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>{(isOffer ? 'Angebot' : 'Rechnung')} {doc.number} senden</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+          {boxes.length === 0
+            ? <div style={{ fontSize: 13, color: 'var(--fg-3)' }}>Kein Postfach verbunden. Lege zuerst in der Mail-App ein Postfach an.</div>
+            : <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Absender-Postfach</span>
+                <select value={mbId} onChange={(e) => setMbId(e.target.value)} style={{ ...fld, cursor: 'pointer' }}>{boxes.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.email}</option>)}</select>
+              </label>}
+          <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="An (E-Mail)" style={fld}/>
+          <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Cc (optional)" style={fld}/>
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Betreff" style={fld}/>
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={7} placeholder="Nachricht…" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/>
+          <div style={{ fontSize: 11, color: 'var(--fg-4)' }}>Das PDF wird automatisch angehängt. Platzhalter: {'{number} {kunde} {betrag} {datum} {faellig} {firma}'}</div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}><input type="checkbox" checked={saveTpl} onChange={(e) => setSaveTpl(e.target.checked)} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }}/> Als Vorlage für {isOffer ? 'Angebote' : 'Rechnungen'} speichern</label>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy || boxes.length === 0} onClick={send} icon={busy ? Ic.loader(15) : Ic.upload(15)}>Senden</Btn>
+        </div>
+      </Glass>
+    </div>
   );
 }
 

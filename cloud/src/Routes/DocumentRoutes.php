@@ -29,6 +29,9 @@ final class DocumentRoutes
         $app->group('/api/documents', function (RouteCollectorProxy $g) {
             $g->get('',                  [self::class, 'list']);
             $g->post('',                 [self::class, 'create']);
+            $g->get('/mail-template',    [self::class, 'getMailTemplate']);
+            $g->put('/mail-template',    [self::class, 'putMailTemplate']);
+            $g->post('/{id}/email',      [self::class, 'email']);
             $g->get('/{id}',             [self::class, 'show']);
             $g->patch('/{id}',           [self::class, 'update']);
             $g->delete('/{id}',          [self::class, 'delete']);
@@ -475,6 +478,84 @@ final class DocumentRoutes
         if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
         Database::pdo()->prepare('UPDATE documents SET signed_at = NULL, signed_file_id = NULL WHERE id = ? AND company_id = ?')->execute([$id, $cid]);
         return Json::ok($res, ['document' => self::shapeFull($uid, $cid, self::fetchOne($cid, $id))]);
+    }
+
+    // ───── E-mail (send invoice/offer PDF) ───────────────────────────────────
+    private static function mailDefaults(): array
+    {
+        return [
+            'invoice' => [
+                'subject' => 'Rechnung {number}',
+                'body' => "Sehr geehrte Damen und Herren,\n\nanbei erhalten Sie die Rechnung {number} über {betrag}.\nWir bitten um Begleichung bis {faellig}.\n\nMit freundlichen Grüßen\n{firma}",
+            ],
+            'offer' => [
+                'subject' => 'Angebot {number}',
+                'body' => "Sehr geehrte Damen und Herren,\n\nanbei unser Angebot {number} über {betrag}.\nWir freuen uns auf Ihre Rückmeldung.\n\nMit freundlichen Grüßen\n{firma}",
+            ],
+        ];
+    }
+
+    public static function getMailTemplate(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $s = Database::pdo()->prepare("SELECT data FROM app_settings WHERE user_id = ? AND ns = 'doc_mail'");
+        $s->execute([$uid]);
+        $row = $s->fetch();
+        $saved = $row && $row['data'] ? json_decode((string)$row['data'], true) : [];
+        $out = self::mailDefaults();
+        if (is_array($saved)) {
+            foreach (['invoice', 'offer'] as $t) {
+                if (!empty($saved[$t]['subject'])) $out[$t]['subject'] = (string)$saved[$t]['subject'];
+                if (!empty($saved[$t]['body'])) $out[$t]['body'] = (string)$saved[$t]['body'];
+            }
+        }
+        return Json::ok($res, ['templates' => $out]);
+    }
+
+    public static function putMailTemplate(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $b = (array)$req->getParsedBody();
+        $clean = [];
+        foreach (['invoice', 'offer'] as $t) {
+            if (isset($b[$t]) && is_array($b[$t])) {
+                $clean[$t] = ['subject' => mb_substr((string)($b[$t]['subject'] ?? ''), 0, 255), 'body' => mb_substr((string)($b[$t]['body'] ?? ''), 0, 5000)];
+            }
+        }
+        Database::pdo()->prepare("INSERT INTO app_settings (user_id, ns, data) VALUES (?, 'doc_mail', ?) ON DUPLICATE KEY UPDATE data = VALUES(data)")
+            ->execute([$uid, json_encode($clean, JSON_UNESCAPED_UNICODE)]);
+        return Json::ok($res, ['ok' => true]);
+    }
+
+    public static function email(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
+        $d = self::fetchOne($cid, (int)$args['id']);
+        if (!$d) return Json::err($res, 'Not found', 404);
+        $b = (array)$req->getParsedBody();
+        $to = trim((string)($b['to'] ?? ''));
+        if ($to === '') return Json::err($res, 'Empfänger fehlt', 422);
+        $mbId = (int)($b['mailbox_id'] ?? 0);
+        $mbStmt = Database::pdo()->prepare('SELECT * FROM mailboxes WHERE id = ? AND user_id = ?');
+        $mbStmt->execute([$mbId, $uid]);
+        $mb = $mbStmt->fetch();
+        if (!$mb) return Json::err($res, 'Kein Postfach gewählt', 422);
+
+        $bytes = self::renderPdfBytes($uid, $cid, $d);
+        try {
+            \Nyza\Mail::send($mb, [
+                'to' => $to, 'cc' => $b['cc'] ?? '',
+                'subject' => (string)($b['subject'] ?? ($d['number'])),
+                'body' => (string)($b['body'] ?? ''),
+                'attachments' => [['name' => $d['number'] . '.pdf', 'mime' => 'application/pdf', 'data' => $bytes]],
+            ]);
+        } catch (\Throwable $e) {
+            return Json::err($res, 'Senden fehlgeschlagen: ' . $e->getMessage(), 502);
+        }
+        Database::pdo()->prepare("INSERT INTO activity (user_id, kind, payload) VALUES (?, 'doc_emailed', ?)")
+            ->execute([$uid, json_encode(['number' => $d['number'], 'to' => $to])]);
+        return Json::ok($res, ['ok' => true]);
     }
 
     // ───── Number counter ────────────────────────────────────────────────────

@@ -384,6 +384,9 @@ export const API = {
   docSignUpload:   (id, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/documents/' + id + '/sign-upload', { method: 'POST', body: fd }); },
   markDocSigned:   (id) => request('/api/documents/' + id + '/mark-signed', { method: 'POST', body: {} }),
   unmarkDocSigned: (id) => request('/api/documents/' + id + '/unmark-signed', { method: 'POST', body: {} }),
+  docMailTemplates: () => request('/api/documents/mail-template'),
+  saveDocMailTemplates: (body) => request('/api/documents/mail-template', { method: 'PUT', body }),
+  emailDocument: (id, body) => request('/api/documents/' + id + '/email', { method: 'POST', body }),
   // ───── Forms ─────
   forms:          () => request('/api/forms'),
   createForm:     (body) => request('/api/forms', { method: 'POST', body }),
