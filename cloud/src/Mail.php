@@ -30,6 +30,9 @@ final class Mail
     private static function open(array $mb, string $folder = 'INBOX')
     {
         if (!self::imapAvailable()) throw new \RuntimeException('IMAP nicht verfügbar (php-imap fehlt)', 503);
+        // Bound connection/read time so a slow server can never hang the cron.
+        @imap_timeout(IMAP_OPENTIMEOUT, 6);
+        @imap_timeout(IMAP_READTIMEOUT, 10);
         $pass = Crypto::decrypt($mb['imap_pass_enc'] ?? '');
         $stream = @imap_open(self::imapRef($mb, $folder), (string)$mb['imap_user'], $pass, 0, 1);
         if (!$stream) throw new \RuntimeException('IMAP-Login fehlgeschlagen: ' . imap_last_error(), 502);
@@ -106,15 +109,18 @@ final class Mail
         $stream = self::open($mb);
         try {
             $sinceUid = (int)($mb['belege_seen_uid'] ?? 0);
+            // Newest first; only inspect a bounded window so a huge inbox (or the
+            // very first run with sinceUid=0) can never time out the cron.
             $uids = @imap_sort($stream, SORTDATE, 1, SE_UID) ?: [];
+            $uids = array_slice($uids, 0, 30);
             $maxUid = $sinceUid;
             $found = [];
             foreach ($uids as $uid) {
                 $uid = (int)$uid;
-                if ($uid <= $sinceUid) continue;
                 if ($uid > $maxUid) $maxUid = $uid;
-                $struct = imap_fetchstructure($stream, $uid, FT_UID);
-                if (!$struct) continue;
+                if ($uid <= $sinceUid) continue;
+                $struct = @imap_fetchstructure($stream, $uid, FT_UID);
+                if (!$struct || self::countAttachments($struct) === 0) continue; // cheap skip
                 $text = ''; $atts = [];
                 self::walk($stream, $uid, $struct, '', $text, $atts);
                 $ov = imap_fetch_overview($stream, (string)$uid, FT_UID);
@@ -123,6 +129,7 @@ final class Mail
                     $m = strtolower($a['mime']);
                     if (str_contains($m, 'pdf') || str_starts_with($m, 'image/')) {
                         $found[] = ['uid' => $uid, 'name' => $a['name'], 'mime' => $a['mime'], 'data' => $a['data'], 'from' => $from];
+                        if (count($found) >= 20) return ['attachments' => $found, 'max_uid' => $maxUid];
                     }
                 }
             }
