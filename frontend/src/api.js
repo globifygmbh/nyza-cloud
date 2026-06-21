@@ -236,8 +236,8 @@ export const API = {
     if (download) qs.push('dl=1');
     return url('/api/s/' + token + '/file/' + fileId + (qs.length ? '?' + qs.join('&') : ''));
   },
-  shareZipUrl: (token, password) =>
-    url('/api/s/' + token + '/zip' + (password ? '?p=' + encodeURIComponent(password) : '')),
+  shareZipUrl: (token, password, ids) =>
+    url('/api/s/' + token + '/zip') + '?' + [password ? 'p=' + encodeURIComponent(password) : '', (ids && ids.length) ? 'ids=' + ids.join(',') : ''].filter(Boolean).join('&'),
   shareThumbUrl: (token, fileId, password) =>
     url('/api/s/' + token + '/file/' + fileId + '/thumb' + (password ? '?p=' + encodeURIComponent(password) : '')),
 

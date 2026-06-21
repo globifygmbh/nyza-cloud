@@ -196,7 +196,14 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
   const [showComments, setShowComments] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [dims, setDims] = useState(null);
-  useEffect(() => { setDims(null); }, [cur && cur.id]);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const panRef = useRef(null);
+  useEffect(() => { setDims(null); setZoom(1); setPan({ x: 0, y: 0 }); }, [cur && cur.id]);
+  const zoomBy = (d) => setZoom((z) => { const n = Math.min(6, Math.max(1, Math.round((z + d) * 10) / 10)); if (n === 1) setPan({ x: 0, y: 0 }); return n; });
+  const onImgPointerDown = (e) => { if (zoom <= 1) return; e.preventDefault(); panRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y }; e.currentTarget.setPointerCapture?.(e.pointerId); };
+  const onImgPointerMove = (e) => { if (!panRef.current) return; setPan({ x: panRef.current.px + (e.clientX - panRef.current.x), y: panRef.current.py + (e.clientY - panRef.current.y) }); };
+  const onImgPointerUp = () => { panRef.current = null; };
 
   const go = useCallback((d) => {
     if (!gallery) return;
@@ -223,7 +230,7 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
   // kind existed (stored as 'doc') still get a player.
   const isAudio = kind === 'audio' || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(cur.name || '');
   const stop = (e) => e.stopPropagation();
-  const onTouchStart = (e) => { touch.current = e.touches[0].clientX; };
+  const onTouchStart = (e) => { if (zoom > 1) { touch.current = null; return; } touch.current = e.touches[0].clientX; };
   const onTouchEnd = (e) => {
     if (touch.current == null) return;
     const dx = e.changedTouches[0].clientX - touch.current;
@@ -287,11 +294,25 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
           </video>
         )}
         {kind === 'image' && (
-          <img key={cur.id} src={curSrc} alt={cur.name} onClick={stop}
-            onLoad={(e) => setDims({ w: e.target.naturalWidth, h: e.target.naturalHeight })} style={{
-            maxWidth: '100%', maxHeight: '100%', borderRadius: 'var(--r-md)',
-            boxShadow: '0 30px 80px rgba(0,0,0,0.6)', objectFit: 'contain',
-          }}/>
+          <>
+            <img key={cur.id} src={curSrc} alt={cur.name}
+              onClick={(e) => { e.stopPropagation(); if (zoom === 1) zoomBy(1); }}
+              onDoubleClick={(e) => { e.stopPropagation(); zoom > 1 ? (setZoom(1), setPan({ x: 0, y: 0 })) : zoomBy(1.5); }}
+              onWheel={(e) => { e.stopPropagation(); zoomBy(e.deltaY < 0 ? 0.3 : -0.3); }}
+              onPointerDown={onImgPointerDown} onPointerMove={onImgPointerMove} onPointerUp={onImgPointerUp} onPointerCancel={onImgPointerUp}
+              onLoad={(e) => setDims({ w: e.target.naturalWidth, h: e.target.naturalHeight })} style={{
+              maxWidth: '100%', maxHeight: '100%', borderRadius: 'var(--r-md)',
+              boxShadow: '0 30px 80px rgba(0,0,0,0.6)', objectFit: 'contain',
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transition: panRef.current ? 'none' : 'transform .15s ease',
+              cursor: zoom > 1 ? (panRef.current ? 'grabbing' : 'grab') : 'zoom-in', touchAction: 'none',
+            }}/>
+            <div onClick={stop} style={{ position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 4, padding: 4, borderRadius: 999, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(10px)', zIndex: 3 }}>
+              <IconBtn size={34} title="Verkleinern" onClick={() => zoomBy(-0.5)} style={{ color: '#fff' }}>{Ic.minus ? Ic.minus(18) : '−'}</IconBtn>
+              <span onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} title="Zurücksetzen" style={{ color: '#fff', fontSize: 12, minWidth: 44, textAlign: 'center', cursor: 'pointer', fontVariantNumeric: 'tabular-nums' }}>{Math.round(zoom * 100)}%</span>
+              <IconBtn size={34} title="Vergrößern" onClick={() => zoomBy(0.5)} style={{ color: '#fff' }}>{Ic.plus(18)}</IconBtn>
+            </div>
+          </>
         )}
         {kind === 'pdf' && (
           <iframe key={cur.id} src={curSrc} title={cur.name} onClick={stop} style={{
@@ -2311,6 +2332,11 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const [galleryMode, setGalleryMode] = useState(folder?.kind === 'gallery');
   const [showInfo, setShowInfo] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
+  const [coverId, setCoverId] = useState(null);
+  const [folderImages, setFolderImages] = useState([]);
+  useEffect(() => {
+    if (folder?.id) API.folder(folder.id).then((d) => setFolderImages((d.files || []).filter((f) => f.kind === 'image'))).catch(() => {});
+  }, [folder?.id]);
   const [withExpiry, setWithExpiry] = useState(false);
   const [expiresAt, setExpiresAt] = useState(() => { const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10); });
   const [withInvite, setWithInvite] = useState(false);
@@ -2322,7 +2348,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const create = async () => {
     setBusy(true);
     try {
-      const body = { folder_id: folder?.id, file_id: file?.id, allow_download: allowDownload, show_info: showInfo, show_labels: showLabels };
+      const body = { folder_id: folder?.id, file_id: file?.id, allow_download: allowDownload, show_info: showInfo, show_labels: showLabels, cover_file_id: (galleryMode && coverId) ? coverId : null };
       if (folder && galleryMode) body.gallery = true;
       if (withPassword && password) body.password = password;
       if (withExpiry && expiresAt) body.expires_at = expiresAt + ' 23:59:59';
@@ -2353,6 +2379,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
     setGalleryMode(!!m.gallery);
     setShowInfo(!!m.show_info && m.show_info !== 0);
     setShowLabels(m.show_labels === undefined ? true : (!!m.show_labels && m.show_labels !== 0));
+    setCoverId(m.cover_file_id ? Number(m.cover_file_id) : null);
     setWithPassword(!!(m.has_password || m.password_hash));
     setWithExpiry(!!m.expires_at);
     if (m.expires_at) setExpiresAt(String(m.expires_at).slice(0, 10));
@@ -2360,7 +2387,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const editShare = async () => {
     setBusy(true);
     try {
-      const body = { allow_download: allowDownload, gallery: galleryMode, show_info: showInfo, show_labels: showLabels, expires_at: withExpiry && expiresAt ? expiresAt + ' 23:59:59' : '' };
+      const body = { allow_download: allowDownload, gallery: galleryMode, show_info: showInfo, show_labels: showLabels, cover_file_id: (galleryMode && coverId) ? coverId : null, expires_at: withExpiry && expiresAt ? expiresAt + ' 23:59:59' : '' };
       if (!withPassword) body.clear_password = true;
       else if (password) body.password = password;
       const d = await API.updateShare(created.id, body);
@@ -2368,6 +2395,18 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
       toast('Gespeichert', 'success'); onCreated && onCreated();
     } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
   };
+  const coverPicker = (galleryMode && folder && folderImages.length > 0) ? (
+    <div style={{ padding: '12px 0', borderTop: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 13.5, fontWeight: 500, marginBottom: 8 }}>Titelbild (optional)</div>
+      <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
+        <button type="button" onClick={() => setCoverId(null)} style={{ flexShrink: 0, width: 56, height: 56, borderRadius: 'var(--r-sm)', cursor: 'pointer', fontSize: 11, color: 'var(--fg-3)', background: 'var(--surface-hi)', border: '2px solid ' + (!coverId ? 'var(--accent)' : 'var(--border)') }}>Kein</button>
+        {folderImages.map((im) => (
+          <img key={im.id} src={API.thumbUrl(im.id)} alt="" onClick={() => setCoverId(im.id)}
+            style={{ flexShrink: 0, width: 56, height: 56, objectFit: 'cover', borderRadius: 'var(--r-sm)', cursor: 'pointer', border: '2px solid ' + (coverId === im.id ? 'var(--accent)' : 'var(--border)') }}/>
+        ))}
+      </div>
+    </div>
+  ) : null;
   const url = created ? location.origin + (basePath || '') + '/s/' + created.token : '';
   const delShare = async () => {
     if (!created?.id) { setCreated(null); return; }
@@ -2399,6 +2438,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
               {folder && <ShareToggleRow icon={Ic.fileImg} title="Galerie-Ansicht" desc={galleryMode ? 'Bilder schön als Galerie' : 'Normale Dateiliste'} on={galleryMode} onToggle={() => setGalleryMode(!galleryMode)}/>}
               <ShareToggleRow icon={Ic.eye} title="Datei-Infos anzeigen" desc="Größe, Dateiname, Datum im Viewer" on={showInfo} onToggle={() => setShowInfo(!showInfo)}/>
               {folder && <ShareToggleRow icon={Ic.star} title="Bewertungs-Punkte" desc="Rot/Gelb/Grün markieren erlauben" on={showLabels} onToggle={() => setShowLabels(!showLabels)}/>}
+              {coverPicker}
               <ShareToggleRow icon={Ic.lock} title="Mit Passwort schützen" desc={withPassword ? (created.has_password || created.password_hash ? 'Aktiv — leer lassen = unverändert' : 'Neues Passwort setzen') : 'Kein Schutz'} on={withPassword} onToggle={() => setWithPassword(!withPassword)}/>
               {withPassword && <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={created.has_password || created.password_hash ? 'Neues Passwort (leer = unverändert)' : 'Passwort eingeben'} style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', marginTop: 8 }}/>}
               <ShareToggleRow icon={Ic.clock} title="Ablaufdatum" desc={withExpiry ? expiresAt : 'Nie'} on={withExpiry} onToggle={() => setWithExpiry(!withExpiry)}/>
@@ -2416,6 +2456,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
               {folder && <ShareToggleRow icon={Ic.fileImg} title="Galerie-Ansicht" desc={galleryMode ? 'Bilder schön als Galerie' : 'Normale Dateiliste'} on={galleryMode} onToggle={() => setGalleryMode(!galleryMode)}/>}
               <ShareToggleRow icon={Ic.eye} title="Datei-Infos anzeigen" desc="Größe, Dateiname, Datum im Viewer" on={showInfo} onToggle={() => setShowInfo(!showInfo)}/>
               {folder && <ShareToggleRow icon={Ic.star} title="Bewertungs-Punkte" desc="Rot/Gelb/Grün markieren erlauben" on={showLabels} onToggle={() => setShowLabels(!showLabels)}/>}
+              {coverPicker}
               <ShareToggleRow icon={Ic.lock} title="Mit Passwort schützen" desc={withPassword ? 'Aktiv' : 'Kein Schutz'} on={withPassword} onToggle={() => setWithPassword(!withPassword)}/>
               {withPassword && <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Passwort eingeben" style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', marginTop: 8 }}/>}
               <ShareToggleRow icon={Ic.clock} title="Ablaufdatum" desc={withExpiry ? expiresAt : 'Nie'} on={withExpiry} onToggle={() => setWithExpiry(!withExpiry)}/>

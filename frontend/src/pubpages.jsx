@@ -82,6 +82,14 @@ export function PublicSharePage({ token }) {
   const [pwBusy, setPwBusy] = useState(false);
   const [viewing, setViewing] = useState(null);
   const [viewMode, setViewMode] = useState('grid');
+  const [selMode, setSelMode] = useState(false);
+  const [sel, setSel] = useState(() => new Set());
+  const [cols, setCols] = useState(() => (typeof window !== 'undefined' && window.innerWidth <= 600) ? 2 : (typeof window !== 'undefined' && window.innerWidth <= 1000) ? 3 : 4);
+  useEffect(() => {
+    const h = () => setCols(window.innerWidth <= 600 ? 2 : window.innerWidth <= 1000 ? 3 : 4);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
 
   const load = (pw) => {
     setState({ status: 'loading' });
@@ -145,52 +153,75 @@ export function PublicSharePage({ token }) {
       <div style={{ height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
         <ShareHeader owner={data.owner}/>
 
+        {(() => { const cv = data.cover_file_id && media.find((m) => m.id === data.cover_file_id); return cv ? (
+          <div style={{ maxWidth: 1400, margin: '0 auto', padding: '24px 28px 0' }}>
+            <div style={{ position: 'relative', borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: 420 }}>
+              <img src={API.shareFileUrl(token, cv.id, password)} alt={name} style={{ width: '100%', maxHeight: 420, objectFit: 'cover', display: 'block' }}/>
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent 55%)' }}/>
+              <h1 className="nyza-gallery-title" style={{ position: 'absolute', left: 28, bottom: 20, right: 28, color: '#fff', fontFamily: 'var(--font-display)', fontSize: 48, fontWeight: 600, letterSpacing: -1.4, margin: 0, lineHeight: 1, wordBreak: 'break-word', textShadow: '0 2px 20px rgba(0,0,0,0.5)' }}>{name}</h1>
+            </div>
+          </div>
+        ) : null; })()}
+
         <div className="nyza-gallery-wrap" style={{ padding: '28px 28px 70px', maxWidth: 1400, margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 22 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10 }}>Galerie</div>
-              <h1 className="nyza-gallery-title" style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 600, letterSpacing: -1.6, margin: 0, lineHeight: 1.0, wordBreak: 'break-word' }}>{name}</h1>
+              {!(data.cover_file_id && media.find((m) => m.id === data.cover_file_id)) && <h1 className="nyza-gallery-title" style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 600, letterSpacing: -1.6, margin: 0, lineHeight: 1.0, wordBreak: 'break-word' }}>{name}</h1>}
               <p style={{ fontSize: 14, color: 'var(--fg-2)', marginTop: 12 }}>
                 {media.length} {media.length === 1 ? 'Medium' : 'Medien'} · {humanSize(totalSize)}
                 {data.expires_at && <> · bis {new Date(data.expires_at).toLocaleDateString('de-DE')}</>}
               </p>
             </div>
             {data.allow_download && (
-              <Btn variant="primary" size="lg" icon={Ic.download(18)} onClick={() => location.href = API.shareZipUrl(token, password)}>Alle herunterladen</Btn>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Btn variant={selMode ? 'primary' : 'glass'} size="md" icon={Ic.checkSquare(15)} onClick={() => { setSelMode((m) => !m); setSel(new Set()); }}>{selMode ? 'Auswahl beenden' : 'Auswählen'}</Btn>
+                {selMode && sel.size > 0
+                  ? <Btn variant="primary" size="lg" icon={Ic.download(18)} onClick={() => location.href = API.shareZipUrl(token, password, [...sel])}>{sel.size} herunterladen</Btn>
+                  : <Btn variant={selMode ? 'glass' : 'primary'} size="lg" icon={Ic.download(18)} onClick={() => location.href = API.shareZipUrl(token, password)}>Alle herunterladen</Btn>}
+              </div>
             )}
           </div>
 
-          <div className="nyza-masonry">
-            {media.map((f) => (
-              <div key={f.id} onClick={() => setViewing(f)}>
-                {f.kind === 'video' ? (
-                  <div style={{ position: 'relative' }}>
-                    <video src={API.shareFileUrl(token, f.id, password) + '#t=0.1'} preload="metadata" muted playsInline
-                      style={{ width: '100%', display: 'block' }}/>
-                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-                      <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <svg width="18" height="18" viewBox="0 0 14 14" fill="#fff"><path d="M3 1l9 6-9 6z"/></svg>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            {Array.from({ length: cols }, (_, ci) => media.filter((_, i) => i % cols === ci)).map((col, ci) => (
+              <div key={ci} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {col.map((f) => {
+                  const picked = sel.has(f.id);
+                  return (
+                  <div key={f.id} style={{ position: 'relative', cursor: 'pointer', borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)', outline: picked ? '3px solid var(--accent)' : 'none', outlineOffset: -3 }}
+                    onClick={() => { if (selMode) { setSel((s) => { const n = new Set(s); n.has(f.id) ? n.delete(f.id) : n.add(f.id); return n; }); } else { setViewing(f); } }}>
+                    {f.kind === 'video' ? (
+                      <div style={{ position: 'relative' }}>
+                        <video src={API.shareFileUrl(token, f.id, password) + '#t=0.1'} preload="metadata" muted playsInline style={{ width: '100%', display: 'block' }}/>
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                          <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <svg width="18" height="18" viewBox="0 0 14 14" fill="#fff"><path d="M3 1l9 6-9 6z"/></svg>
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <img src={API.shareThumbUrl(token, f.id, password)} alt={f.name} loading="lazy" decoding="async" style={{ width: '100%', display: 'block' }}/>
+                    )}
+                    {selMode && (
+                      <div style={{ position: 'absolute', top: 8, left: 8, width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: picked ? 'var(--accent-grad)' : 'rgba(0,0,0,0.45)', border: '2px solid ' + (picked ? 'transparent' : 'rgba(255,255,255,0.85)'), color: '#fff', backdropFilter: 'blur(6px)', zIndex: 4 }}>{picked && Ic.check(14)}</div>
+                    )}
+                    {f.label && (
+                      <div style={{ position: 'absolute', top: 8, right: 8, width: 14, height: 14, borderRadius: '50%', background: f.label === 'red' ? '#ef4444' : f.label === 'yellow' ? '#eab308' : '#22c55e', border: '2px solid rgba(255,255,255,0.8)', boxShadow: '0 1px 4px rgba(0,0,0,0.4)' }}/>
+                    )}
+                    {!selMode && data.show_labels !== false && <div className="gallery-label-btns"
+                      onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}
+                      style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', gap: 6, opacity: 0, padding: 5, borderRadius: 999, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', zIndex: 3 }}>
+                      {[['red','#ef4444','Überarbeiten'],['yellow','#eab308','Auswahl'],['green','#22c55e','Freigegeben']].map(([lbl, col2, nm]) => (
+                        <button key={lbl} type="button"
+                          onClick={(e) => { e.stopPropagation(); API.shareSetLabel(token, f.id, f.label === lbl ? null : lbl, password).then(() => { setState((s) => ({ ...s, data: { ...s.data, files: (s.data.files || []).map((x) => x.id === f.id ? { ...x, label: x.label === lbl ? null : lbl } : x) } })); }).catch(() => {}); }}
+                          title={nm}
+                          style={{ width: 26, height: 26, borderRadius: '50%', border: '2px solid ' + (f.label === lbl ? '#fff' : 'rgba(255,255,255,0.6)'), background: col2, cursor: 'pointer', padding: 0 }}/>
+                      ))}
+                    </div>}
                   </div>
-                ) : (
-                  <img src={API.shareThumbUrl(token, f.id, password)} alt={f.name} loading="lazy" decoding="async"/>
-                )}
-                {f.label && (
-                  <div style={{ position: 'absolute', top: 8, right: 8, width: 14, height: 14, borderRadius: '50%', background: f.label === 'red' ? '#ef4444' : f.label === 'yellow' ? '#eab308' : '#22c55e', border: '2px solid rgba(255,255,255,0.8)', boxShadow: '0 1px 4px rgba(0,0,0,0.4)' }}
-                    title={f.label === 'red' ? 'Überarbeiten' : f.label === 'yellow' ? 'Auswahl' : 'Freigegeben'}/>
-                )}
-                {data.show_labels !== false && <div className="gallery-label-btns"
-                  onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}
-                  style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', gap: 6, opacity: 0, padding: 5, borderRadius: 999, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', zIndex: 3 }}>
-                  {[['red','#ef4444','Überarbeiten'],['yellow','#eab308','Auswahl'],['green','#22c55e','Freigegeben']].map(([lbl, col, name]) => (
-                    <button key={lbl} type="button"
-                      onClick={(e) => { e.stopPropagation(); API.shareSetLabel(token, f.id, f.label === lbl ? null : lbl, password).then(() => { setState((s) => ({ ...s, data: { ...s.data, files: (s.data.files || []).map((x) => x.id === f.id ? { ...x, label: x.label === lbl ? null : lbl } : x) } })); }).catch(() => {}); }}
-                      title={name}
-                      style={{ width: 26, height: 26, borderRadius: '50%', border: '2px solid ' + (f.label === lbl ? '#fff' : 'rgba(255,255,255,0.6)'), background: col, cursor: 'pointer', padding: 0 }}/>
-                  ))}
-                </div>}
-                <div className="ov"><span>{f.name}</span></div>
+                  );
+                })}
               </div>
             ))}
           </div>

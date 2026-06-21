@@ -145,12 +145,13 @@ final class ShareRoutes
         $gallery = ($folder && !empty($b['gallery'])) ? 1 : 0;
         $showInfo = isset($b['show_info']) ? (int)(bool)$b['show_info'] : 0;
         $showLabels = isset($b['show_labels']) ? (int)(bool)$b['show_labels'] : 1;
+        $cover = ($folder && !empty($b['cover_file_id'])) ? (int)$b['cover_file_id'] : null;
 
         $ins = Database::pdo()->prepare(
-            'INSERT INTO share_links (user_id, folder_id, file_id, token, password_hash, expires_at, allow_download, gallery, show_info, show_labels) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO share_links (user_id, folder_id, file_id, token, password_hash, expires_at, allow_download, gallery, show_info, show_labels, cover_file_id) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
-        $ins->execute([$uid, $folder, $file, $token, $passwordHash, $expires, $allowDownload, $gallery, $showInfo, $showLabels]);
+        $ins->execute([$uid, $folder, $file, $token, $passwordHash, $expires, $allowDownload, $gallery, $showInfo, $showLabels, $cover]);
         $id = (int)Database::pdo()->lastInsertId();
 
         // Optional: invite people by email. The frontend passes the fully-built
@@ -217,6 +218,7 @@ final class ShareRoutes
         if (array_key_exists('gallery', $b)) { $sets[] = 'gallery = ?'; $params[] = ($share['folder_id'] && !empty($b['gallery'])) ? 1 : 0; }
         if (array_key_exists('show_info', $b)) { $sets[] = 'show_info = ?'; $params[] = (int)(bool)$b['show_info']; }
         if (array_key_exists('show_labels', $b)) { $sets[] = 'show_labels = ?'; $params[] = (int)(bool)$b['show_labels']; }
+        if (array_key_exists('cover_file_id', $b)) { $sets[] = 'cover_file_id = ?'; $params[] = !empty($b['cover_file_id']) ? (int)$b['cover_file_id'] : null; }
         if (array_key_exists('expires_at', $b)) { $sets[] = 'expires_at = ?'; $params[] = !empty($b['expires_at']) ? (string)$b['expires_at'] : null; }
         if (!empty($b['clear_password'])) { $sets[] = 'password_hash = ?'; $params[] = null; }
         elseif (array_key_exists('password', $b) && (string)$b['password'] !== '') { $sets[] = 'password_hash = ?'; $params[] = password_hash((string)$b['password'], PASSWORD_BCRYPT); }
@@ -361,6 +363,7 @@ final class ShareRoutes
             'gallery' => !empty($share['gallery']),
             'show_info' => !empty($share['show_info']),
             'show_labels' => !isset($share['show_labels']) || !empty($share['show_labels']),
+            'cover_file_id' => !empty($share['cover_file_id']) ? (int)$share['cover_file_id'] : null,
             'expires_at' => $share['expires_at'],
             'owner' => $ownerRow ? [
                 'id' => (int)$ownerRow['id'], 'name' => $ownerRow['name'], 'email' => $ownerRow['email'],
@@ -401,6 +404,14 @@ final class ShareRoutes
         $files->execute([(int)$share['folder_id']]);
         $rows = $files->fetchAll();
         if (!$rows) return Json::err($res, 'No files', 404);
+
+        // Optional ?ids=1,2,3 → only zip the selected files (customer selection).
+        $idsParam = (string)($req->getQueryParams()['ids'] ?? '');
+        if ($idsParam !== '') {
+            $want = array_flip(array_filter(array_map('intval', explode(',', $idsParam))));
+            $rows = array_values(array_filter($rows, static fn($r) => isset($want[(int)$r['id']])));
+            if (!$rows) return Json::err($res, 'No files', 404);
+        }
 
         $members = [];
         foreach ($rows as $r) {
