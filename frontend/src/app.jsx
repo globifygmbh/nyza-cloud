@@ -2334,6 +2334,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const [showLabels, setShowLabels] = useState(true);
   const [coverId, setCoverId] = useState(null);
   const [folderImages, setFolderImages] = useState([]);
+  const [stats, setStats] = useState(null);
   useEffect(() => {
     if (folder?.id) API.folder(folder.id).then((d) => setFolderImages((d.files || []).filter((f) => f.kind === 'image'))).catch(() => {});
   }, [folder?.id]);
@@ -2374,6 +2375,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
       if (m) { setCreated(m); initFromShare(m); }
     }).catch(() => {});
   }, []);
+  useEffect(() => { if (created?.id) API.shareEvents(created.id).then(setStats).catch(() => {}); }, [created?.id]);
   const initFromShare = (m) => {
     setAllowDownload(m.allow_download !== 0 && m.allow_download !== false);
     setGalleryMode(!!m.gallery);
@@ -2433,6 +2435,16 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
                 <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{url}</span>
                 <Btn variant="primary" size="sm" icon={Ic.copy(13)} onClick={() => { navigator.clipboard?.writeText(url); toast('Link kopiert', 'success'); }}>Kopieren</Btn>
               </div>
+              {stats && (
+                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                  {[['Aufrufe', (stats.summary?.views ?? stats.views) || 0, Ic.eye], ['Downloads', (stats.summary?.downloads ?? stats.downloads) || 0, Ic.download]].map(([l, v, ic]) => (
+                    <div key={l} style={{ flex: 1, padding: '10px 12px', borderRadius: 'var(--r-md)', background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 11, color: 'var(--fg-3)', display: 'flex', alignItems: 'center', gap: 5 }}>{ic(12)} {l}</div>
+                      <div style={{ fontSize: 20, fontFamily: 'var(--font-display)', fontWeight: 600 }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* Edit existing link settings in place */}
               <ShareToggleRow icon={Ic.download} title="Download erlauben" desc="ZIP & Einzeldownload" on={allowDownload} onToggle={() => setAllowDownload(!allowDownload)}/>
               {folder && <ShareToggleRow icon={Ic.fileImg} title="Galerie-Ansicht" desc={galleryMode ? 'Bilder schön als Galerie' : 'Normale Dateiliste'} on={galleryMode} onToggle={() => setGalleryMode(!galleryMode)}/>}
