@@ -351,6 +351,84 @@ final class FileRoutes
         return 1;
     }
 
+    /** Read the EXIF capture date ("YYYY:MM:DD HH:MM:SS") from a JPEG without the
+     *  php-exif extension. Returns null if none found. */
+    private static function jpegExifDate(string $src): ?string
+    {
+        $fh = @fopen($src, 'rb');
+        if (!$fh) return null;
+        $t = null;
+        try {
+            if (fread($fh, 2) !== "\xFF\xD8") return null;
+            while (!feof($fh)) {
+                $marker = fread($fh, 2);
+                if (strlen($marker) < 2 || $marker[0] !== "\xFF") return null;
+                $m = ord($marker[1]);
+                if ($m === 0xDA || $m === 0xD9) return null;
+                $lb = fread($fh, 2);
+                if (strlen($lb) < 2) return null;
+                $seg = ((ord($lb[0]) << 8) + ord($lb[1])) - 2;
+                if ($seg < 0) return null;
+                if ($m === 0xE1) {
+                    $data = fread($fh, $seg);
+                    if (substr($data, 0, 6) === "Exif\x00\x00") { $t = substr($data, 6); }
+                    break;
+                }
+                fseek($fh, $seg, SEEK_CUR);
+            }
+        } catch (\Throwable $e) { return null; } finally { fclose($fh); }
+        if ($t === null || strlen($t) < 8) return null;
+
+        $le = substr($t, 0, 2) === 'II';
+        $len = strlen($t);
+        $u16 = static function (int $o) use ($t, $le, $len): int {
+            if ($o < 0 || $o + 2 > $len) return 0;
+            return $le ? (ord($t[$o]) | (ord($t[$o + 1]) << 8)) : ((ord($t[$o]) << 8) | ord($t[$o + 1]));
+        };
+        $u32 = static function (int $o) use ($t, $le, $len): int {
+            if ($o < 0 || $o + 4 > $len) return 0;
+            return $le ? (ord($t[$o]) | (ord($t[$o + 1]) << 8) | (ord($t[$o + 2]) << 16) | (ord($t[$o + 3]) << 24))
+                       : ((ord($t[$o]) << 24) | (ord($t[$o + 1]) << 16) | (ord($t[$o + 2]) << 8) | ord($t[$o + 3]));
+        };
+        $readDate = static function (int $entry) use ($t, $len, $u32): ?string {
+            $count = $u32($entry + 4);
+            if ($count < 19) return null;
+            $off = $u32($entry + 8);
+            if ($off <= 0 || $off + 19 > $len) return null;
+            $s = substr($t, $off, 19);
+            return preg_match('/^\d{4}:\d\d:\d\d \d\d:\d\d:\d\d$/', $s) ? $s : null;
+        };
+
+        // IFD0: find DateTime (0x0132) and the Exif sub-IFD pointer (0x8769).
+        $ifd0 = $u32(4);
+        $dateTime = null; $exifIfd = 0;
+        if ($ifd0 + 2 <= $len) {
+            $n = $u16($ifd0);
+            for ($i = 0; $i < $n; $i++) {
+                $e = $ifd0 + 2 + $i * 12;
+                if ($e + 12 > $len) break;
+                $tag = $u16($e);
+                if ($tag === 0x0132) $dateTime = $readDate($e);
+                elseif ($tag === 0x8769) $exifIfd = $u32($e + 8);
+            }
+        }
+        // Exif sub-IFD: DateTimeOriginal (0x9003) → DateTimeDigitized (0x9004).
+        if ($exifIfd > 0 && $exifIfd + 2 <= $len) {
+            $n = $u16($exifIfd);
+            $orig = null; $dig = null;
+            for ($i = 0; $i < $n; $i++) {
+                $e = $exifIfd + 2 + $i * 12;
+                if ($e + 12 > $len) break;
+                $tag = $u16($e);
+                if ($tag === 0x9003) $orig = $readDate($e);
+                elseif ($tag === 0x9004) $dig = $readDate($e);
+            }
+            if ($orig) return $orig;
+            if ($dig) return $dig;
+        }
+        return $dateTime;
+    }
+
     private static function makeThumb(string $src, string $dst, string $mime, int $max): bool
     {
         try {
@@ -398,7 +476,6 @@ final class FileRoutes
      */
     public static function backfillTakenAt(?int $folderId, int $limit = 300): int
     {
-        if (!function_exists('exif_read_data')) return 0;
         $pdo = Database::pdo();
         $sql = "SELECT id, storage_path, mime_type FROM files WHERE taken_at IS NULL AND deleted_at IS NULL "
              . "AND mime_type IN ('image/jpeg','image/tiff') "
@@ -1057,16 +1134,17 @@ final class FileRoutes
      */
     private static function extractTakenAt(string $abs, string $mime): ?string
     {
-        if (!function_exists('exif_read_data')) return null;
         if (!in_array(strtolower($mime), ['image/jpeg', 'image/tiff'], true)) return null;
         if (!is_file($abs)) return null;
-        try {
-            $exif = @exif_read_data($abs);
-        } catch (\Throwable $e) {
-            return null;
+        $raw = null;
+        if (function_exists('exif_read_data')) {
+            try {
+                $exif = @exif_read_data($abs);
+                if (is_array($exif)) $raw = $exif['DateTimeOriginal'] ?? $exif['DateTimeDigitized'] ?? $exif['DateTime'] ?? null;
+            } catch (\Throwable $e) { $raw = null; }
         }
-        if (!is_array($exif)) return null;
-        $raw = $exif['DateTimeOriginal'] ?? $exif['DateTimeDigitized'] ?? $exif['DateTime'] ?? null;
+        // Fallback for servers without php-exif: parse the date straight from the JPEG.
+        if (!is_string($raw) || $raw === '') $raw = self::jpegExifDate($abs);
         if (!is_string($raw) || $raw === '') return null;
         // EXIF dates are "YYYY:MM:DD HH:MM:SS"; tolerate already-normalised too.
         $ts = strtotime(str_replace(':', '-', substr($raw, 0, 10)) . substr($raw, 10));
