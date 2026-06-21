@@ -3782,11 +3782,17 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectM
   const selecting = (selected && selected.size > 0) || !!selectMode;
   const media = files.filter((f) => f.kind === 'image' || f.kind === 'video');
   const others = files.filter((f) => f.kind !== 'image' && f.kind !== 'video');
+  const [cols, setCols] = useState(() => (typeof window !== 'undefined' && window.innerWidth <= 600) ? 2 : (typeof window !== 'undefined' && window.innerWidth <= 1100) ? 3 : 4);
+  useEffect(() => {
+    const h = () => setCols(window.innerWidth <= 600 ? 2 : window.innerWidth <= 1100 ? 3 : 4);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
 
   // Group by capture month/year — prefer the photo's EXIF date (taken_at),
-  // fall back to the upload date. Sorted newest first.
+  // fall back to the upload date. Chronological (oldest first).
   const dateOf = (f) => parsePhotoDate(f.taken_at) || parsePhotoDate(f.created_at) || new Date(0);
-  const sorted = [...media].sort((a, b) => dateOf(b).getTime() - dateOf(a).getTime());
+  const sorted = [...media].sort((a, b) => dateOf(a).getTime() - dateOf(b).getTime());
   const groups = [];
   const seen = {};
   for (const f of sorted) {
@@ -3805,8 +3811,10 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectM
             <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>{g.files.length}</span>
             <div style={{ flex: 1, height: 1, background: 'var(--border)' }}/>
           </div>
-          <div className="nyza-masonry">
-            {g.files.map((f) => {
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+           {Array.from({ length: cols }, (_, ci) => g.files.filter((_, i) => i % cols === ci)).map((col, ci) => (
+            <div key={ci} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {col.map((f) => {
               const sel = selected ? selected.has(f.id) : false;
               return (
               <div key={f.id} data-fid={f.id} onClick={(e) => { if (selecting && onToggleSelect) { e.stopPropagation(); onToggleSelect(f.id); } else { onOpen(f); } }}
@@ -3854,6 +3862,8 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectM
               </div>
               );
             })}
+            </div>
+           ))}
           </div>
         </div>
       ))}
