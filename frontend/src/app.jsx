@@ -3819,7 +3819,7 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectM
       {others.length > 0 && (
         <div style={{ marginTop: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', marginBottom: 12 }}>Andere Dateien</div>
-          <FileGrid files={others} selected={new Set()} onOpen={onOpen} onToggleSelect={() => {}} onDragSelect={() => {}} onToggleStar={() => {}} onDragFiles={() => {}} onContext={() => {}} selectMode={false}/>
+          <FileGrid files={others} selected={selected || new Set()} onOpen={onOpen} onToggleSelect={onToggleSelect || (() => {})} onDragSelect={() => {}} onToggleStar={() => {}} onDragFiles={() => {}} onContext={onContext} selectMode={selectMode}/>
         </div>
       )}
       {media.length === 0 && others.length === 0 && (

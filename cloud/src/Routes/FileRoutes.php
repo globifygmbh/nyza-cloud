@@ -391,6 +391,38 @@ final class FileRoutes
         }
     }
 
+    /**
+     * Backfill files.taken_at from EXIF for images uploaded before php-exif was
+     * available (so galleries can sort by capture time). Bounded; optionally
+     * scoped to one folder. Returns how many were filled.
+     */
+    public static function backfillTakenAt(?int $folderId, int $limit = 300): int
+    {
+        if (!function_exists('exif_read_data')) return 0;
+        $pdo = Database::pdo();
+        $sql = "SELECT id, storage_path, mime_type FROM files WHERE taken_at IS NULL AND deleted_at IS NULL "
+             . "AND mime_type IN ('image/jpeg','image/tiff') "
+             . ($folderId !== null ? 'AND folder_id = ? ' : '')
+             . "ORDER BY id DESC LIMIT " . (int)$limit;
+        $st = $pdo->prepare($sql);
+        $st->execute($folderId !== null ? [$folderId] : []);
+        $rows = $st->fetchAll();
+        if (!$rows) return 0;
+        $upd = $pdo->prepare('UPDATE files SET taken_at = ? WHERE id = ?');
+        $n = 0;
+        foreach ($rows as $r) {
+            $t = self::extractTakenAt(Storage::abs($r['storage_path']), (string)$r['mime_type']);
+            if ($t) { $upd->execute([$t, (int)$r['id']]); $n++; }
+        }
+        return $n;
+    }
+
+    public static function backfillTakenAtEndpoint(Request $req, Response $res): Response
+    {
+        $n = self::backfillTakenAt(null, 1000);
+        return Json::ok($res, ['filled' => $n]);
+    }
+
     public static function upload(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');

@@ -111,6 +111,10 @@ final class FolderRoutes
             }
         }
 
+        // Fill missing capture times from EXIF so the gallery sorts correctly
+        // (cheap once filled; no-op for already-processed folders).
+        try { FileRoutes::backfillTakenAt($id, 500); } catch (\Throwable $e) {}
+
         // Once access is confirmed, list the folder's ACTUAL contents (owner's
         // files / subfolders) by folder_id — not by the viewer's user_id — so a
         // shared folder shows what's really inside it. deleted_at still filtered.

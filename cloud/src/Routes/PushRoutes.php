@@ -268,6 +268,9 @@ final class PushRoutes
         $belege = 0;
         try { $belege = \Nyza\Routes\MailRoutes::cronImport(); } catch (\Throwable $e) {}
 
+        // Backfill capture times from EXIF (gallery sort) — bounded per run.
+        try { \Nyza\Routes\FileRoutes::backfillTakenAt(null, 300); } catch (\Throwable $e) {}
+
         return ['checked_users' => $checked, 'sent' => $sent, 'belege_imported' => $belege];
     }
 
