@@ -185,7 +185,7 @@ function mdTabStyle(active) {
 // Gallery-capable: pass items[] + startIndex + srcFor()/downloadFor() to enable
 // ←/→ keys, on-screen arrows and touch-swipe between files. Single-file mode
 // (file + src + downloadHref) still works.
-export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onSaveText, comments, info = true, onClose }) {
+export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onSaveText, comments, info = true, metaFor, onClose }) {
   const gallery = Array.isArray(items) && items.length > 0;
   const [idx, setIdx] = useState(startIndex);
   const cur = gallery ? items[idx] : file;
@@ -342,29 +342,50 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
         <CommentsPanel key={cur.id} file={cur} cfg={comments} onClose={() => setShowComments(false)}/>
       )}
       {info && showInfo && (
-        <InfoPanel file={cur} dims={dims} onClose={() => setShowInfo(false)}/>
+        <InfoPanel file={cur} dims={dims} metaFor={metaFor} onClose={() => setShowInfo(false)}/>
       )}
     </div>
   );
 }
 
-// File metadata drawer (right) shown inside the MediaViewer.
-function InfoPanel({ file, dims, onClose }) {
+// File metadata window (floating card, right) shown inside the MediaViewer.
+function InfoPanel({ file, dims, metaFor, onClose }) {
+  const [meta, setMeta] = useState(null);
+  useEffect(() => {
+    setMeta(null);
+    if (metaFor) Promise.resolve(metaFor(file)).then((d) => setMeta(d?.meta || d || {})).catch(() => setMeta({}));
+  }, [file && file.id]);
   const fmt = (s) => { if (!s) return null; const d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? s : d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
   const ext = (file.name || '').includes('.') ? file.name.split('.').pop().toUpperCase() : '—';
+  const dimStr = (meta && meta.width) ? (meta.width + ' × ' + meta.height + ' px') : (dims ? dims.w + ' × ' + dims.h + ' px' : null);
   const rows = [
     ['Name', file.name],
-    ['Typ', (file.mime_type || '') + (file.mime_type ? '' : ext)],
+    ['Typ', file.mime_type || ext],
     ['Größe', humanSize(file.size || 0)],
-    dims ? ['Abmessungen', dims.w + ' × ' + dims.h + ' px'] : null,
+    dimStr ? ['Abmessungen', dimStr] : null,
     file.taken_at ? ['Aufgenommen', fmt(file.taken_at)] : null,
     ['Hochgeladen', fmt(file.created_at)],
     file.uploader_name ? ['Von', file.uploader_name] : null,
   ].filter(Boolean);
+  const exif = meta ? [
+    meta.camera ? ['Kamera', meta.camera] : null,
+    meta.lens ? ['Objektiv', meta.lens] : null,
+    meta.aperture ? ['Blende', meta.aperture] : null,
+    meta.exposure ? ['Belichtung', meta.exposure] : null,
+    meta.iso ? ['ISO', meta.iso] : null,
+    meta.focal ? ['Brennweite', meta.focal] : null,
+  ].filter(Boolean) : [];
+  const Row = ([k, v]) => (
+    <div key={k} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 2 }}>{k}</div>
+      <div style={{ fontSize: 13.5, color: 'var(--fg)', wordBreak: 'break-word' }}>{v}</div>
+    </div>
+  );
   return (
-    <div onClick={(e) => e.stopPropagation()} className="nyza-comments" style={{
-      position: 'absolute', top: 60, right: 0, bottom: 0, width: 320, maxWidth: '90vw', zIndex: 6,
-      background: 'var(--surface)', borderLeft: '1px solid var(--border-hi)',
+    <div onClick={(e) => e.stopPropagation()} style={{
+      position: 'absolute', top: 72, right: 16, bottom: 16, width: 320, maxWidth: 'calc(100vw - 32px)', zIndex: 6,
+      background: 'var(--surface)', border: '1px solid var(--border-hi)', borderRadius: 'var(--r-xl)',
+      boxShadow: '0 24px 70px rgba(0,0,0,0.5)', overflow: 'hidden',
       backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)',
       display: 'flex', flexDirection: 'column', animation: 'slideUp 0.2s ease',
     }}>
@@ -373,13 +394,14 @@ function InfoPanel({ file, dims, onClose }) {
         <span style={{ flex: 1, fontWeight: 600, fontSize: 14, color: 'var(--fg)' }}>Informationen</span>
         <IconBtn size={28} onClick={onClose}>{Ic.close(15)}</IconBtn>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
-        {rows.map(([k, v]) => (
-          <div key={k} style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 2 }}>{k}</div>
-            <div style={{ fontSize: 13.5, color: 'var(--fg)', wordBreak: 'break-word' }}>{v}</div>
-          </div>
-        ))}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 16px 16px' }}>
+        {rows.map(Row)}
+        {exif.length > 0 && (
+          <>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: 'var(--fg-3)', margin: '16px 0 4px' }}>Aufnahme</div>
+            {exif.map(Row)}
+          </>
+        )}
       </div>
     </div>
   );
@@ -1396,9 +1418,10 @@ function TagChips({ ids, tags, max = 4, small }) {
 }
 
 // Modal to add/remove/create tags for one entity. selectedIds is a Set.
-function TagPickerModal({ title = 'Tags', tags, selectedIds, onToggle, onCreate, onClose }) {
+function TagPickerModal({ title = 'Tags', tags, selectedIds, onToggle, onCreate, onDelete, onClose }) {
   const [name, setName] = useState('');
   const [color, setColor] = useState('violet');
+  const [manage, setManage] = useState(false);
   const [busy, setBusy] = useState(false);
   const create = async () => {
     const n = name.trim();
@@ -1411,6 +1434,7 @@ function TagPickerModal({ title = 'Tags', tags, selectedIds, onToggle, onCreate,
       <Glass style={{ width: '100%', maxWidth: 420, borderRadius: 'var(--r-xl)', padding: 24 }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>{title}</h2>
+          {onDelete && (tags || []).length > 0 && <button onClick={() => setManage((m) => !m)} style={{ fontSize: 12, color: manage ? 'var(--accent)' : 'var(--fg-3)', background: 'none', border: 'none', cursor: 'pointer' }}>{manage ? 'Fertig' : 'Verwalten'}</button>}
           <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18, maxHeight: 180, overflowY: 'auto' }}>
@@ -1419,14 +1443,15 @@ function TagPickerModal({ title = 'Tags', tags, selectedIds, onToggle, onCreate,
             const on = selectedIds.has(t.id);
             const c = tagColor(t.color);
             return (
-              <button key={t.id} onClick={() => onToggle(t, !on)} style={{
+              <span key={t.id} style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 11px', borderRadius: 999,
-                fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
-                color: c.fg, background: on ? c.bg : 'transparent',
-                border: '1.5px solid ' + (on ? c.fg : 'var(--border)'),
-              }}>
-                {on && Ic.check(12)}{t.name}
-              </button>
+                fontSize: 12.5, fontWeight: 600, cursor: manage ? 'default' : 'pointer',
+                color: c.fg, background: on && !manage ? c.bg : 'transparent',
+                border: '1.5px solid ' + (on && !manage ? c.fg : 'var(--border)'),
+              }} onClick={() => { if (!manage) onToggle(t, !on); }}>
+                {on && !manage && Ic.check(12)}{t.name}
+                {manage && <span onClick={async (e) => { e.stopPropagation(); if (await confirmDialog({ title: 'Tag löschen?', message: `„${t.name}" wird überall entfernt.`, confirmLabel: 'Löschen', danger: true })) onDelete(t.id); }} style={{ cursor: 'pointer', display: 'inline-flex', opacity: 0.7 }}>{Ic.close(12)}</span>}
+              </span>
             );
           })}
         </div>
@@ -1475,8 +1500,13 @@ function useEntityTags(type, refreshTick) {
     try { on ? await API.assignTag(tag.id, type, entityId) : await API.unassignTag(tag.id, type, entityId); }
     catch (e) { toast(e.message, 'error'); reload(); }
   };
+  const removeTag = async (tagId) => {
+    setTags((ts) => ts.filter((t) => t.id !== tagId));
+    setMap((m) => { const n = {}; for (const k in m) n[k] = (m[k] || []).filter((id) => id !== tagId); return n; });
+    try { await API.deleteTag(tagId); } catch (e) { toast(e.message, 'error'); reload(); }
+  };
   const idsFor = (entityId) => map[String(entityId)] || [];
-  return { tags, map, reload, createTag, toggle, idsFor };
+  return { tags, map, reload, createTag, toggle, removeTag, idsFor };
 }
 
 // ───── Kebab menu (reusable) ───────────────────────────────────────────────
@@ -2149,9 +2179,9 @@ export function UploadRow({ file, onCancel }) {
     }}>
       {isUp && <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: pct + '%', background: 'color-mix(in oklab, var(--accent) 14%, transparent)', transition: 'width .2s' }}/>}
       <FileIcon kind={file.kind || 'doc'} size={14} tint={file.hue || 280}/>
-      <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-        <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</div>
-        <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>{humanSize(file.size)}</div>
+      <div style={{ flex: 1, minWidth: 0, position: 'relative', display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
+        <span style={{ fontSize: 10.5, color: 'var(--fg-3)', flexShrink: 0 }}>{humanSize(file.size)}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {isDone && <div style={{ width: 22, height: 22, borderRadius: 11, background: 'var(--success)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.check(13)}</div>}
@@ -3396,6 +3426,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
       {viewing && (
         <MediaViewer items={viewing.items} startIndex={viewing.index}
           srcFor={(f) => fileSrc(f.id)} downloadFor={(f) => fileDownload(f.id)}
+          metaFor={(f) => API.fileMeta(f.id)}
           onSaveText={async (f, content) => { await API.saveContent(f.id, content); refreshAll(); }}
           comments={{
             load: (f) => API.fileComments(f.id).then((d) => d.comments || []),
@@ -3691,7 +3722,8 @@ function parsePhotoDate(s) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-function GalleryOwnerView({ files, onOpen, onLabel, onContext }) {
+function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectMode, onToggleSelect, tagLookup, tags }) {
+  const selecting = (selected && selected.size > 0) || !!selectMode;
   const media = files.filter((f) => f.kind === 'image' || f.kind === 'video');
   const others = files.filter((f) => f.kind !== 'image' && f.kind !== 'video');
 
@@ -3718,14 +3750,24 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext }) {
             <div style={{ flex: 1, height: 1, background: 'var(--border)' }}/>
           </div>
           <div className="nyza-masonry">
-            {g.files.map((f) => (
-              <div key={f.id} onClick={() => onOpen(f)}
+            {g.files.map((f) => {
+              const sel = selected ? selected.has(f.id) : false;
+              return (
+              <div key={f.id} data-fid={f.id} onClick={(e) => { if (selecting && onToggleSelect) { e.stopPropagation(); onToggleSelect(f.id); } else { onOpen(f); } }}
                 onContextMenu={onContext ? (e) => { e.preventDefault(); e.stopPropagation(); onContext(f, e); } : undefined}
-                style={{ cursor: 'pointer', position: 'relative' }}>
+                style={{ cursor: 'pointer', position: 'relative', outline: sel ? '3px solid var(--accent)' : 'none', outlineOffset: -3, borderRadius: 'var(--r-md)' }}>
                 {f.kind === 'image'
                   ? <img src={API.thumbUrl(f.id)} alt={f.name} loading="lazy" style={{ width: '100%', display: 'block', borderRadius: 'var(--r-md)' }}/>
                   : <video src={`${API.fileRawUrl(f.id)}?token=${getToken()}#t=0.1`} muted preload="metadata" style={{ width: '100%', display: 'block', borderRadius: 'var(--r-md)', pointerEvents: 'none' }}/>
                 }
+                {onToggleSelect && (
+                  <div onClick={(e) => { e.stopPropagation(); onToggleSelect(f.id); }} style={{
+                    position: 'absolute', top: 8, right: 8, width: 24, height: 24, borderRadius: 7,
+                    display: (sel || selecting) ? 'flex' : 'none', alignItems: 'center', justifyContent: 'center',
+                    border: '2px solid ' + (sel ? 'transparent' : 'rgba(255,255,255,0.8)'),
+                    background: sel ? 'var(--accent-grad)' : 'rgba(0,0,0,0.4)', color: '#fff', backdropFilter: 'blur(6px)',
+                  }}>{sel && Ic.check(13)}</div>
+                )}
                 {onContext && (
                   <span className="gallery-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); onContext(f, { clientX: b.right, clientY: b.bottom, preventDefault() {}, stopPropagation() {} }); }}
                     style={{ position: 'absolute', top: 8, left: 8, width: 28, height: 28, borderRadius: 999, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.more(16)}</span>
@@ -3754,7 +3796,8 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext }) {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ))}
@@ -3785,7 +3828,7 @@ function FolderView({
   const [zipBusy, setZipBusy] = useState(false);
   const [over, setOver] = useState(false);
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
-  const { tags, idsFor, createTag, toggle: toggleTag } = useEntityTags('file', refreshTick);
+  const { tags, idsFor, createTag, toggle: toggleTag, removeTag } = useEntityTags('file', refreshTick);
   const [tagFilter, setTagFilter] = useState(null);   // tagId | null
   const [tagTarget, setTagTarget] = useState(null);   // file being tagged
   const [locked, setLocked] = useState(false);
@@ -3837,6 +3880,11 @@ function FolderView({
   const files = sortFiles((data.files || [])
     .filter((f) => !q || f.name.toLowerCase().includes(q))
     .filter((f) => !tagFilter || idsFor(f.id).includes(tagFilter)), sort);
+
+  // Tag filter shows only tags actually used in THIS folder (with local counts).
+  const folderTagCount = {};
+  (data.files || []).forEach((f) => idsFor(f.id).forEach((id) => { folderTagCount[id] = (folderTagCount[id] || 0) + 1; }));
+  const folderTags = tags.filter((t) => folderTagCount[t.id]);
 
   const toggleSelect = (id) => {
     if (id === '__all__') { setSelected((s) => s.size === files.length ? new Set() : new Set(files.map((f) => f.id))); return; }
@@ -3913,17 +3961,17 @@ function FolderView({
           </div>
         )}
 
-        {tags.length > 0 && (
+        {folderTags.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
             <span style={{ fontSize: 12, color: 'var(--fg-3)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>{Ic.bolt(13)} Tags:</span>
-            {tags.map((t) => {
+            {folderTags.map((t) => {
               const on = tagFilter === t.id; const c = tagColor(t.color);
               return (
                 <button key={t.id} onClick={() => setTagFilter(on ? null : t.id)} style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 999,
                   fontSize: 12, fontWeight: 600, cursor: 'pointer', color: c.fg,
                   background: on ? c.bg : 'transparent', border: '1.5px solid ' + (on ? c.fg : 'var(--border)'),
-                }}>{on && Ic.check(11)}{t.name}<span style={{ opacity: 0.6, fontWeight: 500 }}>{t.count}</span></button>
+                }}>{on && Ic.check(11)}{t.name}<span style={{ opacity: 0.6, fontWeight: 500 }}>{folderTagCount[t.id]}</span></button>
               );
             })}
             {tagFilter && <button onClick={() => setTagFilter(null)} style={{ fontSize: 12, color: 'var(--fg-3)', background: 'none', border: 'none', cursor: 'pointer' }}>Filter aufheben</button>}
@@ -3931,7 +3979,8 @@ function FolderView({
         )}
 
         {folder.kind === 'gallery' ? (
-          <GalleryOwnerView files={files} token={null} onOpen={(f) => onOpenFile(f, files)} onLabel={onLabelFile} onContext={(f, e) => fileCtx(f, e)}/>
+          <GalleryOwnerView files={files} token={null} onOpen={(f) => onOpenFile(f, files)} onLabel={onLabelFile} onContext={(f, e) => fileCtx(f, e)}
+            selected={selected} selectMode={selectMode} onToggleSelect={toggleSelect}/>
         ) : files.length > 0 ? (
           view === 'grid'
             ? <FileGrid files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onDragFiles={() => {}} onContext={fileCtx} selectMode={selectMode} tagLookup={idsFor} tags={tags}/>
@@ -3947,7 +3996,7 @@ function FolderView({
         <TagPickerModal title={'Tags · ' + tagTarget.name} tags={tags}
           selectedIds={new Set(idsFor(tagTarget.id))}
           onToggle={(t, on) => toggleTag(tagTarget.id, t, on)}
-          onCreate={createTag}
+          onCreate={createTag} onDelete={removeTag}
           onClose={() => setTagTarget(null)}/>
       )}
     </>
@@ -5819,7 +5868,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
         const h = tagTarget.type === 'expense' ? expTags : docTags;
         return <TagPickerModal title={'Tags · ' + tagTarget.name} tags={h.tags}
           selectedIds={new Set(h.idsFor(tagTarget.id))}
-          onToggle={(t, on) => h.toggle(tagTarget.id, t, on)} onCreate={h.createTag}
+          onToggle={(t, on) => h.toggle(tagTarget.id, t, on)} onCreate={h.createTag} onDelete={h.removeTag}
           onClose={() => setTagTarget(null)}/>;
       })()}
       {signDoc && <SignatureCreateModal documentId={signDoc.id} documentLabel={(signDoc.type === 'offer' ? 'Angebot ' : 'Rechnung ') + signDoc.number} onClose={() => setSignDoc(null)}/>}

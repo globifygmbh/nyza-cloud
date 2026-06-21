@@ -185,6 +185,7 @@ export const API = {
   versionRawUrl:  (id, vid) => url('/api/files/' + id + '/versions/' + vid + '/raw') + '?token=' + (getToken() || ''),
   restoreVersion: (id, vid) => request('/api/files/' + id + '/versions/' + vid + '/restore', { method: 'POST', body: {} }),
   searchFiles: (q) => request('/api/files/search?q=' + encodeURIComponent(q)),
+  fileMeta:    (id) => request('/api/files/' + id + '/meta'),
   search:      (q) => request('/api/search?q=' + encodeURIComponent(q)),
   // ───── Tags / labels ─────
   tags:        () => request('/api/tags'),

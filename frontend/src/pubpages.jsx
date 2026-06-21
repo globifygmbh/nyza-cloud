@@ -134,7 +134,9 @@ export function PublicSharePage({ token }) {
   const totalSize = isFolder ? data.total_size : (data.file?.size || 0);
   const galleryMode = isFolder && data.gallery;
   const images = items.filter((f) => f.kind === 'image');
-  const media = items.filter((f) => f.kind === 'image' || f.kind === 'video');
+  // Sort media newest-first by capture time (EXIF taken_at) → upload date.
+  const capAt = (f) => { const s = f.taken_at || f.created_at || ''; const d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? 0 : d.getTime(); };
+  const media = items.filter((f) => f.kind === 'image' || f.kind === 'video').sort((a, b) => capAt(b) - capAt(a));
 
   // ── Gallery mode: folder name as title, masonry of images in original aspect,
   //    click → fullscreen viewer, bulk download. Perfect for Hochzeit/Geburtstag.

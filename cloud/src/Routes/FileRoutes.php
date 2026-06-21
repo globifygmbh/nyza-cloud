@@ -32,6 +32,7 @@ final class FileRoutes
             $g->get('/{id}',                  [self::class, 'show']);
             $g->get('/{id}/raw',              [self::class, 'raw']);
             $g->get('/{id}/thumb',            [self::class, 'thumb']);
+            $g->get('/{id}/meta',             [self::class, 'meta']);
             $g->post('/{id}/star',            [self::class, 'star']);
             $g->post('/{id}/pin',             [self::class, 'pinFile']);
             $g->post('/{id}/label',           [self::class, 'setLabel']);
@@ -235,6 +236,44 @@ final class FileRoutes
         return self::serveThumb($res, $f);
     }
 
+    /** Rich metadata for the info panel: dimensions + EXIF (camera, lens, aperture…). */
+    public static function meta(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchReadable($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+        $abs = Storage::abs($f['storage_path']);
+        $out = [];
+        if (is_file($abs)) {
+            $gi = @getimagesize($abs);
+            if ($gi) { $out['width'] = (int)$gi[0]; $out['height'] = (int)$gi[1]; }
+            if (function_exists('exif_read_data') && in_array(strtolower((string)$f['mime_type']), ['image/jpeg', 'image/tiff'], true)) {
+                try { $e = @exif_read_data($abs); } catch (\Throwable $ex) { $e = false; }
+                if (is_array($e)) {
+                    $make = trim((string)($e['Make'] ?? '')); $model = trim((string)($e['Model'] ?? ''));
+                    $cam = trim($make && $model && stripos($model, $make) === false ? "$make $model" : ($model ?: $make));
+                    if ($cam !== '') $out['camera'] = $cam;
+                    if (!empty($e['UndefinedTag:0xA434'])) $out['lens'] = trim((string)$e['UndefinedTag:0xA434']);
+                    elseif (!empty($e['LensModel'])) $out['lens'] = trim((string)$e['LensModel']);
+                    if (!empty($e['FNumber'])) $out['aperture'] = 'f/' . rtrim(rtrim(number_format(self::frac($e['FNumber']), 1, '.', ''), '0'), '.');
+                    if (!empty($e['ExposureTime'])) { $x = self::frac($e['ExposureTime']); $out['exposure'] = $x > 0 && $x < 1 ? '1/' . round(1 / $x) . ' s' : rtrim(rtrim(number_format($x, 1), '0'), '.') . ' s'; }
+                    $iso = $e['ISOSpeedRatings'] ?? ($e['ISO'] ?? null); if (is_array($iso)) $iso = $iso[0] ?? null; if ($iso) $out['iso'] = 'ISO ' . (int)$iso;
+                    if (!empty($e['FocalLength'])) $out['focal'] = round(self::frac($e['FocalLength'])) . ' mm';
+                }
+            }
+        }
+        return Json::ok($res, ['meta' => $out]);
+    }
+
+    /** Parse an EXIF rational ("28/10") into a float. */
+    private static function frac($v): float
+    {
+        if (is_array($v)) $v = $v[0] ?? 0;
+        $v = (string)$v;
+        if (str_contains($v, '/')) { [$a, $b] = array_pad(explode('/', $v, 2), 2, '1'); return (float)$b != 0.0 ? (float)$a / (float)$b : 0.0; }
+        return (float)$v;
+    }
+
     /** Serve a cached GD thumbnail for a file row (or fall back to the original).
      *  Shared by the owner endpoint and the public share thumbnail endpoint. */
     public static function serveThumb(Response $res, array $f): Response
@@ -266,6 +305,52 @@ final class FileRoutes
             ->withBody(new Stream($stream));
     }
 
+    /** EXIF orientation (1–8) of a JPEG — uses php-exif when present, else a
+     *  minimal manual APP1 parser so rotation works without the extension. */
+    private static function jpegOrientation(string $src): int
+    {
+        if (function_exists('exif_read_data')) {
+            try { $e = @exif_read_data($src); if (is_array($e) && !empty($e['Orientation'])) return (int)$e['Orientation']; } catch (\Throwable $ex) {}
+        }
+        $fh = @fopen($src, 'rb');
+        if (!$fh) return 1;
+        try {
+            if (fread($fh, 2) !== "\xFF\xD8") return 1;
+            while (!feof($fh)) {
+                $marker = fread($fh, 2);
+                if (strlen($marker) < 2 || $marker[0] !== "\xFF") return 1;
+                $m = ord($marker[1]);
+                if ($m === 0xDA || $m === 0xD9) return 1;
+                $lb = fread($fh, 2);
+                if (strlen($lb) < 2) return 1;
+                $seg = ((ord($lb[0]) << 8) + ord($lb[1])) - 2;
+                if ($seg < 0) return 1;
+                if ($m === 0xE1) {
+                    $data = fread($fh, $seg);
+                    if (substr($data, 0, 6) !== "Exif\x00\x00") return 1;
+                    $t = substr($data, 6);
+                    if (strlen($t) < 8) return 1;
+                    $le = substr($t, 0, 2) === 'II';
+                    $u16 = static fn($o) => $le ? (ord($t[$o]) | (ord($t[$o + 1]) << 8)) : ((ord($t[$o]) << 8) | ord($t[$o + 1]));
+                    $u32 = static fn($o) => $le
+                        ? (ord($t[$o]) | (ord($t[$o + 1]) << 8) | (ord($t[$o + 2]) << 16) | (ord($t[$o + 3]) << 24))
+                        : ((ord($t[$o]) << 24) | (ord($t[$o + 1]) << 16) | (ord($t[$o + 2]) << 8) | ord($t[$o + 3]));
+                    $ifd = $u32(4);
+                    if ($ifd + 2 > strlen($t)) return 1;
+                    $n = $u16($ifd);
+                    for ($i = 0; $i < $n; $i++) {
+                        $en = $ifd + 2 + $i * 12;
+                        if ($en + 12 > strlen($t)) break;
+                        if ($u16($en) === 0x0112) { $v = $u16($en + 8); return ($v >= 1 && $v <= 8) ? $v : 1; }
+                    }
+                    return 1;
+                }
+                fseek($fh, $seg, SEEK_CUR);
+            }
+        } catch (\Throwable $e) { return 1; } finally { fclose($fh); }
+        return 1;
+    }
+
     private static function makeThumb(string $src, string $dst, string $mime, int $max): bool
     {
         try {
@@ -278,10 +363,9 @@ final class FileRoutes
             };
             if (!$img) return false;
             // Honour EXIF orientation so portrait phone photos aren't shown
-            // sideways/landscape in the thumbnail (the re-encoded JPEG drops the flag).
-            if ($mime === 'image/jpeg' && function_exists('exif_read_data')) {
-                $exif = @exif_read_data($src);
-                switch ((int)($exif['Orientation'] ?? 1)) {
+            // sideways/landscape. Works even without the php-exif extension.
+            if ($mime === 'image/jpeg') {
+                switch (self::jpegOrientation($src)) {
                     case 2: imageflip($img, IMG_FLIP_HORIZONTAL); break;
                     case 3: $img = imagerotate($img, 180, 0); break;
                     case 4: imageflip($img, IMG_FLIP_VERTICAL); break;

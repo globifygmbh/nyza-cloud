@@ -372,13 +372,13 @@ final class ShareRoutes
             $f = $pdo->prepare('SELECT id, name, kind FROM folders WHERE id = ?');
             $f->execute([(int)$share['folder_id']]);
             $folder = $f->fetch();
-            $files = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
+            $files = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
             $files->execute([(int)$share['folder_id']]);
             $payload['folder'] = $folder ?: null;
             $payload['files'] = $files->fetchAll();
             $payload['total_size'] = array_sum(array_map(fn($r) => (int)$r['size'], $payload['files']));
         } elseif ($share['file_id']) {
-            $f = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue FROM files WHERE id = ?');
+            $f = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at FROM files WHERE id = ?');
             $f->execute([(int)$share['file_id']]);
             $payload['file'] = $f->fetch() ?: null;
         }
