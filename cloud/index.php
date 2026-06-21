@@ -257,7 +257,7 @@ PushRoutes::mount($app);
 WebDavRoutes::mount($app);
 
 /** Asset / SPA fallback for all non-API GETs. */
-$app->get('/{path:.+}', function ($req, $res, $args) use ($assetsRoot, $serveSpa) {
+$app->get('/{path:.+}', function ($req, $res, $args) use ($assetsRoot, $serveSpa, $basePath) {
     $path = $args['path'];
     if (str_starts_with($path, 'api/')) {
         return Json::err($res, 'Not found', 404);
