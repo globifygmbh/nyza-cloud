@@ -12,6 +12,15 @@ final class OpenGraph
 {
     public static function tags(string $path, string $basePath): string
     {
+        try {
+            return self::build($path, $basePath);
+        } catch (\Throwable $e) {
+            return '';
+        }
+    }
+
+    private static function build(string $path, string $basePath): string
+    {
         $path = trim($path, '/');
         if (!preg_match('#^(s|u|f|sign|portal)/([A-Za-z0-9_-]+)#', $path, $m)) return '';
         $kind = $m[1]; $token = $m[2];

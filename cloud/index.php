@@ -284,7 +284,9 @@ $app->get('/{path:.+}', function ($req, $res, $args) use ($assetsRoot, $serveSpa
         }
         // SPA fallback for client-side routes (/s/<token>, /u/<token>, etc).
         if (file_exists($assetsRoot . '/index.html')) {
-            return $serveSpa($res, \Nyza\OpenGraph::tags($path, $basePath));
+            $og = '';
+            try { $og = \Nyza\OpenGraph::tags($path, $basePath); } catch (\Throwable $e) { $og = ''; }
+            return $serveSpa($res, $og);
         }
     }
     return Json::err($res, 'Not found', 404);
