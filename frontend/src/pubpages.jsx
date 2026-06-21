@@ -30,6 +30,29 @@ export function CenteredMessage({ title, desc }) {
   );
 }
 
+// Shared top bar: owner's logo (left, if any) + "Geteilt von <name> via Nyza".
+function ShareHeader({ owner }) {
+  return (
+    <div className="nyza-share-top" style={{ padding: '20px 24px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+        {owner?.has_logo && <img src={API.logoUrl(owner.id)} alt={owner?.name} style={{ maxHeight: 32, maxWidth: 160, objectFit: 'contain' }}/>}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--fg-3)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+        {owner?.name ? <>Geteilt von <b style={{ color: 'var(--fg-2)', fontWeight: 600 }}>{owner.name}</b> · via</> : 'via'} <NyzaWordmark size={11}/>
+      </div>
+    </div>
+  );
+}
+
+// Very subtle footer for public pages.
+function ShareFooter() {
+  return (
+    <div style={{ textAlign: 'center', padding: '24px 16px 28px', fontSize: 10.5, color: 'var(--fg-4)', opacity: 0.6 }}>
+      © {new Date().getFullYear()} Nyza Cloud · by <a href="https://nyza-studio.at" target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>nyza-studio.at</a>
+    </div>
+  );
+}
+
 // Thumbnail for the public share view: real image preview (cached GD thumb),
 // play-overlay for video, icon otherwise.
 function ShareThumb({ token, f, password }) {
@@ -118,14 +141,7 @@ export function PublicSharePage({ token }) {
   if (galleryMode) {
     return (
       <div style={{ height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
-        <div className="nyza-share-top" style={{ padding: '24px 28px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {data.owner?.has_logo
-              ? <img src={API.logoUrl(data.owner.id)} alt={data.owner?.name} style={{ maxHeight: 36, maxWidth: 180, objectFit: 'contain' }}/>
-              : <span style={{ fontSize: 13, fontWeight: 540 }}>{data.owner?.name}</span>}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--fg-3)' }}>via <NyzaWordmark size={11}/></div>
-        </div>
+        <ShareHeader owner={data.owner}/>
 
         <div className="nyza-gallery-wrap" style={{ padding: '28px 28px 70px', maxWidth: 1400, margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 22 }}>
@@ -162,16 +178,16 @@ export function PublicSharePage({ token }) {
                   <div style={{ position: 'absolute', top: 8, right: 8, width: 14, height: 14, borderRadius: '50%', background: f.label === 'red' ? '#ef4444' : f.label === 'yellow' ? '#eab308' : '#22c55e', border: '2px solid rgba(255,255,255,0.8)', boxShadow: '0 1px 4px rgba(0,0,0,0.4)' }}
                     title={f.label === 'red' ? 'Überarbeiten' : f.label === 'yellow' ? 'Auswahl' : 'Freigegeben'}/>
                 )}
-                <div className="gallery-label-btns"
+                {data.show_labels !== false && <div className="gallery-label-btns"
                   onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}
-                  style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', gap: 6, opacity: 0, padding: 5, borderRadius: 999, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)' }}>
+                  style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', gap: 6, opacity: 0, padding: 5, borderRadius: 999, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', zIndex: 3 }}>
                   {[['red','#ef4444','Überarbeiten'],['yellow','#eab308','Auswahl'],['green','#22c55e','Freigegeben']].map(([lbl, col, name]) => (
                     <button key={lbl} type="button"
                       onClick={(e) => { e.stopPropagation(); API.shareSetLabel(token, f.id, f.label === lbl ? null : lbl, password).then(() => { setState((s) => ({ ...s, data: { ...s.data, files: (s.data.files || []).map((x) => x.id === f.id ? { ...x, label: x.label === lbl ? null : lbl } : x) } })); }).catch(() => {}); }}
                       title={name}
                       style={{ width: 26, height: 26, borderRadius: '50%', border: '2px solid ' + (f.label === lbl ? '#fff' : 'rgba(255,255,255,0.6)'), background: col, cursor: 'pointer', padding: 0 }}/>
                   ))}
-                </div>
+                </div>}
                 <div className="ov"><span>{f.name}</span></div>
               </div>
             ))}
@@ -202,6 +218,7 @@ export function PublicSharePage({ token }) {
             <MediaViewer items={list} startIndex={Math.max(0, list.findIndex((x) => x.id === viewing.id))}
               srcFor={(f) => API.shareFileUrl(token, f.id, password)}
               downloadFor={(f) => data.allow_download ? API.shareFileUrl(token, f.id, password, true) : null}
+              info={!!data.show_info}
               comments={{
                 load: (f) => API.shareComments(token, f.id, password).then((d) => d.comments || []),
                 add: (f, { body, author_name }) => API.addShareComment(token, f.id, { body, author_name, password }).then((d) => d.comments || []),
@@ -210,38 +227,14 @@ export function PublicSharePage({ token }) {
               onClose={() => setViewing(null)}/>
           );
         })()}
+        <ShareFooter/>
       </div>
     );
   }
 
   return (
     <div style={{ height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
-      <div className="nyza-share-top" style={{ padding: '28px 40px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {data.owner?.has_logo ? (
-            <img src={API.logoUrl(data.owner.id)} alt={data.owner?.name} style={{ maxHeight: 40, maxWidth: 200, objectFit: 'contain' }}/>
-          ) : (
-            <>
-              <div style={{
-                width: 32, height: 32, borderRadius: 8,
-                background: 'linear-gradient(135deg, oklch(0.72 0.16 60), oklch(0.55 0.2 25))',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#fff', fontWeight: 700, fontSize: 13,
-              }}>{(data.owner?.name || '?').slice(0, 2).toUpperCase()}</div>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 540 }}>{data.owner?.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>{data.owner?.email}</div>
-              </div>
-            </>
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--fg-3)' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>{Ic.lock(11)} Sicher · 256-bit</span>
-          <span>·</span>
-          <span>via</span>
-          <NyzaWordmark size={11}/>
-        </div>
-      </div>
+      <ShareHeader owner={data.owner}/>
 
       <div className="nyza-share-hero" style={{ padding: '40px 40px 60px', display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 60, alignItems: 'center' }}>
         <div style={{ minWidth: 0 }}>
@@ -367,6 +360,7 @@ export function PublicSharePage({ token }) {
             startIndex={Math.max(0, list.findIndex((x) => x.id === viewing.id))}
             srcFor={(f) => API.shareFileUrl(token, f.id, password)}
             downloadFor={(f) => data.allow_download ? API.shareFileUrl(token, f.id, password, true) : null}
+            info={!!data.show_info}
             comments={{
               load: (f) => API.shareComments(token, f.id, password).then((d) => d.comments || []),
               add: (f, { body, author_name }) => API.addShareComment(token, f.id, { body, author_name, password }).then((d) => d.comments || []),
@@ -376,6 +370,7 @@ export function PublicSharePage({ token }) {
           />
         );
       })()}
+      <ShareFooter/>
     </div>
   );
 }
@@ -602,6 +597,7 @@ export function PublicUploadPage({ token }) {
         <UploadReview files={review} maxFileSize={link.max_file_size || undefined}
           onConfirm={doUpload} onCancel={() => setReview(null)}/>
       )}
+      <ShareFooter/>
     </div>
   );
 }

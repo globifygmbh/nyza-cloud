@@ -185,7 +185,7 @@ function mdTabStyle(active) {
 // Gallery-capable: pass items[] + startIndex + srcFor()/downloadFor() to enable
 // ←/→ keys, on-screen arrows and touch-swipe between files. Single-file mode
 // (file + src + downloadHref) still works.
-export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onSaveText, comments, onClose }) {
+export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onSaveText, comments, info = true, onClose }) {
   const gallery = Array.isArray(items) && items.length > 0;
   const [idx, setIdx] = useState(startIndex);
   const cur = gallery ? items[idx] : file;
@@ -194,6 +194,9 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
   const touch = useRef(null);
   const textual = isTextFile(cur);
   const [showComments, setShowComments] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const [dims, setDims] = useState(null);
+  useEffect(() => { setDims(null); }, [cur && cur.id]);
 
   const go = useCallback((d) => {
     if (!gallery) return;
@@ -249,6 +252,13 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
         {comments && (
           <Btn variant={showComments ? 'primary' : 'glass'} size="sm" icon={Ic.comment(14)} onClick={() => setShowComments((s) => !s)}>Kommentare</Btn>
         )}
+        {info && (
+          <button onClick={() => setShowInfo((s) => !s)} title="Infos" style={{
+            width: 36, height: 36, borderRadius: 'var(--r-sm)', cursor: 'pointer',
+            background: showInfo ? 'var(--accent-grad)' : 'rgba(255,255,255,0.08)', border: 'none',
+            color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontFamily: 'var(--font-display)',
+          }}>i</button>
+        )}
         {curDl && (
           <a href={curDl} download={cur.name} style={{ display: 'inline-flex', textDecoration: 'none' }}>
             <Btn variant="glass" size="sm" icon={Ic.download(14)}>Download</Btn>
@@ -277,7 +287,8 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
           </video>
         )}
         {kind === 'image' && (
-          <img key={cur.id} src={curSrc} alt={cur.name} onClick={stop} style={{
+          <img key={cur.id} src={curSrc} alt={cur.name} onClick={stop}
+            onLoad={(e) => setDims({ w: e.target.naturalWidth, h: e.target.naturalHeight })} style={{
             maxWidth: '100%', maxHeight: '100%', borderRadius: 'var(--r-md)',
             boxShadow: '0 30px 80px rgba(0,0,0,0.6)', objectFit: 'contain',
           }}/>
@@ -330,6 +341,46 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
       {comments && showComments && (
         <CommentsPanel key={cur.id} file={cur} cfg={comments} onClose={() => setShowComments(false)}/>
       )}
+      {info && showInfo && (
+        <InfoPanel file={cur} dims={dims} onClose={() => setShowInfo(false)}/>
+      )}
+    </div>
+  );
+}
+
+// File metadata drawer (right) shown inside the MediaViewer.
+function InfoPanel({ file, dims, onClose }) {
+  const fmt = (s) => { if (!s) return null; const d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? s : d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+  const ext = (file.name || '').includes('.') ? file.name.split('.').pop().toUpperCase() : '—';
+  const rows = [
+    ['Name', file.name],
+    ['Typ', (file.mime_type || '') + (file.mime_type ? '' : ext)],
+    ['Größe', humanSize(file.size || 0)],
+    dims ? ['Abmessungen', dims.w + ' × ' + dims.h + ' px'] : null,
+    file.taken_at ? ['Aufgenommen', fmt(file.taken_at)] : null,
+    ['Hochgeladen', fmt(file.created_at)],
+    file.uploader_name ? ['Von', file.uploader_name] : null,
+  ].filter(Boolean);
+  return (
+    <div onClick={(e) => e.stopPropagation()} className="nyza-comments" style={{
+      position: 'absolute', top: 60, right: 0, bottom: 0, width: 320, maxWidth: '90vw', zIndex: 6,
+      background: 'var(--surface)', borderLeft: '1px solid var(--border-hi)',
+      backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+      display: 'flex', flexDirection: 'column', animation: 'slideUp 0.2s ease',
+    }}>
+      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ color: 'var(--accent)', fontWeight: 700, fontFamily: 'var(--font-display)' }}>i</span>
+        <span style={{ flex: 1, fontWeight: 600, fontSize: 14, color: 'var(--fg)' }}>Informationen</span>
+        <IconBtn size={28} onClick={onClose}>{Ic.close(15)}</IconBtn>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+        {rows.map(([k, v]) => (
+          <div key={k} style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--fg-3)', marginBottom: 2 }}>{k}</div>
+            <div style={{ fontSize: 13.5, color: 'var(--fg)', wordBreak: 'break-word' }}>{v}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -2062,7 +2113,7 @@ export function UploadProgress({ items, onClose, onCancel }) {
           <CircularProgress pct={pct} size={42} thick={5}/>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: -0.1 }}>{title}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{subtitle}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', lineHeight: 1.35 }}>{subtitle}</div>
           </div>
           <IconBtn size={30} title={min ? 'Aufklappen' : 'Minimieren'} onClick={(e) => { e.stopPropagation(); setMin((m) => !m); }}>
             {min ? Ic.chevronU(15) : Ic.chevronD(15)}
@@ -2228,6 +2279,8 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const [password, setPassword] = useState('');
   const [allowDownload, setAllowDownload] = useState(true);
   const [galleryMode, setGalleryMode] = useState(folder?.kind === 'gallery');
+  const [showInfo, setShowInfo] = useState(false);
+  const [showLabels, setShowLabels] = useState(true);
   const [withExpiry, setWithExpiry] = useState(false);
   const [expiresAt, setExpiresAt] = useState(() => { const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10); });
   const [withInvite, setWithInvite] = useState(false);
@@ -2239,7 +2292,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const create = async () => {
     setBusy(true);
     try {
-      const body = { folder_id: folder?.id, file_id: file?.id, allow_download: allowDownload };
+      const body = { folder_id: folder?.id, file_id: file?.id, allow_download: allowDownload, show_info: showInfo, show_labels: showLabels };
       if (folder && galleryMode) body.gallery = true;
       if (withPassword && password) body.password = password;
       if (withExpiry && expiresAt) body.expires_at = expiresAt + ' 23:59:59';
@@ -2268,6 +2321,8 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const initFromShare = (m) => {
     setAllowDownload(m.allow_download !== 0 && m.allow_download !== false);
     setGalleryMode(!!m.gallery);
+    setShowInfo(!!m.show_info && m.show_info !== 0);
+    setShowLabels(m.show_labels === undefined ? true : (!!m.show_labels && m.show_labels !== 0));
     setWithPassword(!!(m.has_password || m.password_hash));
     setWithExpiry(!!m.expires_at);
     if (m.expires_at) setExpiresAt(String(m.expires_at).slice(0, 10));
@@ -2275,7 +2330,7 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
   const editShare = async () => {
     setBusy(true);
     try {
-      const body = { allow_download: allowDownload, gallery: galleryMode, expires_at: withExpiry && expiresAt ? expiresAt + ' 23:59:59' : '' };
+      const body = { allow_download: allowDownload, gallery: galleryMode, show_info: showInfo, show_labels: showLabels, expires_at: withExpiry && expiresAt ? expiresAt + ' 23:59:59' : '' };
       if (!withPassword) body.clear_password = true;
       else if (password) body.password = password;
       const d = await API.updateShare(created.id, body);
@@ -2312,6 +2367,8 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
               {/* Edit existing link settings in place */}
               <ShareToggleRow icon={Ic.download} title="Download erlauben" desc="ZIP & Einzeldownload" on={allowDownload} onToggle={() => setAllowDownload(!allowDownload)}/>
               {folder && <ShareToggleRow icon={Ic.fileImg} title="Galerie-Ansicht" desc={galleryMode ? 'Bilder schön als Galerie' : 'Normale Dateiliste'} on={galleryMode} onToggle={() => setGalleryMode(!galleryMode)}/>}
+              <ShareToggleRow icon={Ic.eye} title="Datei-Infos anzeigen" desc="Größe, Dateiname, Datum im Viewer" on={showInfo} onToggle={() => setShowInfo(!showInfo)}/>
+              {folder && <ShareToggleRow icon={Ic.star} title="Bewertungs-Punkte" desc="Rot/Gelb/Grün markieren erlauben" on={showLabels} onToggle={() => setShowLabels(!showLabels)}/>}
               <ShareToggleRow icon={Ic.lock} title="Mit Passwort schützen" desc={withPassword ? (created.has_password || created.password_hash ? 'Aktiv — leer lassen = unverändert' : 'Neues Passwort setzen') : 'Kein Schutz'} on={withPassword} onToggle={() => setWithPassword(!withPassword)}/>
               {withPassword && <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={created.has_password || created.password_hash ? 'Neues Passwort (leer = unverändert)' : 'Passwort eingeben'} style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', marginTop: 8 }}/>}
               <ShareToggleRow icon={Ic.clock} title="Ablaufdatum" desc={withExpiry ? expiresAt : 'Nie'} on={withExpiry} onToggle={() => setWithExpiry(!withExpiry)}/>
@@ -2327,6 +2384,8 @@ export function ShareModal({ folder, file, onClose, onCreated, basePath }) {
             <>
               <ShareToggleRow icon={Ic.download} title="Download erlauben" desc="ZIP & Einzeldownload" on={allowDownload} onToggle={() => setAllowDownload(!allowDownload)}/>
               {folder && <ShareToggleRow icon={Ic.fileImg} title="Galerie-Ansicht" desc={galleryMode ? 'Bilder schön als Galerie' : 'Normale Dateiliste'} on={galleryMode} onToggle={() => setGalleryMode(!galleryMode)}/>}
+              <ShareToggleRow icon={Ic.eye} title="Datei-Infos anzeigen" desc="Größe, Dateiname, Datum im Viewer" on={showInfo} onToggle={() => setShowInfo(!showInfo)}/>
+              {folder && <ShareToggleRow icon={Ic.star} title="Bewertungs-Punkte" desc="Rot/Gelb/Grün markieren erlauben" on={showLabels} onToggle={() => setShowLabels(!showLabels)}/>}
               <ShareToggleRow icon={Ic.lock} title="Mit Passwort schützen" desc={withPassword ? 'Aktiv' : 'Kein Schutz'} on={withPassword} onToggle={() => setWithPassword(!withPassword)}/>
               {withPassword && <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Passwort eingeben" style={{ width: '100%', height: 38, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', marginTop: 8 }}/>}
               <ShareToggleRow icon={Ic.clock} title="Ablaufdatum" desc={withExpiry ? expiresAt : 'Nie'} on={withExpiry} onToggle={() => setWithExpiry(!withExpiry)}/>

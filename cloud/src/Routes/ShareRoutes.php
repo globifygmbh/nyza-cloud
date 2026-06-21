@@ -143,12 +143,14 @@ final class ShareRoutes
         $allowDownload = isset($b['allow_download']) ? (int)(bool)$b['allow_download'] : 1;
         // Gallery view only makes sense for a shared folder.
         $gallery = ($folder && !empty($b['gallery'])) ? 1 : 0;
+        $showInfo = isset($b['show_info']) ? (int)(bool)$b['show_info'] : 0;
+        $showLabels = isset($b['show_labels']) ? (int)(bool)$b['show_labels'] : 1;
 
         $ins = Database::pdo()->prepare(
-            'INSERT INTO share_links (user_id, folder_id, file_id, token, password_hash, expires_at, allow_download, gallery) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO share_links (user_id, folder_id, file_id, token, password_hash, expires_at, allow_download, gallery, show_info, show_labels) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
-        $ins->execute([$uid, $folder, $file, $token, $passwordHash, $expires, $allowDownload, $gallery]);
+        $ins->execute([$uid, $folder, $file, $token, $passwordHash, $expires, $allowDownload, $gallery, $showInfo, $showLabels]);
         $id = (int)Database::pdo()->lastInsertId();
 
         // Optional: invite people by email. The frontend passes the fully-built
@@ -174,6 +176,7 @@ final class ShareRoutes
                 'folder_id' => $folder, 'file_id' => $file,
                 'expires_at' => $expires, 'allow_download' => (bool)$allowDownload,
                 'has_password' => $passwordHash !== null, 'gallery' => (bool)$gallery,
+                'show_info' => (bool)$showInfo, 'show_labels' => (bool)$showLabels,
                 'invited' => $sent,
             ],
         ], 201);
@@ -212,6 +215,8 @@ final class ShareRoutes
         $sets = []; $params = [];
         if (array_key_exists('allow_download', $b)) { $sets[] = 'allow_download = ?'; $params[] = (int)(bool)$b['allow_download']; }
         if (array_key_exists('gallery', $b)) { $sets[] = 'gallery = ?'; $params[] = ($share['folder_id'] && !empty($b['gallery'])) ? 1 : 0; }
+        if (array_key_exists('show_info', $b)) { $sets[] = 'show_info = ?'; $params[] = (int)(bool)$b['show_info']; }
+        if (array_key_exists('show_labels', $b)) { $sets[] = 'show_labels = ?'; $params[] = (int)(bool)$b['show_labels']; }
         if (array_key_exists('expires_at', $b)) { $sets[] = 'expires_at = ?'; $params[] = !empty($b['expires_at']) ? (string)$b['expires_at'] : null; }
         if (!empty($b['clear_password'])) { $sets[] = 'password_hash = ?'; $params[] = null; }
         elseif (array_key_exists('password', $b) && (string)$b['password'] !== '') { $sets[] = 'password_hash = ?'; $params[] = password_hash((string)$b['password'], PASSWORD_BCRYPT); }
@@ -354,6 +359,8 @@ final class ShareRoutes
             'token' => $share['token'],
             'allow_download' => (bool)$share['allow_download'],
             'gallery' => !empty($share['gallery']),
+            'show_info' => !empty($share['show_info']),
+            'show_labels' => !isset($share['show_labels']) || !empty($share['show_labels']),
             'expires_at' => $share['expires_at'],
             'owner' => $ownerRow ? [
                 'id' => (int)$ownerRow['id'], 'name' => $ownerRow['name'], 'email' => $ownerRow['email'],

@@ -277,6 +277,20 @@ final class FileRoutes
                 default      => false,
             };
             if (!$img) return false;
+            // Honour EXIF orientation so portrait phone photos aren't shown
+            // sideways/landscape in the thumbnail (the re-encoded JPEG drops the flag).
+            if ($mime === 'image/jpeg' && function_exists('exif_read_data')) {
+                $exif = @exif_read_data($src);
+                switch ((int)($exif['Orientation'] ?? 1)) {
+                    case 2: imageflip($img, IMG_FLIP_HORIZONTAL); break;
+                    case 3: $img = imagerotate($img, 180, 0); break;
+                    case 4: imageflip($img, IMG_FLIP_VERTICAL); break;
+                    case 5: $img = imagerotate($img, -90, 0); imageflip($img, IMG_FLIP_HORIZONTAL); break;
+                    case 6: $img = imagerotate($img, -90, 0); break;
+                    case 7: $img = imagerotate($img, 90, 0); imageflip($img, IMG_FLIP_HORIZONTAL); break;
+                    case 8: $img = imagerotate($img, 90, 0); break;
+                }
+            }
             $w = imagesx($img); $h = imagesy($img);
             $scale = min(1, $max / max($w, $h));
             $nw = max(1, (int)round($w * $scale)); $nh = max(1, (int)round($h * $scale));

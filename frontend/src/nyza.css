@@ -137,10 +137,11 @@ input, textarea {
 .nyza-masonry { columns: 4 260px; column-gap: 14px; }
 .nyza-masonry > div { break-inside: avoid; margin: 0 0 14px; position: relative; cursor: pointer; border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--border); }
 .nyza-masonry img { width: 100%; display: block; }
-.nyza-masonry .ov { position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,0.55), transparent 45%); opacity: 0; transition: opacity .2s; display: flex; align-items: flex-end; padding: 10px 12px; }
+.nyza-masonry .ov { position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,0.55), transparent 45%); opacity: 0; transition: opacity .2s; display: flex; align-items: flex-end; padding: 10px 12px; pointer-events: none; z-index: 1; }
 .nyza-masonry > div:hover .ov { opacity: 1; }
 .nyza-masonry .ov span { color: #fff; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 760px) { .nyza-masonry { columns: 2 150px; column-gap: 8px; } .nyza-masonry > div { margin-bottom: 8px; } }
+.nyza-masonry .gallery-label-btns { z-index: 3; }
 .nyza-masonry > div:hover .gallery-label-btns { opacity: 1 !important; }
 @media (hover: none) { .gallery-label-btns { opacity: 1 !important; } }
 
