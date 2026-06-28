@@ -2169,7 +2169,9 @@ export function UploadProgress({ items, onClose, onCancel }) {
           <IconBtn size={30} title={min ? 'Aufklappen' : 'Minimieren'} onClick={(e) => { e.stopPropagation(); setMin((m) => !m); }}>
             {min ? Ic.chevronU(15) : Ic.chevronD(15)}
           </IconBtn>
-          {!active && <IconBtn size={30} title="Schließen" onClick={(e) => { e.stopPropagation(); onClose(); }}>{Ic.close(15)}</IconBtn>}
+          {active
+            ? <IconBtn size={30} title="Alle abbrechen" onClick={async (e) => { e.stopPropagation(); if (await confirmDialog({ title: 'Alle Uploads abbrechen?', message: 'Laufende und wartende Uploads werden gestoppt.', confirmLabel: 'Alle stoppen', danger: true })) { items.forEach((it) => { if (it.status === 'uploading' || it.status === 'queued') onCancel && onCancel(it.id); }); } }}>{Ic.close(15)}</IconBtn>
+            : <IconBtn size={30} title="Schließen" onClick={(e) => { e.stopPropagation(); onClose(); }}>{Ic.close(15)}</IconBtn>}
         </div>
         {!min && (
           <div style={{ borderTop: '1px solid var(--border)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 300, overflowY: 'auto' }}>
@@ -3793,7 +3795,7 @@ function parsePhotoDate(s) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectMode, onToggleSelect, tagLookup, tags }) {
+function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectMode, onToggleSelect, onDragSelect, tagLookup, tags }) {
   const selecting = (selected && selected.size > 0) || !!selectMode;
   const media = files.filter((f) => f.kind === 'image' || f.kind === 'video');
   const others = files.filter((f) => f.kind !== 'image' && f.kind !== 'video');
@@ -3817,8 +3819,36 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectM
     groups[seen[key]].files.push(f);
   }
 
+  // Rubber-band selection: drag a box over the photos to multi-select (enters
+  // selection mode automatically — the bottom toolbar shows once >0 selected).
+  const wrapRef = useRef(null);
+  const dragRef = useRef(null);
+  const [rect, setRect] = useState(null);
+  const onMove = (e) => {
+    const dr = dragRef.current; if (!dr) return;
+    const box = wrapRef.current.getBoundingClientRect();
+    const l = Math.min(dr.sx, e.clientX), t = Math.min(dr.sy, e.clientY);
+    const r = Math.max(dr.sx, e.clientX), b = Math.max(dr.sy, e.clientY);
+    setRect({ l: l - box.left, t: t - box.top + wrapRef.current.scrollTop, w: r - l, h: b - t });
+    const next = new Set(dr.base);
+    wrapRef.current.querySelectorAll('[data-fid]').forEach((el) => {
+      const c = el.getBoundingClientRect();
+      if (c.right >= l && c.left <= r && c.bottom >= t && c.top <= b) next.add(Number(el.getAttribute('data-fid')));
+    });
+    onDragSelect && onDragSelect(next);
+  };
+  const onUp = () => { dragRef.current = null; setRect(null); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
+  const onDown = (e) => {
+    if (e.button !== 0 || !onDragSelect) return;
+    if (e.target.closest('[data-fid]') || e.target.closest('button') || e.target.closest('a')) return;
+    dragRef.current = { sx: e.clientX, sy: e.clientY, base: new Set(selected || []) };
+    setRect({ l: 0, t: 0, w: 0, h: 0 });
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   return (
-    <div>
+    <div ref={wrapRef} onPointerDown={onDown} style={{ position: 'relative' }}>
       {groups.map((g) => (
         <div key={g.label} style={{ marginBottom: 36 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -3890,6 +3920,9 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectM
       )}
       {media.length === 0 && others.length === 0 && (
         <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--fg-3)' }}>Noch keine Dateien in dieser Galerie.</div>
+      )}
+      {rect && rect.w > 3 && rect.h > 3 && (
+        <div style={{ position: 'absolute', left: rect.l, top: rect.t, width: rect.w, height: rect.h, background: 'color-mix(in oklab, var(--accent) 18%, transparent)', border: '1px solid var(--accent)', borderRadius: 4, pointerEvents: 'none', zIndex: 10 }}/>
       )}
     </div>
   );
@@ -4061,7 +4094,7 @@ function FolderView({
 
         {folder.kind === 'gallery' ? (
           <GalleryOwnerView files={files} token={null} onOpen={(f) => onOpenFile(f, files)} onLabel={onLabelFile} onContext={(f, e) => fileCtx(f, e)}
-            selected={selected} selectMode={selectMode} onToggleSelect={toggleSelect}/>
+            selected={selected} selectMode={selectMode} onToggleSelect={toggleSelect} onDragSelect={setSelected}/>
         ) : files.length > 0 ? (
           view === 'grid'
             ? <FileGrid files={files} selected={selected} onOpen={(f) => onOpenFile(f, files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onDragFiles={() => {}} onContext={fileCtx} selectMode={selectMode} tagLookup={idsFor} tags={tags}/>
