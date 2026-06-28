@@ -1933,8 +1933,28 @@ function FileList({ files, selected, onOpen, onToggleSelect, onDragSelect, onSha
     if (selecting) { onToggleSelect(f.id); lastIdx.current = idx; return; }
     onOpen(f);
   };
+  // Rubber-band drag-select (mouse) over the list rows.
+  const wrapRef = useRef(null);
+  const dragRef = useRef(null);
+  const [rect, setRect] = useState(null);
+  const rbMove = (e) => {
+    const dr = dragRef.current; if (!dr) return;
+    const box = wrapRef.current.getBoundingClientRect();
+    const l = Math.min(dr.sx, e.clientX), t = Math.min(dr.sy, e.clientY), r = Math.max(dr.sx, e.clientX), b = Math.max(dr.sy, e.clientY);
+    setRect({ l: l - box.left, t: t - box.top, w: r - l, h: b - t });
+    const next = new Set(dr.base);
+    wrapRef.current.querySelectorAll('[data-fid]').forEach((el) => { const c = el.getBoundingClientRect(); if (c.bottom >= t && c.top <= b) next.add(Number(el.getAttribute('data-fid'))); });
+    onDragSelect && onDragSelect(next);
+  };
+  const rbUp = () => { dragRef.current = null; setRect(null); window.removeEventListener('pointermove', rbMove); window.removeEventListener('pointerup', rbUp); };
+  const rbDown = (e) => {
+    if (e.button !== 0 || !onDragSelect) return;
+    if (e.target.closest('[data-fid]') || e.target.closest('button') || e.target.closest('a')) return;
+    dragRef.current = { sx: e.clientX, sy: e.clientY, base: new Set(selected || []) };
+    window.addEventListener('pointermove', rbMove); window.addEventListener('pointerup', rbUp);
+  };
   return (
-    <div style={{ borderRadius: 'var(--r-md)', overflow: 'hidden', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+    <div ref={wrapRef} onPointerDown={rbDown} style={{ position: 'relative', borderRadius: 'var(--r-md)', overflow: 'hidden', background: 'var(--surface)', border: '1px solid var(--border)' }}>
       <div style={{
         display: 'grid', gridTemplateColumns: '32px 1fr 90px 120px 120px 92px', alignItems: 'center', gap: 16,
         padding: '10px 16px', fontSize: 11, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.5,
@@ -1952,7 +1972,7 @@ function FileList({ files, selected, onOpen, onToggleSelect, onDragSelect, onSha
       {files.map((r, i) => {
         const sel = selected.has(r.id);
         return (
-          <div key={r.id} style={{
+          <div key={r.id} data-fid={r.id} style={{
             display: 'grid', gridTemplateColumns: '32px 1fr 90px 120px 120px 92px', alignItems: 'center', gap: 16,
             padding: '10px 16px', borderBottom: i < files.length - 1 ? '1px solid var(--border)' : 'none',
             fontSize: 13, transition: 'background .15s', cursor: 'pointer',
@@ -1988,6 +2008,9 @@ function FileList({ files, selected, onOpen, onToggleSelect, onDragSelect, onSha
           </div>
         );
       })}
+      {rect && rect.h > 3 && (
+        <div style={{ position: 'absolute', left: rect.l, top: rect.t, width: rect.w, height: rect.h, background: 'color-mix(in oklab, var(--accent) 16%, transparent)', border: '1px solid var(--accent)', borderRadius: 4, pointerEvents: 'none', zIndex: 5 }}/>
+      )}
     </div>
   );
 }
@@ -8187,6 +8210,8 @@ function KundenportalApp({ onBack }) {
 function PortalEditModal({ portal, onSaved, onClose }) {
   const isNew = !!portal._new;
   const [p, setP] = useState(portal);
+  const idRef = useRef(portal.id || null);
+  const createRef = useRef(null);
   const [name, setName] = useState(portal.name || '');
   const [contactId, setContactId] = useState(portal.contact_id ? String(portal.contact_id) : '');
   const [intro, setIntro] = useState(portal.intro || '');
@@ -8207,15 +8232,21 @@ function PortalEditModal({ portal, onSaved, onClose }) {
     API.uploadLinks().then((d) => setUploads(d.upload_links || d.links || [])).catch(() => {});
   }, []);
   const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
-  const reload = async () => { const d = await API.portal(p.id); setP(d.portal); };
+  const reload = async () => { if (!idRef.current) return; const d = await API.portal(idRef.current); setP(d.portal); };
+  const body = () => { const b = { name: name.trim() || 'Kundenportal', contact_id: contactId || null, intro: intro.trim() || null }; if (password) b.password = password; return b; };
+  // Create exactly once, even across rapid concurrent calls (attach + save).
+  const ensureSaved = async () => {
+    if (idRef.current) return idRef.current;
+    if (!createRef.current) {
+      createRef.current = API.createPortal(body()).then((d) => { idRef.current = d.portal.id; setP(d.portal); setPassword(''); onSaved && onSaved(); return d.portal.id; });
+    }
+    return createRef.current;
+  };
   const saveBase = async () => {
-    const body = { name: name.trim() || 'Kundenportal', contact_id: contactId || null, intro: intro.trim() || null };
-    if (password) body.password = password;
-    if (isNew) { const d = await API.createPortal(body); setP(d.portal); setPassword(''); onSaved && onSaved(); return d.portal; }
-    const d = await API.updatePortal(p.id, body); setP(d.portal); setPassword(''); onSaved && onSaved(); return d.portal;
+    if (!idRef.current) { await ensureSaved(); return; }
+    const d = await API.updatePortal(idRef.current, body()); setP(d.portal); setPassword(''); onSaved && onSaved();
   };
   const saveAndClose = async () => { setBusy(true); try { await saveBase(); toast('Gespeichert', 'success'); onClose(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
-  const ensureSaved = async () => { if (p.id) { await saveBase(); return p.id; } const np = await saveBase(); return np.id; };
   const attachFolder = async () => { if (!addFolder) return; try { const id = await ensureSaved(); await API.portalAddItem(id, { folder_id: Number(addFolder) }); setAddFolder(''); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
   const attachFile = async (f) => { setPicking(false); try { const id = await ensureSaved(); await API.portalAddItem(id, { file_id: f.id }); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
   const attachSig = async () => { if (!addSig) return; try { const id = await ensureSaved(); await API.portalAddItem(id, { signature_id: Number(addSig) }); setAddSig(''); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
