@@ -1782,6 +1782,8 @@ function FileGrid({ files, selected, onOpen, onToggleSelect, onDragSelect, onTog
     // primary button, non-touch.
     if (e.button !== 0 || !onDragSelect) return;
     if (e.target.closest('[data-fid]')) return;
+    e.preventDefault();
+    document.body.style.userSelect = 'none';
     const box = wrapRef.current.getBoundingClientRect();
     drag.current = { ox: box.left, oy: box.top, sx: e.clientX, sy: e.clientY, base: new Set(selected) };
     setRect({ l: e.clientX - box.left, t: e.clientY - box.top, w: 0, h: 0 });
@@ -1802,7 +1804,7 @@ function FileGrid({ files, selected, onOpen, onToggleSelect, onDragSelect, onTog
     onDragSelect(ids);
   };
   const onUp = () => {
-    drag.current = null; setRect(null);
+    drag.current = null; setRect(null); document.body.style.userSelect = '';
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
   };
@@ -1946,10 +1948,12 @@ function FileList({ files, selected, onOpen, onToggleSelect, onDragSelect, onSha
     wrapRef.current.querySelectorAll('[data-fid]').forEach((el) => { const c = el.getBoundingClientRect(); if (c.bottom >= t && c.top <= b) next.add(Number(el.getAttribute('data-fid'))); });
     onDragSelect && onDragSelect(next);
   };
-  const rbUp = () => { dragRef.current = null; setRect(null); window.removeEventListener('pointermove', rbMove); window.removeEventListener('pointerup', rbUp); };
+  const rbUp = () => { dragRef.current = null; setRect(null); document.body.style.userSelect = ''; window.removeEventListener('pointermove', rbMove); window.removeEventListener('pointerup', rbUp); };
   const rbDown = (e) => {
     if (e.button !== 0 || !onDragSelect) return;
     if (e.target.closest('[data-fid]') || e.target.closest('button') || e.target.closest('a')) return;
+    e.preventDefault();
+    document.body.style.userSelect = 'none';
     dragRef.current = { sx: e.clientX, sy: e.clientY, base: new Set(selected || []) };
     window.addEventListener('pointermove', rbMove); window.addEventListener('pointerup', rbUp);
   };
@@ -3860,10 +3864,12 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectM
     });
     onDragSelect && onDragSelect(next);
   };
-  const onUp = () => { dragRef.current = null; setRect(null); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
+  const onUp = () => { dragRef.current = null; setRect(null); document.body.style.userSelect = ''; window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
   const onDown = (e) => {
     if (e.button !== 0 || !onDragSelect) return;
     if (e.target.closest('[data-fid]') || e.target.closest('button') || e.target.closest('a')) return;
+    e.preventDefault();
+    document.body.style.userSelect = 'none';
     dragRef.current = { sx: e.clientX, sy: e.clientY, base: new Set(selected || []) };
     setRect({ l: 0, t: 0, w: 0, h: 0 });
     window.addEventListener('pointermove', onMove);
