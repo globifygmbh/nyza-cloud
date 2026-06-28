@@ -124,9 +124,27 @@ final class FolderRoutes
         $sub->execute([$id]);
         return Json::ok($res, [
             'folder' => self::decorate($folder),
+            'path' => self::ancestorPath($id),
             'files' => $files->fetchAll(),
             'subfolders' => array_map([self::class, 'decorate'], $sub->fetchAll()),
         ]);
+    }
+
+    /** Ancestor chain (root → parent), excluding the folder itself. */
+    private static function ancestorPath(int $id): array
+    {
+        $pdo = Database::pdo();
+        $stmt = $pdo->prepare('SELECT id, name, parent_id FROM folders WHERE id = ?');
+        $chain = [];
+        $cur = $id; $guard = 0;
+        while ($cur !== null && $guard++ < 100) {
+            $stmt->execute([$cur]);
+            $row = $stmt->fetch();
+            if (!$row) break;
+            if ((int)$row['id'] !== $id) array_unshift($chain, ['id' => (int)$row['id'], 'name' => $row['name']]);
+            $cur = $row['parent_id'] !== null ? (int)$row['parent_id'] : null;
+        }
+        return $chain;
     }
 
     /** Fetch a live folder row by id regardless of owner (used after a shared

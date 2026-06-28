@@ -1264,10 +1264,14 @@ function TopBar({ crumbs = ['Meine Dateien'], view, onView, onSearch, search, so
       borderBottom: '1px solid var(--border)', flexShrink: 0,
       background: 'var(--surface-2)', backdropFilter: 'blur(20px)',
     }}>
+      {crumbs.length > 1 && (
+        <IconBtn size={34} title="Zurück" onClick={() => { try { history.back(); } catch {} }}
+          style={{ flexShrink: 0, border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronL(17)}</IconBtn>
+      )}
       <div className="nyza-brand-m" style={{ display: 'none', alignItems: 'center', minWidth: 0 }}>
         <NyzaWordmark size={15}/>
       </div>
-      <div className={'nyza-crumbs' + (crumbs.length <= 1 ? ' nyza-crumbs-single' : '')} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, minWidth: 0 }}>
+      <div className={'nyza-crumbs' + (crumbs.length <= 1 ? ' nyza-crumbs-single' : '')} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, minWidth: 0, overflowX: 'auto' }}>
         {crumbs.map((c, i) => {
           const isLast = i === crumbs.length - 1;
           const label = typeof c === 'string' ? c : c.label;
@@ -3101,6 +3105,21 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const [search, setSearch] = useState('');
   const [nav, setNav] = useState(() => { try { const s = JSON.parse(localStorage.getItem('nyza.nav') || 'null'); if (s && s.name) return s; } catch {} return { name: 'files' }; }); // {name:'files'|'shared'|'links'|'activity'|'folder'|'apps'|'app-*', id?}
   useEffect(() => { try { localStorage.setItem('nyza.nav', JSON.stringify(nav)); } catch {} }, [nav]);
+  // Browser-history integration: every in-app navigation pushes a history
+  // entry, so the browser/phone back button steps through views (folder →
+  // parent → … → dashboard) instead of jumping straight out.
+  const navMounted = useRef(false);
+  const navPopping = useRef(false);
+  useEffect(() => {
+    if (!navMounted.current) { navMounted.current = true; try { history.replaceState({ nyzaNav: nav }, ''); } catch {} return; }
+    if (navPopping.current) { navPopping.current = false; return; }
+    try { history.pushState({ nyzaNav: nav }, ''); } catch {}
+  }, [nav]);
+  useEffect(() => {
+    const onPop = (e) => { const n = e.state && e.state.nyzaNav; if (n && n.name) { navPopping.current = true; setNav(n); setSearch(''); } };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   // ⌘K / Ctrl+K opens the global search palette from anywhere.
   useEffect(() => {
     const onKey = (e) => {
@@ -4071,7 +4090,7 @@ function FolderView({
   return (
     <>
       <TopBar
-        crumbs={[{ label: 'Meine Dateien', onClick: onBack }, folder.name]}
+        crumbs={[{ label: 'Meine Dateien', onClick: onBack }, ...((data.path || []).map((a) => ({ label: a.name, onClick: () => onOpenFolder({ id: a.id }) }))), folder.name]}
         view={view} onView={setView} search={search} onSearch={setSearch} sort={sort} onSort={setSort}
         selectMode={selectMode} onSelectMode={(v) => { setSelectMode(v); if (!v) setSelected(new Set()); }}
         right={
