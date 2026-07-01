@@ -8,6 +8,8 @@
     "firebase/php-jwt": "^7.0",
     "minishlink/web-push": "^10.1",
     "phpmailer/phpmailer": "^6.9",
+    "setasign/fpdf": "^1.8",
+    "setasign/fpdi": "^2.6",
     "slim/psr7": "^1.6",
     "slim/slim": "^4.12",
     "vlucas/phpdotenv": "^5.6"
