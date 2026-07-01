@@ -3476,6 +3476,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-portal' && (
           <KundenportalApp onBack={() => setNav({ name: 'apps' })} basePath={basePath}/>
         )}
+        {nav.name === 'app-pdf' && (
+          <PdfApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -4355,6 +4358,7 @@ function AppsView({ onOpenApp }) {
     { id: 'vault',      label: 'Zugänge',      desc: 'Passwörter & Logins',     icon: Ic.lock(26),    grad: 'linear-gradient(135deg, oklch(0.66 0.13 280), oklch(0.56 0.1 250))' },
     { id: 'mail',       label: 'Mail',         desc: 'Postfächer & Belege',     icon: Ic.inbox(26),   grad: 'linear-gradient(135deg, oklch(0.7 0.16 30), oklch(0.62 0.19 12))' },
     { id: 'portal',     label: 'Kundenportal', desc: 'Kunden-Zugänge',          icon: Ic.users(26),   grad: 'linear-gradient(135deg, oklch(0.68 0.15 165), oklch(0.6 0.13 200))' },
+    { id: 'pdf',        label: 'PDF',          desc: 'Format ändern',           icon: Ic.filePdf(26), grad: 'linear-gradient(135deg, oklch(0.66 0.2 20), oklch(0.58 0.19 8))' },
   ];
   const soon = [];
   const Tile = ({ a, disabled }) => (
@@ -4396,6 +4400,114 @@ function AppsView({ onOpenApp }) {
             {soon.map((a) => <Tile key={a.id} a={a} disabled/>)}
           </div>
         </>}
+      </div>
+    </>
+  );
+}
+
+// ───── PDF app — change paper format (first tool) ────────────────────────────
+const PDF_INFO = {
+  A0: '841 × 1189 mm', A1: '594 × 841 mm', A2: '420 × 594 mm', A3: '297 × 420 mm',
+  A4: '210 × 297 mm', A5: '148 × 210 mm', A6: '105 × 148 mm',
+};
+function PdfApp({ onBack }) {
+  const [status, setStatus] = useState(null);   // { available, formats }
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState('');         // format currently exporting
+  const inputRef = useRef(null);
+
+  useEffect(() => { API.pdfStatus().then(setStatus).catch(() => setStatus({ available: false, formats: [] })); }, []);
+
+  const pick = (f) => {
+    if (!f) return;
+    if (!/\.pdf$/i.test(f.name) && !/pdf/i.test(f.type || '')) { toast('Bitte eine PDF-Datei wählen', 'error'); return; }
+    if (f.size > 60 * 1024 * 1024) { toast('Datei zu groß (max 60 MB)', 'error'); return; }
+    setFile(f);
+  };
+  const onDrop = (e) => { e.preventDefault(); pick(e.dataTransfer.files?.[0]); };
+
+  const exportAs = async (fmt) => {
+    if (!file || busy) return;
+    setBusy(fmt);
+    try {
+      const blob = await API.pdfResize(file, fmt);
+      const base = file.name.replace(/\.pdf$/i, '');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${base}_${fmt}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      toast(`Als ${fmt} exportiert`, 'success');
+    } catch (e) { toast(e.message || 'Konvertierung fehlgeschlagen', 'error'); }
+    finally { setBusy(''); }
+  };
+
+  const formats = status?.formats || ['A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6'];
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'PDF']}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px', maxWidth: 720, margin: '0 auto', width: '100%' }}>
+        <SectionHeader title="PDF-Format ändern"/>
+        <div style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: -6, marginBottom: 20, lineHeight: 1.5 }}>
+          PDF hochladen und in einem anderen ISO-A-Format exportieren. Die Datei bleibt geladen –
+          du kannst sie mehrfach in verschiedenen Formaten herunterladen, ohne sie neu hochzuladen.
+        </div>
+
+        {status && status.available === false && (
+          <div style={{ padding: '12px 14px', borderRadius: 12, background: 'oklch(0.72 0.18 30 / 0.12)', border: '1px solid oklch(0.72 0.18 30 / 0.3)', color: 'var(--fg)', fontSize: 13, marginBottom: 18 }}>
+            PDF-Werkzeuge sind auf dem Server nicht verfügbar (poppler/pdftocairo fehlt).
+          </div>
+        )}
+
+        {!file ? (
+          <div
+            onClick={() => inputRef.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={onDrop}
+            style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
+              padding: '48px 24px', borderRadius: 18, border: '2px dashed var(--border-hi)',
+              background: 'var(--surface)', cursor: 'pointer', textAlign: 'center', color: 'var(--fg-3)',
+            }}>
+            <div style={{ color: 'var(--accent)' }}>{Ic.filePdf(40)}</div>
+            <div style={{ fontSize: 14, fontWeight: 540, color: 'var(--fg)' }}>PDF hier ablegen oder klicken</div>
+            <div style={{ fontSize: 12 }}>max. 60 MB</div>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)', marginBottom: 22 }}>
+              <div style={{ color: 'var(--accent)', flexShrink: 0 }}>{Ic.filePdf(28)}</div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 540, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{(file.size / 1024 / 1024).toFixed(1)} MB</div>
+              </div>
+              <button onClick={() => { setFile(null); if (inputRef.current) inputRef.current.value = ''; }} disabled={!!busy}
+                style={{ background: 'none', border: '1px solid var(--border-hi)', borderRadius: 9, padding: '6px 12px', fontSize: 12, color: 'var(--fg-2)', cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit', opacity: busy ? 0.5 : 1 }}>
+                Andere PDF
+              </button>
+            </div>
+
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 12, letterSpacing: 0.2 }}>Als Format exportieren</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
+              {formats.map((fmt) => (
+                <button key={fmt} onClick={() => exportAs(fmt)} disabled={!!busy}
+                  style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4,
+                    padding: '14px 16px', borderRadius: 14, border: '1px solid var(--border-hi)',
+                    background: busy === fmt ? 'var(--accent)' : 'var(--surface)',
+                    color: busy === fmt ? '#fff' : 'var(--fg)',
+                    cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                    opacity: busy && busy !== fmt ? 0.45 : 1, transition: 'opacity .15s, background .15s',
+                  }}>
+                  <span style={{ fontSize: 16, fontWeight: 640 }}>{busy === fmt ? 'Exportiere…' : fmt}</span>
+                  <span style={{ fontSize: 11, color: busy === fmt ? 'rgba(255,255,255,0.85)' : 'var(--fg-3)' }}>{PDF_INFO[fmt] || ''}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        <input ref={inputRef} type="file" accept="application/pdf,.pdf" style={{ display: 'none' }}
+          onChange={(e) => { pick(e.target.files?.[0]); }}/>
       </div>
     </>
   );

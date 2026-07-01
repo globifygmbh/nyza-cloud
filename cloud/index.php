@@ -32,6 +32,7 @@ use Nyza\Routes\LedgerRoutes;
 use Nyza\Routes\MailRoutes;
 use Nyza\Routes\OcrRoutes;
 use Nyza\Routes\ProductRoutes;
+use Nyza\Routes\PdfRoutes;
 use Nyza\Routes\PortalRoutes;
 use Nyza\Routes\PushRoutes;
 use Nyza\Routes\ReminderRoutes;
@@ -253,6 +254,7 @@ MailRoutes::mount($app);
 FormRoutes::mount($app);
 VaultRoutes::mount($app);
 PortalRoutes::mount($app);
+PdfRoutes::mount($app);
 PushRoutes::mount($app);
 WebDavRoutes::mount($app);
 

@@ -427,6 +427,14 @@ export const API = {
   portalThumbUrl: (token, id, pw) => url('/api/portal/' + token + '/file/' + id + '/thumb') + (pw ? '?p=' + encodeURIComponent(pw) : ''),
   portalZipUrl:   (token, pw, ids) => url('/api/portal/' + token + '/zip') + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', (ids && ids.length) ? 'ids=' + ids.join(',') : ''].filter(Boolean).join('&'),
   portalDocUrl:   (token, docId, pw, dl) => url('/api/portal/' + token + '/doc/' + docId) + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', dl ? 'download=1' : ''].filter(Boolean).join('&'),
+  // ───── PDF tools ─────
+  pdfStatus:      () => request('/api/pdf/status'),
+  pdfResize:      async (file, format) => {
+    const fd = new FormData(); fd.append('file', file); fd.append('format', format);
+    const res = await fetch(url('/api/pdf/resize'), { method: 'POST', headers: { Authorization: 'Bearer ' + (getToken() || '') }, body: fd });
+    if (!res.ok) { let m = 'Konvertierung fehlgeschlagen'; try { m = (await res.json()).error || m; } catch {} throw new Error(m); }
+    return res.blob();
+  },
   expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
 
   // Buchhaltung · Auswertung
