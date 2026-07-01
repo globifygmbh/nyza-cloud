@@ -429,12 +429,26 @@ export const API = {
   portalDocUrl:   (token, docId, pw, dl) => url('/api/portal/' + token + '/doc/' + docId) + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', dl ? 'download=1' : ''].filter(Boolean).join('&'),
   // ───── PDF tools ─────
   pdfStatus:      () => request('/api/pdf/status'),
-  pdfResize:      async (file, format) => {
+  pdfResize:      (file, format, onProgress) => new Promise((resolve, reject) => {
     const fd = new FormData(); fd.append('file', file); fd.append('format', format);
-    const res = await fetch(url('/api/pdf/resize'), { method: 'POST', headers: { Authorization: 'Bearer ' + (getToken() || '') }, body: fd });
-    if (!res.ok) { let m = 'Konvertierung fehlgeschlagen'; try { m = (await res.json()).error || m; } catch {} throw new Error(m); }
-    return res.blob();
-  },
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url('/api/pdf/resize'));
+    xhr.responseType = 'blob';
+    xhr.setRequestHeader('Authorization', 'Bearer ' + (getToken() || ''));
+    if (xhr.upload && onProgress) {
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress({ phase: 'upload', ratio: e.loaded / e.total }); };
+      xhr.upload.onload = () => onProgress({ phase: 'convert', ratio: 1 }); // upload done → server converting
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) { resolve(xhr.response); return; }
+      let m = 'Konvertierung fehlgeschlagen';
+      const blob = xhr.response;
+      if (blob && blob.text) { blob.text().then((t) => { try { m = JSON.parse(t).error || m; } catch {} reject(new Error(m)); }); }
+      else reject(new Error(m));
+    };
+    xhr.onerror = () => reject(new Error('Netzwerkfehler'));
+    xhr.send(fd);
+  }),
   expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
 
   // Buchhaltung · Auswertung

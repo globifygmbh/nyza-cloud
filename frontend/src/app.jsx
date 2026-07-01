@@ -4414,6 +4414,7 @@ function PdfApp({ onBack }) {
   const [status, setStatus] = useState(null);   // { available, formats }
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState('');         // format currently exporting
+  const [prog, setProg] = useState(null);       // { phase:'upload'|'convert', ratio }
   const inputRef = useRef(null);
 
   useEffect(() => { API.pdfStatus().then(setStatus).catch(() => setStatus({ available: false, formats: [] })); }, []);
@@ -4428,9 +4429,9 @@ function PdfApp({ onBack }) {
 
   const exportAs = async (fmt) => {
     if (!file || busy) return;
-    setBusy(fmt);
+    setBusy(fmt); setProg({ phase: 'upload', ratio: 0 });
     try {
-      const blob = await API.pdfResize(file, fmt);
+      const blob = await API.pdfResize(file, fmt, (p) => setProg(p));
       const base = file.name.replace(/\.pdf$/i, '');
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -4439,7 +4440,7 @@ function PdfApp({ onBack }) {
       setTimeout(() => URL.revokeObjectURL(url), 4000);
       toast(`Als ${fmt} exportiert`, 'success');
     } catch (e) { toast(e.message || 'Konvertierung fehlgeschlagen', 'error'); }
-    finally { setBusy(''); }
+    finally { setBusy(''); setProg(null); }
   };
 
   const formats = status?.formats || ['A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6'];
@@ -4488,6 +4489,28 @@ function PdfApp({ onBack }) {
             </div>
 
             <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 12, letterSpacing: 0.2 }}>Als Format exportieren</div>
+
+            {busy && (() => {
+              const uploading = prog?.phase === 'upload';
+              const pct = uploading ? Math.round((prog?.ratio || 0) * 100) : 100;
+              const label = uploading ? `Wird hochgeladen… ${pct}%` : 'Wird umgewandelt…';
+              return (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--fg-2)', marginBottom: 6 }}>
+                    <span>{label} <b style={{ color: 'var(--fg)' }}>{busy}</b></span>
+                    {uploading && <span style={{ color: 'var(--fg-3)' }}>{pct}%</span>}
+                  </div>
+                  <div style={{ height: 8, borderRadius: 999, background: 'var(--surface-hi)', overflow: 'hidden', position: 'relative' }}>
+                    {uploading ? (
+                      <div style={{ height: '100%', width: pct + '%', background: 'var(--accent)', borderRadius: 999, transition: 'width .15s ease' }}/>
+                    ) : (
+                      <div className="nyza-pdf-indet" style={{ height: '100%', width: '40%', background: 'var(--accent)', borderRadius: 999 }}/>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
               {formats.map((fmt) => (
                 <button key={fmt} onClick={() => exportAs(fmt)} disabled={!!busy}
