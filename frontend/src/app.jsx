@@ -1,6 +1,6 @@
 // Authenticated app shell + screens.
 
-import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import QRCode from 'qrcode';
 import { API, BASE, getToken, setToken, getCompany, setCompany } from './api.js';
 import {
@@ -3479,6 +3479,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-pdf' && (
           <PdfApp onBack={() => setNav({ name: 'apps' })}/>
         )}
+        {nav.name === 'app-snippets' && (
+          <SnippetsApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -4359,6 +4362,7 @@ function AppsView({ onOpenApp }) {
     { id: 'mail',       label: 'Mail',         desc: 'Postfächer & Belege',     icon: Ic.inbox(26),   grad: 'linear-gradient(135deg, oklch(0.7 0.16 30), oklch(0.62 0.19 12))' },
     { id: 'portal',     label: 'Kundenportal', desc: 'Kunden-Zugänge',          icon: Ic.users(26),   grad: 'linear-gradient(135deg, oklch(0.68 0.15 165), oklch(0.6 0.13 200))' },
     { id: 'pdf',        label: 'PDF',          desc: 'Format ändern',           icon: Ic.filePdf(26), grad: 'linear-gradient(135deg, oklch(0.66 0.2 20), oklch(0.58 0.19 8))' },
+    { id: 'snippets',   label: 'Textbausteine', desc: 'Vorlagen für Mails',     icon: Ic.fileGen(26), grad: 'linear-gradient(135deg, oklch(0.7 0.14 235), oklch(0.6 0.13 260))' },
   ];
   const soon = [];
   const Tile = ({ a, disabled }) => (
@@ -4758,6 +4762,176 @@ function PdfApp({ onBack }) {
           : <PdfGenericTool def={def}/>}
       </div>
     </>
+  );
+}
+
+// ───── Textbausteine — reusable snippets for mails/offers ───────────────────
+const snippetCopyText = (v) => { if (!v) return; navigator.clipboard?.writeText(String(v)); toast('Kopiert', 'success'); };
+
+function SnippetsApp({ onBack }) {
+  const [items, setItems] = useState(null);
+  const [q, setQ] = useState('');
+  const [cat, setCat] = useState('');
+  const [editing, setEditing] = useState(null);
+  const load = useCallback(() => {
+    const params = {}; if (q.trim()) params.q = q.trim(); if (cat) params.category = cat;
+    API.snippets(params).then((d) => setItems(d.snippets || [])).catch(() => setItems([]));
+  }, [q, cat]);
+  useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [load]);
+
+  const categories = useMemo(() => {
+    const s = new Set((items || []).map((i) => i.category).filter(Boolean));
+    return Array.from(s).sort((a, b) => a.localeCompare(b, 'de'));
+  }, [items]);
+
+  const del = async (s) => {
+    if (!await confirmDialog({ title: 'Textbaustein löschen?', message: `„${s.title}" wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return;
+    try { await API.deleteSnippet(s.id); load(); } catch (e) { toast(e.message, 'error'); }
+  };
+
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Textbausteine']} right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({})}>Neuer Baustein</Btn>}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 38, padding: '0 12px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', minWidth: 220 }}>
+            <span style={{ color: 'var(--fg-3)' }}>{Ic.search(14)}</span>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Suchen…" style={{ flex: 1, border: 0, outline: 0, background: 'transparent', color: 'var(--fg)', fontSize: 13.5, fontFamily: 'inherit' }}/>
+          </div>
+          {categories.length > 0 && (
+            <select value={cat} onChange={(e) => setCat(e.target.value)} style={{ height: 38, padding: '0 12px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', color: 'var(--fg)', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>
+              <option value="">Alle Kategorien</option>
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+        </div>
+
+        {items === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+          : items.length === 0 ? <EmptyHint icon={Ic.fileGen(40)} title="Keine Textbausteine" desc="Lege wiederkehrende Formulierungen an — Begrüßung, Zahlungsbedingungen, Verabschiedung — und füge sie beim Mail-Schreiben mit einem Klick ein."
+              actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({})}>Neuer Baustein</Btn>}/>
+          : (
+            <div style={{ display: 'grid', gap: 8, maxWidth: 760 }}>
+              {items.map((s) => (
+                <div key={s.id} className="nyza-listrow" onClick={() => setEditing(s)} style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: '13px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Ic.fileGen(15)}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 14, fontWeight: 540 }}>{s.title}</span>
+                      {s.category && <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: 'var(--surface-hi)', color: 'var(--fg-3)' }}>{s.category}</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.body}</div>
+                  </div>
+                  <IconBtn size={30} title="Kopieren" onClick={(e) => { e.stopPropagation(); snippetCopyText(s.body); }}>{Ic.copy(14)}</IconBtn>
+                  <IconBtn size={30} title="Löschen" onClick={(e) => { e.stopPropagation(); del(s); }}>{Ic.trash(14)}</IconBtn>
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
+      {editing && <SnippetEditModal snippet={editing} onSaved={() => { setEditing(null); load(); }} onClose={() => setEditing(null)}/>}
+    </>
+  );
+}
+
+function SnippetEditModal({ snippet, onSaved, onClose }) {
+  const [title, setTitle] = useState(snippet.title || '');
+  const [category, setCategory] = useState(snippet.category || '');
+  const [body, setBody] = useState(snippet.body || '');
+  const [busy, setBusy] = useState(false);
+  const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+  const save = async () => {
+    if (!title.trim() || !body.trim()) { toast('Titel und Text erforderlich', 'error'); return; }
+    setBusy(true);
+    const payload = { title: title.trim(), category: category.trim(), body: body.trim() };
+    try { if (snippet.id) await API.updateSnippet(snippet.id, payload); else await API.createSnippet(payload); onSaved(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 480, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.fileGen(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>{snippet.id ? 'Baustein bearbeiten' : 'Neuer Baustein'}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <label style={{ flex: 2, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Titel</span><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="z. B. Zahlungsbedingungen" style={fld}/></label>
+            <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kategorie</span><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="optional" style={fld}/></label>
+          </div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Text</span>
+            <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={8} style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/>
+          </label>
+          <div style={{ fontSize: 11, color: 'var(--fg-4)' }}>Platzhalter (beim Einfügen in Rechnungs-/Angebots-Mails automatisch ersetzt): {'{number} {kunde} {betrag} {datum} {faellig} {firma}'}</div>
+        </div>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={save} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+// Drop-in "insert snippet" button + popover for any textarea. Pass a ref to the
+// textarea; insertion happens at the current cursor position (or the end).
+function SnippetPicker({ textareaRef, onInsert, fillFn }) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState(null);
+  const [q, setQ] = useState('');
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    API.snippets().then((d) => setItems(d.snippets || [])).catch(() => setItems([]));
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const off = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('pointerdown', off);
+    return () => document.removeEventListener('pointerdown', off);
+  }, [open]);
+
+  const insert = (s) => {
+    const text = fillFn ? fillFn(s.body) : s.body;
+    const el = textareaRef?.current;
+    if (el) {
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      const next = el.value.slice(0, start) + text + el.value.slice(end);
+      onInsert(next);
+      requestAnimationFrame(() => { el.focus(); el.selectionStart = el.selectionEnd = start + text.length; });
+    } else {
+      onInsert((prev) => (prev ? prev + '\n' : '') + text);
+    }
+    API.useSnippet(s.id).catch(() => {});
+    setOpen(false);
+  };
+
+  const filtered = (items || []).filter((s) => !q.trim() || (s.title + ' ' + s.body).toLowerCase().includes(q.trim().toLowerCase()));
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <IconBtn size={42} title="Textbaustein einfügen" onClick={() => setOpen((o) => !o)} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>{Ic.fileGen(15)}</IconBtn>
+      {open && (
+        <div style={{ position: 'absolute', top: '110%', right: 0, zIndex: 50, width: 320, maxHeight: 360, display: 'flex', flexDirection: 'column', borderRadius: 14, border: '1px solid var(--border-hi)', background: 'var(--surface-2)', boxShadow: '0 20px 44px -14px rgba(0,0,0,0.5)', overflow: 'hidden' }}>
+          <div style={{ padding: 10, borderBottom: '1px solid var(--border)' }}>
+            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Textbaustein suchen…" style={{ width: '100%', height: 34, padding: '0 10px', borderRadius: 9, background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', fontFamily: 'inherit', boxSizing: 'border-box' }}/>
+          </div>
+          <div style={{ overflowY: 'auto', flex: 1 }}>
+            {items === null ? <div style={{ padding: 16, textAlign: 'center', color: 'var(--fg-3)' }}>{Ic.loader(18)}</div>
+              : filtered.length === 0 ? <div style={{ padding: 16, fontSize: 12.5, color: 'var(--fg-3)', textAlign: 'center' }}>Keine Bausteine. Lege sie in der App „Textbausteine" an.</div>
+              : filtered.map((s) => (
+                <button key={s.id} onClick={() => insert(s)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 12px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', cursor: 'pointer', fontFamily: 'inherit' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-hi)'; }} onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}>
+                  <div style={{ fontSize: 13, fontWeight: 540, color: 'var(--fg)' }}>{s.title}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.body}</div>
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -6413,6 +6587,7 @@ function DocEmailModal({ doc, companyName, onClose }) {
   const [tpl, setTpl] = useState(null);
   const [saveTpl, setSaveTpl] = useState(false);
   const [busy, setBusy] = useState(false);
+  const bodyRef = useRef(null);
   const isOffer = doc.type === 'offer';
   const fill = (s) => String(s || '')
     .replaceAll('{number}', doc.number || '')
@@ -6453,7 +6628,10 @@ function DocEmailModal({ doc, companyName, onClose }) {
           <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="An (E-Mail)" style={fld}/>
           <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Cc (optional)" style={fld}/>
           <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Betreff" style={fld}/>
-          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={7} placeholder="Nachricht…" style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <textarea ref={bodyRef} value={body} onChange={(e) => setBody(e.target.value)} rows={7} placeholder="Nachricht…" style={{ ...fld, flex: 1, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/>
+            <SnippetPicker textareaRef={bodyRef} onInsert={setBody} fillFn={fill}/>
+          </div>
           <div style={{ fontSize: 11, color: 'var(--fg-4)' }}>Das PDF wird automatisch angehängt. Platzhalter: {'{number} {kunde} {betrag} {datum} {faellig} {firma}'}</div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}><input type="checkbox" checked={saveTpl} onChange={(e) => setSaveTpl(e.target.checked)} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }}/> Als Vorlage für {isOffer ? 'Angebote' : 'Rechnungen'} speichern</label>
         </div>
@@ -8525,6 +8703,7 @@ function ComposeModal({ mailbox, initial, onClose }) {
   const [subject, setSubject] = useState(initial?.subject || '');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
+  const bodyRef = useRef(null);
   const fld = { padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
   const send = async () => {
     if (!to.trim()) { toast('Empfänger fehlt', 'error'); return; }
@@ -8543,7 +8722,10 @@ function ComposeModal({ mailbox, initial, onClose }) {
           <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="An (Komma-getrennt)" style={fld}/>
           <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Cc (optional)" style={fld}/>
           <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Betreff" style={fld}/>
-          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={8} placeholder="Nachricht…" style={{ ...fld, resize: 'vertical' }}/>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+            <textarea ref={bodyRef} value={body} onChange={(e) => setBody(e.target.value)} rows={8} placeholder="Nachricht…" style={{ ...fld, flex: 1, resize: 'vertical' }}/>
+            <SnippetPicker textareaRef={bodyRef} onInsert={setBody}/>
+          </div>
         </div>
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>

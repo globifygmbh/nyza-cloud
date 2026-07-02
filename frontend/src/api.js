@@ -427,6 +427,12 @@ export const API = {
   portalThumbUrl: (token, id, pw) => url('/api/portal/' + token + '/file/' + id + '/thumb') + (pw ? '?p=' + encodeURIComponent(pw) : ''),
   portalZipUrl:   (token, pw, ids) => url('/api/portal/' + token + '/zip') + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', (ids && ids.length) ? 'ids=' + ids.join(',') : ''].filter(Boolean).join('&'),
   portalDocUrl:   (token, docId, pw, dl) => url('/api/portal/' + token + '/doc/' + docId) + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', dl ? 'download=1' : ''].filter(Boolean).join('&'),
+  // ───── Textbausteine (snippets) ─────
+  snippets:       (params = {}) => request('/api/snippets' + (Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '')),
+  createSnippet:  (body) => request('/api/snippets', { method: 'POST', body }),
+  updateSnippet:  (id, body) => request('/api/snippets/' + id, { method: 'PATCH', body }),
+  deleteSnippet:  (id) => request('/api/snippets/' + id, { method: 'DELETE' }),
+  useSnippet:     (id) => request('/api/snippets/' + id + '/use', { method: 'POST' }),
   // ───── PDF tools ─────
   pdfStatus:      () => request('/api/pdf/status'),
   pdfInfo:        (file) => { const fd = new FormData(); fd.append('file', file); return request('/api/pdf/info', { method: 'POST', body: fd }); },

@@ -42,6 +42,7 @@ use Nyza\Routes\SearchRoutes;
 use Nyza\Routes\SettingsRoutes;
 use Nyza\Routes\SignatureRoutes;
 use Nyza\Routes\ShareRoutes;
+use Nyza\Routes\SnippetRoutes;
 use Nyza\Routes\SubscriptionRoutes;
 use Nyza\Routes\TagRoutes;
 use Nyza\Routes\TaskRoutes;
@@ -255,6 +256,7 @@ FormRoutes::mount($app);
 VaultRoutes::mount($app);
 PortalRoutes::mount($app);
 PdfRoutes::mount($app);
+SnippetRoutes::mount($app);
 PushRoutes::mount($app);
 WebDavRoutes::mount($app);
 
