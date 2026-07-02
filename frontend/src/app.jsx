@@ -4405,132 +4405,357 @@ function AppsView({ onOpenApp }) {
   );
 }
 
-// ───── PDF app — change paper format (first tool) ────────────────────────────
+// ───── PDF app — toolbox ─────────────────────────────────────────────────────
 const PDF_INFO = {
   A0: '841 × 1189 mm', A1: '594 × 841 mm', A2: '420 × 594 mm', A3: '297 × 420 mm',
   A4: '210 × 297 mm', A5: '148 × 210 mm', A6: '105 × 148 mm',
 };
-function PdfApp({ onBack }) {
-  const [status, setStatus] = useState(null);   // { available, formats }
-  const [file, setFile] = useState(null);
-  const [busy, setBusy] = useState('');         // format currently exporting
-  const [prog, setProg] = useState(null);       // { phase:'upload'|'convert', ratio }
-  const inputRef = useRef(null);
+const PDF_FMT_OPTS = Object.keys(PDF_INFO).map((f) => ({ v: f, l: f }));
+const PDF_COLOR_OPTS = [{ v: 'grau', l: 'Grau' }, { v: 'rot', l: 'Rot' }, { v: 'blau', l: 'Blau' }, { v: 'gruen', l: 'Grün' }, { v: 'schwarz', l: 'Schwarz' }];
+const PDF_POS_OPTS = [
+  { v: 'oben-links', l: 'Oben links' }, { v: 'oben-mitte', l: 'Oben mitte' }, { v: 'oben-rechts', l: 'Oben rechts' },
+  { v: 'unten-links', l: 'Unten links' }, { v: 'unten-mitte', l: 'Unten mitte' }, { v: 'unten-rechts', l: 'Unten rechts' },
+];
+const PDF_TOOLS = [
+  { id: 'resize', label: 'Format ändern', desc: 'A0–A6 skalieren', icon: Ic.filePdf, grad: 'linear-gradient(135deg, oklch(0.66 0.2 20), oklch(0.58 0.19 8))', kind: 'resize' },
+  { id: 'merge', label: 'Zusammenführen', desc: 'PDFs zu einer', icon: Ic.copy, grad: 'linear-gradient(135deg, oklch(0.7 0.16 250), oklch(0.62 0.16 275))', kind: 'multi', endpoint: 'merge', accept: 'application/pdf,.pdf', min: 2, run: 'Zusammenführen', hint: 'Reihenfolge = Upload-Reihenfolge. Mit den Pfeilen umsortieren.' },
+  { id: 'split', label: 'Teilen', desc: 'in mehrere PDFs', icon: Ic.grid, grad: 'linear-gradient(135deg, oklch(0.72 0.16 200), oklch(0.64 0.16 225))', kind: 'single', endpoint: 'split', run: 'Teilen', fields: [
+    { key: 'mode', label: 'Modus', type: 'select', def: 'pages', options: [{ v: 'pages', l: 'Jede Seite einzeln (ZIP)' }, { v: 'ranges', l: 'Nach Bereichen (ZIP)' }] },
+    { key: 'ranges', label: 'Bereiche', type: 'text', def: '', ph: '1-3, 4-6, 7', help: 'Je Komma-Gruppe eine Datei.', showIf: (v) => v.mode === 'ranges' },
+  ] },
+  { id: 'organize', label: 'Seiten bearbeiten', desc: 'sortieren · drehen · löschen', icon: Ic.rotate, grad: 'linear-gradient(135deg, oklch(0.72 0.18 300), oklch(0.64 0.17 268))', kind: 'organize' },
+  { id: 'extract', label: 'Extrahieren', desc: 'einzelne Seiten', icon: Ic.fileGen, grad: 'linear-gradient(135deg, oklch(0.7 0.15 175), oklch(0.62 0.15 195))', kind: 'single', endpoint: 'extract', run: 'Extrahieren', fields: [
+    { key: 'pages', label: 'Seiten', type: 'text', def: '', ph: '1,3,5-7', help: 'Kommagetrennt, Bereiche mit „-".' },
+  ] },
+  { id: 'nup', label: 'Mehrere pro Blatt', desc: '2-up / 4-up sparen', icon: Ic.grid, grad: 'linear-gradient(135deg, oklch(0.7 0.16 145), oklch(0.62 0.15 165))', kind: 'single', endpoint: 'nup', run: 'Erstellen', fields: [
+    { key: 'n', label: 'Seiten pro Blatt', type: 'select', def: '2', options: [{ v: '2', l: '2 pro Blatt' }, { v: '4', l: '4 pro Blatt' }] },
+    { key: 'format', label: 'Zielformat', type: 'select', def: 'A4', options: PDF_FMT_OPTS },
+  ] },
+  { id: 'booklet', label: 'Broschüre', desc: 'Falzreihenfolge', icon: Ic.archive, grad: 'linear-gradient(135deg, oklch(0.7 0.15 40), oklch(0.62 0.17 25))', kind: 'single', endpoint: 'booklet', run: 'Broschüre erstellen', hint: 'Ordnet Seiten für den A4-Broschürendruck (2-up, beidseitig) an.' },
+  { id: 'margin', label: 'Rand hinzufügen', desc: 'weißer Rand', icon: Ic.fileGen, grad: 'linear-gradient(135deg, oklch(0.66 0.05 255), oklch(0.56 0.04 255))', kind: 'single', endpoint: 'margin', run: 'Anwenden', fields: [
+    { key: 'mm', label: 'Rand (mm)', type: 'number', def: 10, min: 0, max: 80 },
+  ] },
+  { id: 'watermark', label: 'Wasserzeichen', desc: 'Text quer über Seiten', icon: Ic.star, grad: 'linear-gradient(135deg, oklch(0.72 0.17 320), oklch(0.64 0.18 300))', kind: 'single', endpoint: 'watermark', run: 'Anwenden', fields: [
+    { key: 'text', label: 'Text', type: 'text', def: 'ENTWURF' },
+    { key: 'color', label: 'Farbe', type: 'select', def: 'grau', options: PDF_COLOR_OPTS },
+    { key: 'size', label: 'Größe', type: 'number', def: 60, min: 8, max: 200 },
+    { key: 'angle', label: 'Winkel °', type: 'number', def: 45, min: -90, max: 90 },
+  ] },
+  { id: 'pagenumbers', label: 'Seitenzahlen', desc: '+ Kopfzeile', icon: Ic.list, grad: 'linear-gradient(135deg, oklch(0.7 0.16 210), oklch(0.63 0.16 235))', kind: 'single', endpoint: 'pagenumbers', run: 'Anwenden', fields: [
+    { key: 'position', label: 'Position', type: 'select', def: 'unten-mitte', options: PDF_POS_OPTS },
+    { key: 'format', label: 'Format', type: 'text', def: '{n} / {N}', help: '{n} = Seite, {N} = Gesamt' },
+    { key: 'start', label: 'Startnummer', type: 'number', def: 1, min: 0 },
+    { key: 'header', label: 'Kopfzeile (optional)', type: 'text', def: '' },
+  ] },
+  { id: 'stamp', label: 'Stempel', desc: 'z. B. BEZAHLT', icon: Ic.check, grad: 'linear-gradient(135deg, oklch(0.68 0.19 20), oklch(0.6 0.2 10))', kind: 'single', endpoint: 'stamp', run: 'Stempeln', fields: [
+    { key: 'text', label: 'Text', type: 'text', def: 'BEZAHLT' },
+    { key: 'position', label: 'Position', type: 'select', def: 'oben-rechts', options: PDF_POS_OPTS },
+    { key: 'color', label: 'Farbe', type: 'select', def: 'rot', options: PDF_COLOR_OPTS },
+    { key: 'date', label: 'Datum anhängen', type: 'checkbox', def: false },
+  ] },
+  { id: 'bates', label: 'Bates-Nummern', desc: 'fortlaufend nummerieren', icon: Ic.list, grad: 'linear-gradient(135deg, oklch(0.64 0.13 285), oklch(0.55 0.11 258))', kind: 'single', endpoint: 'bates', run: 'Nummerieren', fields: [
+    { key: 'prefix', label: 'Präfix', type: 'text', def: '', ph: 'AKTE-' },
+    { key: 'start', label: 'Start', type: 'number', def: 1, min: 0 },
+    { key: 'digits', label: 'Stellen', type: 'number', def: 6, min: 1, max: 10 },
+    { key: 'position', label: 'Position', type: 'select', def: 'unten-rechts', options: PDF_POS_OPTS },
+  ] },
+  { id: 'images', label: 'Bilder → PDF', desc: 'JPG/PNG zu PDF', icon: Ic.fileImg, grad: 'linear-gradient(135deg, oklch(0.72 0.16 155), oklch(0.64 0.16 185))', kind: 'multi', endpoint: 'images', accept: 'image/*', min: 1, run: 'PDF erstellen', fields: [
+    { key: 'fit', label: 'Seiten', type: 'select', def: 'a4', options: [{ v: 'a4', l: 'Auf A4 einpassen' }, { v: 'image', l: 'Bildgröße als Seite' }] },
+  ] },
+];
 
-  useEffect(() => { API.pdfStatus().then(setStatus).catch(() => setStatus({ available: false, formats: [] })); }, []);
+function pdfDownload(res) {
+  const u = URL.createObjectURL(res.blob);
+  const a = document.createElement('a');
+  a.href = u; a.download = res.filename || 'export.pdf';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 4000);
+}
+function PdfProgress({ prog, busy }) {
+  if (!busy) return null;
+  const uploading = prog?.phase === 'upload';
+  const pct = uploading ? Math.round((prog?.ratio || 0) * 100) : 100;
+  return (
+    <div style={{ margin: '4px 0 16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--fg-2)', marginBottom: 6 }}>
+        <span>{uploading ? `Wird hochgeladen… ${pct}%` : 'Wird verarbeitet…'}</span>
+      </div>
+      <div style={{ height: 8, borderRadius: 999, background: 'var(--surface-hi)', overflow: 'hidden', position: 'relative' }}>
+        {uploading
+          ? <div style={{ height: '100%', width: pct + '%', background: 'var(--accent)', borderRadius: 999, transition: 'width .15s ease' }}/>
+          : <div className="nyza-pdf-indet" style={{ height: '100%', width: '40%', background: 'var(--accent)', borderRadius: 999 }}/>}
+      </div>
+    </div>
+  );
+}
 
-  const pick = (f) => {
-    if (!f) return;
-    if (!/\.pdf$/i.test(f.name) && !/pdf/i.test(f.type || '')) { toast('Bitte eine PDF-Datei wählen', 'error'); return; }
-    if (f.size > 60 * 1024 * 1024) { toast('Datei zu groß (max 60 MB)', 'error'); return; }
-    setFile(f);
+// Drop-zone + selected-files list, single or multi.
+function PdfDrop({ multi, accept, files, onFiles, label }) {
+  const ref = useRef(null);
+  const add = (list) => {
+    const arr = Array.from(list || []);
+    if (!arr.length) return;
+    onFiles(multi ? [...files, ...arr] : [arr[0]]);
   };
-  const onDrop = (e) => { e.preventDefault(); pick(e.dataTransfer.files?.[0]); };
+  return (
+    <>
+      <div onClick={() => ref.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files); }}
+        style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '34px 24px', borderRadius: 16, border: '2px dashed var(--border-hi)', background: 'var(--surface)', cursor: 'pointer', textAlign: 'center', color: 'var(--fg-3)' }}>
+        <div style={{ color: 'var(--accent)' }}>{Ic.upload(30)}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 540, color: 'var(--fg)' }}>{label || (multi ? 'Dateien ablegen oder klicken' : 'PDF ablegen oder klicken')}</div>
+        <div style={{ fontSize: 11.5 }}>max. 80 MB{multi ? ' · mehrere möglich' : ''}</div>
+      </div>
+      {files.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+          {files.map((f, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 11, background: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <span style={{ color: 'var(--accent)', flexShrink: 0 }}>{Ic.filePdf(18)}</span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 12.5, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</div>
+                <div style={{ fontSize: 10.5, color: 'var(--fg-3)' }}>{(f.size / 1024 / 1024).toFixed(1)} MB</div>
+              </div>
+              {multi && files.length > 1 && (
+                <>
+                  <IconBtn size={28} title="Nach oben" onClick={() => { if (i === 0) return; const a = [...files]; [a[i - 1], a[i]] = [a[i], a[i - 1]]; onFiles(a); }}>{Ic.chevronU(14)}</IconBtn>
+                  <IconBtn size={28} title="Nach unten" onClick={() => { if (i === files.length - 1) return; const a = [...files]; [a[i + 1], a[i]] = [a[i], a[i + 1]]; onFiles(a); }}>{Ic.chevronD(14)}</IconBtn>
+                </>
+              )}
+              <IconBtn size={28} title="Entfernen" onClick={() => onFiles(files.filter((_, j) => j !== i))}>{Ic.close(14)}</IconBtn>
+            </div>
+          ))}
+        </div>
+      )}
+      <input ref={ref} type="file" accept={accept} multiple={!!multi} style={{ display: 'none' }} onChange={(e) => { add(e.target.files); e.target.value = ''; }}/>
+    </>
+  );
+}
 
+function PdfField({ f, value, onChange }) {
+  const base = { width: '100%', padding: '9px 11px', borderRadius: 10, border: '1px solid var(--border-hi)', background: 'var(--surface)', color: 'var(--fg)', fontSize: 13.5, fontFamily: 'inherit', outline: 'none' };
+  return (
+    <label style={{ display: 'block' }}>
+      <div style={{ fontSize: 12, color: 'var(--fg-2)', marginBottom: 5, fontWeight: 540 }}>{f.label}</div>
+      {f.type === 'select' ? (
+        <select value={value} onChange={(e) => onChange(e.target.value)} style={base}>
+          {f.options.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
+        </select>
+      ) : f.type === 'checkbox' ? (
+        <button type="button" onClick={() => onChange(!value)} style={{ ...base, display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', textAlign: 'left' }}>
+          <span style={{ width: 18, height: 18, borderRadius: 5, border: '1px solid var(--border-hi)', background: value ? 'var(--accent)' : 'transparent', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{value ? Ic.check(12) : null}</span>
+          <span style={{ color: 'var(--fg-2)', fontSize: 12.5 }}>{value ? 'Ja' : 'Nein'}</span>
+        </button>
+      ) : (
+        <input type={f.type === 'number' ? 'number' : 'text'} value={value} placeholder={f.ph || ''} min={f.min} max={f.max}
+          onChange={(e) => onChange(e.target.value)} style={base}/>
+      )}
+      {f.help && <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 4 }}>{f.help}</div>}
+    </label>
+  );
+}
+
+// Generic single/multi-file tool driven by a field spec.
+function PdfGenericTool({ def }) {
+  const [files, setFiles] = useState([]);
+  const [vals, setVals] = useState(() => Object.fromEntries((def.fields || []).map((f) => [f.key, f.def])));
+  const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState(null);
+  const min = def.min || 1;
+  const ready = files.length >= min;
+
+  const run = async () => {
+    if (!ready || busy) return;
+    setBusy(true); setProg({ phase: 'upload', ratio: 0 });
+    try {
+      const arg = def.kind === 'multi' ? { files } : { file: files[0] };
+      const res = await API.pdfRun(def.endpoint, arg, vals, (p) => setProg(p));
+      pdfDownload(res);
+      toast('Fertig – Download gestartet', 'success');
+    } catch (e) { toast(e.message || 'Fehlgeschlagen', 'error'); }
+    finally { setBusy(false); setProg(null); }
+  };
+
+  return (
+    <>
+      <SectionHeader title={def.label}/>
+      {def.hint && <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: -6, marginBottom: 16, lineHeight: 1.5 }}>{def.hint}</div>}
+      <PdfDrop multi={def.kind === 'multi'} accept={def.accept || 'application/pdf,.pdf'} files={files} onFiles={setFiles}/>
+      {(def.fields || []).length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginTop: 20 }}>
+          {def.fields.filter((f) => !f.showIf || f.showIf(vals)).map((f) => (
+            <PdfField key={f.key} f={f} value={vals[f.key]} onChange={(v) => setVals((s) => ({ ...s, [f.key]: v }))}/>
+          ))}
+        </div>
+      )}
+      <div style={{ marginTop: 22 }}>
+        <PdfProgress prog={prog} busy={busy}/>
+        <button onClick={run} disabled={!ready || busy}
+          style={{ padding: '11px 22px', borderRadius: 11, border: 'none', background: ready && !busy ? 'var(--accent)' : 'var(--surface-hi)', color: ready && !busy ? '#fff' : 'var(--fg-3)', fontSize: 14, fontWeight: 600, cursor: ready && !busy ? 'pointer' : 'default', fontFamily: 'inherit' }}>
+          {busy ? 'Bitte warten…' : (def.run || 'Ausführen')}
+        </button>
+      </div>
+    </>
+  );
+}
+
+// Format change — file stays loaded so you can export several sizes.
+function PdfResizeTool() {
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [prog, setProg] = useState(null);
   const exportAs = async (fmt) => {
     if (!file || busy) return;
     setBusy(fmt); setProg({ phase: 'upload', ratio: 0 });
-    try {
-      const blob = await API.pdfResize(file, fmt, (p) => setProg(p));
-      const base = file.name.replace(/\.pdf$/i, '');
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `${base}_${fmt}.pdf`;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-      toast(`Als ${fmt} exportiert`, 'success');
-    } catch (e) { toast(e.message || 'Konvertierung fehlgeschlagen', 'error'); }
+    try { pdfDownload(await API.pdfRun('resize', { file }, { format: fmt }, (p) => setProg(p))); toast(`Als ${fmt} exportiert`, 'success'); }
+    catch (e) { toast(e.message || 'Konvertierung fehlgeschlagen', 'error'); }
     finally { setBusy(''); setProg(null); }
   };
-
-  const formats = status?.formats || ['A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6'];
   return (
     <>
-      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'PDF']}/>
-      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px', maxWidth: 720, margin: '0 auto', width: '100%' }}>
-        <SectionHeader title="PDF-Format ändern"/>
-        <div style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: -6, marginBottom: 20, lineHeight: 1.5 }}>
-          PDF hochladen und in einem anderen ISO-A-Format exportieren. Die Datei bleibt geladen –
-          du kannst sie mehrfach in verschiedenen Formaten herunterladen, ohne sie neu hochzuladen.
-        </div>
-
-        {status && status.available === false && (
-          <div style={{ padding: '12px 14px', borderRadius: 12, background: 'oklch(0.72 0.18 30 / 0.12)', border: '1px solid oklch(0.72 0.18 30 / 0.3)', color: 'var(--fg)', fontSize: 13, marginBottom: 18 }}>
-            PDF-Werkzeuge sind auf dem Server nicht verfügbar (poppler/pdftocairo fehlt).
-          </div>
-        )}
-
-        {!file ? (
-          <div
-            onClick={() => inputRef.current?.click()}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={onDrop}
-            style={{
-              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
-              padding: '48px 24px', borderRadius: 18, border: '2px dashed var(--border-hi)',
-              background: 'var(--surface)', cursor: 'pointer', textAlign: 'center', color: 'var(--fg-3)',
-            }}>
-            <div style={{ color: 'var(--accent)' }}>{Ic.filePdf(40)}</div>
-            <div style={{ fontSize: 14, fontWeight: 540, color: 'var(--fg)' }}>PDF hier ablegen oder klicken</div>
-            <div style={{ fontSize: 12 }}>max. 60 MB</div>
-          </div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)', marginBottom: 22 }}>
-              <div style={{ color: 'var(--accent)', flexShrink: 0 }}>{Ic.filePdf(28)}</div>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 540, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
-                <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{(file.size / 1024 / 1024).toFixed(1)} MB</div>
-              </div>
-              <button onClick={() => { setFile(null); if (inputRef.current) inputRef.current.value = ''; }} disabled={!!busy}
-                style={{ background: 'none', border: '1px solid var(--border-hi)', borderRadius: 9, padding: '6px 12px', fontSize: 12, color: 'var(--fg-2)', cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit', opacity: busy ? 0.5 : 1 }}>
-                Andere PDF
+      <SectionHeader title="Format ändern"/>
+      <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: -6, marginBottom: 16, lineHeight: 1.5 }}>
+        Die Datei bleibt geladen – du kannst sie mehrfach in verschiedenen Formaten herunterladen, ohne sie neu hochzuladen.
+      </div>
+      <PdfDrop files={file ? [file] : []} onFiles={(a) => setFile(a[0] || null)}/>
+      {file && (
+        <>
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)', margin: '20px 0 12px', letterSpacing: 0.2 }}>Als Format exportieren</div>
+          <PdfProgress prog={prog} busy={busy}/>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
+            {Object.keys(PDF_INFO).map((fmt) => (
+              <button key={fmt} onClick={() => exportAs(fmt)} disabled={!!busy}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, padding: '14px 16px', borderRadius: 14, border: '1px solid var(--border-hi)', background: busy === fmt ? 'var(--accent)' : 'var(--surface)', color: busy === fmt ? '#fff' : 'var(--fg)', cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit', textAlign: 'left', opacity: busy && busy !== fmt ? 0.45 : 1, transition: 'opacity .15s, background .15s' }}>
+                <span style={{ fontSize: 16, fontWeight: 640 }}>{busy === fmt ? 'Export…' : fmt}</span>
+                <span style={{ fontSize: 11, color: busy === fmt ? 'rgba(255,255,255,0.85)' : 'var(--fg-3)' }}>{PDF_INFO[fmt]}</span>
               </button>
-            </div>
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
 
-            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 12, letterSpacing: 0.2 }}>Als Format exportieren</div>
+// Page editor — drag to reorder, rotate, delete.
+function PdfOrganizeTool() {
+  const [file, setFile] = useState(null);
+  const [pages, setPages] = useState([]);   // { p, r, del, land }
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState(null);
+  const dragI = useRef(null);
 
-            {busy && (() => {
-              const uploading = prog?.phase === 'upload';
-              const pct = uploading ? Math.round((prog?.ratio || 0) * 100) : 100;
-              const label = uploading ? `Wird hochgeladen… ${pct}%` : 'Wird umgewandelt…';
-              return (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--fg-2)', marginBottom: 6 }}>
-                    <span>{label} <b style={{ color: 'var(--fg)' }}>{busy}</b></span>
-                    {uploading && <span style={{ color: 'var(--fg-3)' }}>{pct}%</span>}
+  const load = async (f) => {
+    setFile(f); setPages([]);
+    if (!f) return;
+    setLoading(true);
+    try { const info = await API.pdfInfo(f); setPages((info.pages || []).map((pg) => ({ p: pg.n, r: 0, del: false, land: pg.landscape }))); }
+    catch (e) { toast(e.message || 'PDF konnte nicht gelesen werden', 'error'); setFile(null); }
+    finally { setLoading(false); }
+  };
+  const move = (from, to) => { if (to < 0 || to >= pages.length) return; const a = [...pages]; const [x] = a.splice(from, 1); a.splice(to, 0, x); setPages(a); };
+  const rot = (i) => setPages((s) => s.map((pg, j) => j === i ? { ...pg, r: (pg.r + 90) % 360 } : pg));
+  const del = (i) => setPages((s) => s.map((pg, j) => j === i ? { ...pg, del: !pg.del } : pg));
+
+  const apply = async () => {
+    const spec = pages.filter((pg) => !pg.del).map((pg) => ({ p: pg.p, r: pg.r }));
+    if (!spec.length) { toast('Alle Seiten entfernt', 'error'); return; }
+    setBusy(true); setProg({ phase: 'upload', ratio: 0 });
+    try { pdfDownload(await API.pdfRun('organize', { file }, { pages: JSON.stringify(spec) }, (p) => setProg(p))); toast('Fertig – Download gestartet', 'success'); }
+    catch (e) { toast(e.message || 'Fehlgeschlagen', 'error'); }
+    finally { setBusy(false); setProg(null); }
+  };
+
+  const kept = pages.filter((p) => !p.del).length;
+  return (
+    <>
+      <SectionHeader title="Seiten bearbeiten"/>
+      <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: -6, marginBottom: 16, lineHeight: 1.5 }}>
+        Seiten per Ziehen umsortieren, drehen (↻) oder löschen. Danach als neue PDF exportieren.
+      </div>
+      {!file ? (
+        <PdfDrop files={[]} onFiles={(a) => load(a[0] || null)}/>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+            <span style={{ color: 'var(--accent)' }}>{Ic.filePdf(20)}</span>
+            <div style={{ fontSize: 13, color: 'var(--fg)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+            <button onClick={() => { setFile(null); setPages([]); }} style={{ background: 'none', border: '1px solid var(--border-hi)', borderRadius: 9, padding: '6px 12px', fontSize: 12, color: 'var(--fg-2)', cursor: 'pointer', fontFamily: 'inherit' }}>Andere PDF</button>
+          </div>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--fg-3)', fontSize: 13 }}>Seiten werden gelesen…</div>
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))', gap: 12 }}>
+                {pages.map((pg, i) => (
+                  <div key={pg.p} draggable onDragStart={() => { dragI.current = i; }} onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => { if (dragI.current !== null) move(dragI.current, i); dragI.current = null; }}
+                    style={{ position: 'relative', border: '1px solid var(--border-hi)', borderRadius: 12, background: 'var(--surface)', padding: 8, opacity: pg.del ? 0.4 : 1, cursor: 'grab' }}>
+                    <div style={{ height: 84, borderRadius: 7, background: 'var(--surface-hi)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-3)', overflow: 'hidden' }}>
+                      <div style={{ transform: `rotate(${pg.r}deg)`, transition: 'transform .2s', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                        {Ic.fileGen(24)}
+                        <span style={{ fontSize: 10 }}>{pg.land ? 'quer' : 'hoch'}</span>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
+                      <span style={{ fontSize: 11, color: 'var(--fg-2)', fontWeight: 600 }}>S. {pg.p}</span>
+                      <div style={{ display: 'flex', gap: 2 }}>
+                        <IconBtn size={24} title="Drehen" onClick={() => rot(i)}>{Ic.rotate(13)}</IconBtn>
+                        <IconBtn size={24} title={pg.del ? 'Behalten' : 'Löschen'} onClick={() => del(i)}>{pg.del ? Ic.plus(13) : Ic.trash(13)}</IconBtn>
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ height: 8, borderRadius: 999, background: 'var(--surface-hi)', overflow: 'hidden', position: 'relative' }}>
-                    {uploading ? (
-                      <div style={{ height: '100%', width: pct + '%', background: 'var(--accent)', borderRadius: 999, transition: 'width .15s ease' }}/>
-                    ) : (
-                      <div className="nyza-pdf-indet" style={{ height: '100%', width: '40%', background: 'var(--accent)', borderRadius: 999 }}/>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
+                ))}
+              </div>
+              <div style={{ marginTop: 22 }}>
+                <PdfProgress prog={prog} busy={busy}/>
+                <button onClick={apply} disabled={busy || !kept}
+                  style={{ padding: '11px 22px', borderRadius: 11, border: 'none', background: !busy && kept ? 'var(--accent)' : 'var(--surface-hi)', color: !busy && kept ? '#fff' : 'var(--fg-3)', fontSize: 14, fontWeight: 600, cursor: !busy && kept ? 'pointer' : 'default', fontFamily: 'inherit' }}>
+                  {busy ? 'Bitte warten…' : `Exportieren (${kept} Seite${kept === 1 ? '' : 'n'})`}
+                </button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </>
+  );
+}
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
-              {formats.map((fmt) => (
-                <button key={fmt} onClick={() => exportAs(fmt)} disabled={!!busy}
-                  style={{
-                    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4,
-                    padding: '14px 16px', borderRadius: 14, border: '1px solid var(--border-hi)',
-                    background: busy === fmt ? 'var(--accent)' : 'var(--surface)',
-                    color: busy === fmt ? '#fff' : 'var(--fg)',
-                    cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit', textAlign: 'left',
-                    opacity: busy && busy !== fmt ? 0.45 : 1, transition: 'opacity .15s, background .15s',
-                  }}>
-                  <span style={{ fontSize: 16, fontWeight: 640 }}>{busy === fmt ? 'Exportiere…' : fmt}</span>
-                  <span style={{ fontSize: 11, color: busy === fmt ? 'rgba(255,255,255,0.85)' : 'var(--fg-3)' }}>{PDF_INFO[fmt] || ''}</span>
+function PdfApp({ onBack }) {
+  const [tool, setTool] = useState(null);
+  const def = PDF_TOOLS.find((t) => t.id === tool);
+  const crumbs = def
+    ? [{ label: 'Apps', onClick: onBack }, { label: 'PDF', onClick: () => setTool(null) }, def.label]
+    : [{ label: 'Apps', onClick: onBack }, 'PDF'];
+  return (
+    <>
+      <TopBar crumbs={crumbs}/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px', maxWidth: 760, margin: '0 auto', width: '100%' }}>
+        {!def ? (
+          <>
+            <SectionHeader title="PDF-Werkzeuge"/>
+            <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: -6, marginBottom: 22 }}>Alles läuft direkt auf dem Server – kein Installieren nötig.</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 14 }}>
+              {PDF_TOOLS.map((t) => (
+                <button key={t.id} onClick={() => setTool(t.id)}
+                  style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 16, borderRadius: 16, border: '1px solid var(--border)', background: 'var(--surface)', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-hi)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.transform = 'translateY(0)'; }}>
+                  <div style={{ width: 46, height: 46, borderRadius: 13, background: t.grad, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 0 rgba(255,255,255,0.3) inset, 0 8px 18px -8px rgba(0,0,0,0.4)' }}>{t.icon(22)}</div>
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>{t.label}</div>
+                    <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 2 }}>{t.desc}</div>
+                  </div>
                 </button>
               ))}
             </div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 24, lineHeight: 1.6 }}>
+              Bald: Passwortschutz &amp; Komprimieren (benötigt zusätzliches Server-Tool).
+            </div>
           </>
-        )}
-        <input ref={inputRef} type="file" accept="application/pdf,.pdf" style={{ display: 'none' }}
-          onChange={(e) => { pick(e.target.files?.[0]); }}/>
+        ) : def.kind === 'resize' ? <PdfResizeTool/>
+          : def.kind === 'organize' ? <PdfOrganizeTool/>
+          : <PdfGenericTool def={def}/>}
       </div>
     </>
   );

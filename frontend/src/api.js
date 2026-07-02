@@ -429,19 +429,29 @@ export const API = {
   portalDocUrl:   (token, docId, pw, dl) => url('/api/portal/' + token + '/doc/' + docId) + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', dl ? 'download=1' : ''].filter(Boolean).join('&'),
   // ───── PDF tools ─────
   pdfStatus:      () => request('/api/pdf/status'),
-  pdfResize:      (file, format, onProgress) => new Promise((resolve, reject) => {
-    const fd = new FormData(); fd.append('file', file); fd.append('format', format);
+  pdfInfo:        (file) => { const fd = new FormData(); fd.append('file', file); return request('/api/pdf/info', { method: 'POST', body: fd }); },
+  // Generic PDF operation. files = { file } or { files: [..] }. Returns { blob, filename }.
+  pdfRun:         (path, files, fields = {}, onProgress) => new Promise((resolve, reject) => {
+    const fd = new FormData();
+    if (files.file) fd.append('file', files.file);
+    if (files.files) files.files.forEach((f) => fd.append('files[]', f));
+    Object.entries(fields).forEach(([k, v]) => fd.append(k, v == null ? '' : String(v)));
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', url('/api/pdf/resize'));
+    xhr.open('POST', url('/api/pdf/' + path));
     xhr.responseType = 'blob';
     xhr.setRequestHeader('Authorization', 'Bearer ' + (getToken() || ''));
     if (xhr.upload && onProgress) {
       xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress({ phase: 'upload', ratio: e.loaded / e.total }); };
-      xhr.upload.onload = () => onProgress({ phase: 'convert', ratio: 1 }); // upload done → server converting
+      xhr.upload.onload = () => onProgress({ phase: 'convert', ratio: 1 });
     }
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) { resolve(xhr.response); return; }
-      let m = 'Konvertierung fehlgeschlagen';
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const cd = xhr.getResponseHeader('Content-Disposition') || '';
+        const mm = /filename="?([^"]+)"?/.exec(cd);
+        resolve({ blob: xhr.response, filename: mm ? mm[1] : 'export.pdf' });
+        return;
+      }
+      let m = 'Vorgang fehlgeschlagen';
       const blob = xhr.response;
       if (blob && blob.text) { blob.text().then((t) => { try { m = JSON.parse(t).error || m; } catch {} reject(new Error(m)); }); }
       else reject(new Error(m));
