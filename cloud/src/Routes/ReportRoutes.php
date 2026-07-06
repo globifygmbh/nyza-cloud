@@ -13,10 +13,13 @@ use Slim\App;
 use Slim\Routing\RouteCollectorProxy;
 
 /**
- * Auswertung & Statistik — cash-basis (EÜR) figures for a year: income from
- * paid invoices, expenses from paid expenses, profit, USt-Zahllast (collected
- * VAT minus deductible Vorsteuer), open/overdue receivables, recurring MRR/ARR,
- * per-customer revenue, monthly breakdown, plus a German CSV export.
+ * Auswertung & Statistik for a year: EÜR profit (always cash-basis — paid
+ * invoices/expenses, Zufluss-Abfluss-Prinzip), open/overdue receivables,
+ * recurring MRR/ARR, per-customer revenue, monthly breakdown, plus a German
+ * CSV export. The USt-Zahllast (collected VAT minus deductible Vorsteuer)
+ * follows the company's VAT method instead (CompanyContext::ustMethod):
+ * Soll — recognised at Rechnungs-/Leistungsdatum, whether paid or not — or
+ * Ist — same cash-basis as the EÜR figures.
  */
 final class ReportRoutes
 {
@@ -34,16 +37,30 @@ final class ReportRoutes
         $uid = CompanyContext::active($req, $uid); // scope all queries by active company
         [$year, $month, $quarter, $from, $to, $label] = self::rangeFor($req);
         $pdo = Database::pdo();
+        $ustMethod = CompanyContext::ustMethod($uid);
 
-        // Income: paid invoices, recognised at payment date.
+        // EÜR profit is always cash-basis (Zufluss-Abfluss-Prinzip): paid invoices/expenses.
         $inc = self::row($pdo, 'SELECT COALESCE(SUM(net),0) net, COALESCE(SUM(tax),0) tax, COALESCE(SUM(gross),0) gross, COUNT(*) cnt '
             . "FROM documents WHERE company_id=? AND type='invoice' AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ?", [$uid, $from, $to]);
-        // Expenses: paid expenses; Vorsteuer only counts when deductible.
+        // Expenses/Vorsteuer stay cash-basis regardless of ust_method (matches how these
+        // are actually booked in practice — receipt date and payment date coincide for
+        // the vast majority of day-to-day expenses).
         $exp = self::row($pdo, 'SELECT COALESCE(SUM(net),0) net, COALESCE(SUM(CASE WHEN deductible=1 THEN tax ELSE 0 END),0) vst, COALESCE(SUM(gross),0) gross, COUNT(*) cnt '
             . 'FROM expenses WHERE company_id=? AND paid_at IS NOT NULL AND DATE(paid_at) BETWEEN ? AND ?', [$uid, $from, $to]);
 
         $incomeNet = (float)$inc['net']; $incomeTax = (float)$inc['tax'];
         $expenseNet = (float)$exp['net']; $vst = (float)$exp['vst'];
+
+        // Umsatzsteuer (UVA) income side follows the company's VAT method. Soll:
+        // every invoice counts once issued (Leistungsdatum, falling back to
+        // Rechnungsdatum) whether or not it's been paid yet. Ist: same as EÜR above.
+        if ($ustMethod === 'soll') {
+            $incUst = self::row($pdo, 'SELECT COALESCE(SUM(net),0) net, COALESCE(SUM(tax),0) tax, COALESCE(SUM(gross),0) gross, COUNT(*) cnt '
+                . "FROM documents WHERE company_id=? AND type='invoice' AND COALESCE(delivery_date, doc_date) BETWEEN ? AND ?", [$uid, $from, $to]);
+        } else {
+            $incUst = $inc;
+        }
+        $incomeUstNet = (float)$incUst['net']; $incomeUstTax = (float)$incUst['tax'];
 
         // Open / overdue receivables (current state, not year-bound).
         $term = CompanyContext::paymentTermDays($uid);
@@ -90,12 +107,16 @@ final class ReportRoutes
         unset($mm);
 
         // VAT broken down per rate. Income from invoice items (items may mix
-        // rates); expense Vorsteuer from the expense rate, split deductible/not.
+        // rates), dated per the UVA method above; expense Vorsteuer from the
+        // expense rate (always cash-basis), split deductible/not.
+        $incUstWhere = $ustMethod === 'soll'
+            ? 'COALESCE(d.delivery_date, d.doc_date) BETWEEN ? AND ?'
+            : 'd.paid_at IS NOT NULL AND DATE(d.paid_at) BETWEEN ? AND ?';
         $ir = $pdo->prepare(
             'SELECT i.tax_rate rate, COALESCE(SUM(ROUND(i.quantity*i.unit_price_net,2)),0) net, '
             . 'COALESCE(SUM(ROUND(ROUND(i.quantity*i.unit_price_net,2)*i.tax_rate/100,2)),0) tax '
             . 'FROM document_items i JOIN documents d ON d.id=i.document_id '
-            . "WHERE d.company_id=? AND d.type='invoice' AND d.paid_at IS NOT NULL AND DATE(d.paid_at) BETWEEN ? AND ? "
+            . "WHERE d.company_id=? AND d.type='invoice' AND $incUstWhere "
             . 'GROUP BY i.tax_rate ORDER BY i.tax_rate DESC'
         );
         $ir->execute([$uid, $from, $to]);
@@ -118,22 +139,24 @@ final class ReportRoutes
             'gross' => round((float)$r['gross'], 2),
         ], $er->fetchAll());
 
-        // Individual bookings in the period (cash basis), for line-by-line review.
+        // Individual bookings in the period (dated per the UVA method above), for line-by-line review.
+        $ustDateExpr = $ustMethod === 'soll' ? 'COALESCE(d.delivery_date, d.doc_date)' : 'd.paid_at';
         $it = $pdo->prepare(
-            'SELECT d.number, d.paid_at, d.net, d.tax, d.gross, c.name AS contact_name, d.client_snapshot '
+            "SELECT d.number, $ustDateExpr AS ust_date, d.paid_at, d.net, d.tax, d.gross, c.name AS contact_name, d.client_snapshot "
             . 'FROM documents d LEFT JOIN contacts c ON c.id=d.contact_id '
-            . "WHERE d.company_id=? AND d.type='invoice' AND d.paid_at IS NOT NULL AND DATE(d.paid_at) BETWEEN ? AND ? "
-            . 'ORDER BY d.paid_at ASC, d.id ASC LIMIT 1000'
+            . "WHERE d.company_id=? AND d.type='invoice' AND $incUstWhere "
+            . "ORDER BY $ustDateExpr ASC, d.id ASC LIMIT 1000"
         );
         $it->execute([$uid, $from, $to]);
         $incomeTx = array_map(static function ($r) {
             $net = (float)$r['net']; $tax = (float)$r['tax'];
             $snap = json_decode((string)($r['client_snapshot'] ?? ''), true);
             return [
-                'date' => substr((string)$r['paid_at'], 0, 10), 'ref' => $r['number'],
+                'date' => substr((string)$r['ust_date'], 0, 10), 'ref' => $r['number'],
                 'partner' => $r['contact_name'] ?: (is_array($snap) ? ($snap['name'] ?? '') : ''),
                 'net' => round($net, 2), 'tax' => round($tax, 2), 'gross' => round((float)$r['gross'], 2),
                 'rate' => $net > 0 ? (float)round($tax / $net * 100) : 0,
+                'paid' => $r['paid_at'] !== null,
             ];
         }, $it->fetchAll());
 
@@ -153,10 +176,14 @@ final class ReportRoutes
 
         return Json::ok($res, [
             'year'     => $year,
+            'ust_method' => $ustMethod,
+            // Cash-basis (paid_at) — feeds Gewinn/EÜR, always Zufluss-Abfluss-Prinzip.
             'income'   => ['net' => round($incomeNet, 2), 'tax' => round($incomeTax, 2), 'gross' => round((float)$inc['gross'], 2), 'count' => (int)$inc['cnt']],
             'expense'  => ['net' => round($expenseNet, 2), 'vst' => round($vst, 2), 'gross' => round((float)$exp['gross'], 2), 'count' => (int)$exp['cnt']],
             'profit'   => round($incomeNet - $expenseNet, 2),
-            'ust_zahllast' => round($incomeTax - $vst, 2),
+            // UVA basis — Soll (Rechnungs-/Leistungsdatum) or Ist (Zahldatum) per company setting.
+            'income_ust' => ['net' => round($incomeUstNet, 2), 'tax' => round($incomeUstTax, 2), 'gross' => round((float)$incUst['gross'], 2), 'count' => (int)$incUst['cnt']],
+            'ust_zahllast' => round($incomeUstTax - $vst, 2),
             'open'     => ['total' => round((float)$open['total'], 2), 'count' => (int)$open['cnt']],
             'overdue'  => ['total' => round((float)$over['total'], 2), 'count' => (int)$over['cnt']],
             'recurring'=> ['mrr' => $mrr, 'arr' => round($mrr * 12, 2), 'active' => $activeSubs],

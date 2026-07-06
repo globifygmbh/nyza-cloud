@@ -86,6 +86,17 @@ final class CompanyContext
         return (int)$v;
     }
 
+    /**
+     * VAT recognition method — 'soll' (accrual, at invoice/Leistungsdatum,
+     * default — the common case for AT GmbHs) or 'ist' (cash, at payment).
+     * Independent of EÜR profit, which always stays cash-basis.
+     */
+    public static function ustMethod(int $companyId): string
+    {
+        $p = self::profile($companyId);
+        return ($p['ust_method'] ?? 'soll') === 'ist' ? 'ist' : 'soll';
+    }
+
     /** Whether the user has role='admin'. Cached per request per uid. */
     public static function isAdmin(int $uid): bool
     {

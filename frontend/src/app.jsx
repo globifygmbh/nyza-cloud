@@ -6263,6 +6263,20 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
                 <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 12, marginTop: -4 }}>
                   Buchhaltungsmodus: <strong style={{ color: 'var(--fg-2)' }}>{accountingMode === 'double_entry' ? 'Doppelte Buchhaltung (EKR07)' : 'Einnahmen-Ausgaben-Rechnung'}</strong> — automatisch aus der Rechtsform.
                 </div>
+                {row(
+                  <label key="ustm" style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 160 }}>
+                    <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Umsatzsteuer-Methode</span>
+                    <select value={c.ust_method || 'soll'} onChange={(e) => set('ust_method', e.target.value)} style={{ ...fld, cursor: 'pointer' }}>
+                      <option value="soll">Soll-Versteuerung (Rechnungs-/Leistungsdatum)</option>
+                      <option value="ist">Ist-Versteuerung (Zahlungseingang)</option>
+                    </select>
+                  </label>
+                )}
+                <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 12, marginTop: -4 }}>
+                  Bestimmt, wann eine Rechnung in der Umsatzsteuer-Auswertung (Zahllast) zählt: bei Soll sobald
+                  ausgestellt (Leistungsdatum, sonst Rechnungsdatum) — auch wenn noch offen. Bei Ist erst bei Zahlungseingang.
+                  Der Gewinn (EÜR) bleibt immer nach Zahlungseingang.
+                </div>
                 {row(field('Firmenname (rechtlich)', 'legal_name', { ph: 'Globify GmbH' }), field('Markenname', 'brand_name', { ph: 'Nyza' }))}
                 {row(field('Inhaber / Geschäftsführer', 'owner', { ph: 'Vor- und Nachname' }))}
                 {row(field('UID / USt-IdNr.', 'uid', { ph: 'ATU…' }), field('Steuernummer', 'tax_number', {}), field('Firmenbuchnr.', 'firmenbuch_nr', { ph: 'FN …' }))}
@@ -7049,9 +7063,11 @@ function UvaPreview({ data }) {
   );
   const kz = (code) => <span style={{ display: 'inline-block', minWidth: 42, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>KZ {code}</span>;
   const rows = (data.income_by_rate || []).filter((r) => r.net > 0 || r.tax > 0);
-  const ustTotal = data.income.tax;
+  const incUst = data.income_ust || data.income;
+  const ustTotal = incUst.tax;
   const vst = data.expense.vst;
   const zahllast = data.ust_zahllast;
+  const soll = data.ust_method !== 'ist';
   const r = (label, code, base, ust, bold) => (
     <tr style={{ borderTop: '1px solid var(--border)' }}>
       <td style={{ padding: '7px 0' }}>{code ? kz(code) : <span style={{ display: 'inline-block', minWidth: 42 }}/>}<span style={{ fontWeight: bold ? 700 : 500 }}>{label}</span></td>
@@ -7066,7 +7082,7 @@ function UvaPreview({ data }) {
         <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, padding: '2px 7px', borderRadius: 999, background: 'var(--accent-grad)', color: '#fff' }}>AT · U30</span>
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 14 }}>
-        Umsatzsteuervoranmeldung {data.period ? '· ' + data.period.label : ''} · Basis: Ist (Zahldatum) · Beträge zum Abtippen — klick zum Kopieren
+        Umsatzsteuervoranmeldung {data.period ? '· ' + data.period.label : ''} · Basis: {soll ? 'Soll (Rechnungs-/Leistungsdatum)' : 'Ist (Zahldatum)'} · Beträge zum Abtippen — klick zum Kopieren
       </div>
       <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
         <thead>
@@ -7077,7 +7093,7 @@ function UvaPreview({ data }) {
           </tr>
         </thead>
         <tbody>
-          {r('Gesamtbetrag Bemessungsgrundlage', '000', data.income.net, null, true)}
+          {r('Gesamtbetrag Bemessungsgrundlage', '000', incUst.net, null, true)}
           {rows.map((x) => r((x.rate === 20 ? 'Normalsteuersatz' : x.rate === 10 ? 'Ermäßigt' : x.rate === 13 ? 'Ermäßigt' : 'Sonstiger Satz') + ' ' + x.rate + ' %', KZ_BASE[x.rate], x.net, x.tax))}
           {r('Summe Umsatzsteuer', null, null, ustTotal, true)}
           {r('Gesamtbetrag der Vorsteuern', '060', null, vst, false)}
@@ -7089,7 +7105,7 @@ function UvaPreview({ data }) {
         </tbody>
       </table>
       <div style={{ fontSize: 10.5, color: 'var(--fg-4)', marginTop: 10 }}>
-        Hinweis: Vorschau auf Ist-Basis. Reverse-Charge, ig. Erwerbe/Lieferungen und steuerfreie Umsätze sind nicht berücksichtigt — bei Bedarf manuell ergänzen.
+        Hinweis: Vorschau auf {soll ? 'Soll' : 'Ist'}-Basis. Reverse-Charge, ig. Erwerbe/Lieferungen und steuerfreie Umsätze sind nicht berücksichtigt — bei Bedarf manuell ergänzen.
       </div>
     </div>
   );
@@ -7151,8 +7167,8 @@ function AuswertungView({ data, year, onYear, period, onPeriod }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, marginTop: 6, paddingTop: 8, borderTop: '1px solid var(--border)' }}><span>= Gewinn</span><span style={{ fontVariantNumeric: 'tabular-nums', color: data.profit < 0 ? '#ef4444' : 'var(--fg)' }}>{fmtEUR(data.profit)}</span></div>
             </div>
             <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '14px 18px' }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Umsatzsteuer-Zahllast</div>
-              {[['Umsatzsteuer (Einnahmen)', data.income.tax], ['− Vorsteuer (Ausgaben)', -data.expense.vst]].map((r, i) => (
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Umsatzsteuer-Zahllast <span style={{ fontWeight: 400, color: 'var(--fg-3)', fontSize: 11 }}>({data.ust_method === 'ist' ? 'Ist' : 'Soll'})</span></div>
+              {[['Umsatzsteuer (Einnahmen)', (data.income_ust || data.income).tax], ['− Vorsteuer (Ausgaben)', -data.expense.vst]].map((r, i) => (
                 <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0', color: 'var(--fg-2)' }}><span>{r[0]}</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtEUR(r[1])}</span></div>
               ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 700, marginTop: 6, paddingTop: 8, borderTop: '1px solid var(--border)' }}><span>= Zahllast</span><span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--accent)' }}>{fmtEUR(data.ust_zahllast)}</span></div>
