@@ -6687,7 +6687,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
           </div>
         )}
       </div>
-      {editing && <DocumentEditor doc={editing} contacts={contacts} products={products} onSave={saveDoc} onClose={() => setEditing(null)}
+      {editing && <DocumentEditor doc={editing} contacts={contacts} products={products} activeCompany={activeCompany} onSave={saveDoc} onClose={() => setEditing(null)}
         onOpenPdf={(id) => window.open(API.docPdfUrl(id, false), '_blank')}/>}
       {prodEditing && <ProductModal product={prodEditing} onSave={saveProduct} onClose={() => setProdEditing(null)}/>}
       {subEditing && <SubscriptionModal sub={subEditing} contacts={contacts} onSave={saveSub} onClose={() => setSubEditing(null)}/>}
@@ -8025,7 +8025,7 @@ function SubscriptionModal({ sub, contacts, onSave, onClose }) {
   );
 }
 
-function DocumentEditor({ doc, contacts, products, onSave, onClose, onOpenPdf }) {
+function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClose, onOpenPdf }) {
   const today = new Date().toISOString().slice(0, 10);
   const [contactId, setContactId] = useState(doc.contact_id ? String(doc.contact_id) : '');
   const [docDate, setDocDate] = useState(doc.doc_date || today);
@@ -8037,7 +8037,33 @@ function DocumentEditor({ doc, contacts, products, onSave, onClose, onOpenPdf })
     ? doc.items.map((it) => ({ description: it.description, quantity: it.quantity, unit: it.unit, unit_price_net: it.unit_price_net, tax_rate: it.tax_rate }))
     : [{ description: '', quantity: 1, unit: 'Stk', unit_price_net: 0, tax_rate: 20 }]);
   const [busy, setBusy] = useState(false);
+  const [profile, setProfile] = useState(null);
   const type = doc.type || 'invoice';
+
+  useEffect(() => {
+    if (!activeCompany) return;
+    API.companyProfile(activeCompany).then((d) => {
+      const p = d.profile || {};
+      setProfile(p);
+      // New document only — never clobber an existing (possibly already-edited) one.
+      if (!doc.id) {
+        const pIntro = type === 'offer' ? p.offer_intro : p.invoice_intro;
+        const pFooter = type === 'offer' ? p.offer_footer : p.invoice_footer;
+        if (pIntro && !intro) setIntro(pIntro);
+        if (pFooter && !footer) setFooter(pFooter);
+      }
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCompany]);
+
+  const applyTemplate = () => {
+    if (!profile) { toast('Firmenprofil lädt noch…', 'error'); return; }
+    const pIntro = type === 'offer' ? profile.offer_intro : profile.invoice_intro;
+    const pFooter = type === 'offer' ? profile.offer_footer : profile.invoice_footer;
+    if (!pIntro && !pFooter) { toast('Keine Vorlage in den Einstellungen hinterlegt', 'error'); return; }
+    if (pIntro) setIntro(pIntro);
+    if (pFooter) setFooter(pFooter);
+  };
 
   const setItem = (i, k, v) => setItems((arr) => arr.map((it, j) => j === i ? { ...it, [k]: v } : it));
   const addRow = () => setItems((arr) => [...arr, { description: '', quantity: 1, unit: 'Stk', unit_price_net: 0, tax_rate: 20 }]);
@@ -8089,7 +8115,13 @@ function DocumentEditor({ doc, contacts, products, onSave, onClose, onOpenPdf })
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Einleitung</span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Einleitung</span>
+              <button type="button" onClick={applyTemplate} title="Einleitung & Fußtext aus dem Firmenprofil übernehmen"
+                style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11.5, color: 'var(--accent)', padding: 0 }}>
+                {Ic.bolt(11)} Vorlage einfügen
+              </button>
+            </div>
             <textarea value={intro} onChange={(e) => setIntro(e.target.value)} rows={2} placeholder="Sehr geehrte Damen und Herren, …" style={{ ...fld, height: 'auto', padding: '8px 10px', resize: 'vertical' }}/>
           </div>
 

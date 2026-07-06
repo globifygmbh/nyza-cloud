@@ -947,6 +947,9 @@ final class DocumentRoutes
 
         $intro = $d['intro_text'] !== null && $d['intro_text'] !== '' ? '<div class="intro">' . nl2br(self::e($d['intro_text'])) . '</div>' : '';
         $footerText = $d['footer_text'] !== null && $d['footer_text'] !== '' ? '<div class="footer-text">' . nl2br(self::e($d['footer_text'])) . '</div>' : '';
+        // Grußformel: a company-wide constant, always rendered live from the profile
+        // (not copied into each document) so editing it later updates every future PDF.
+        $closing = $cv('closing') !== '' ? '<div class="closing">' . nl2br(self::e($cv('closing'))) . '</div>' : '';
         $signature = $cv('signature_name') !== '' ? '<div class="signature">' . self::e($cv('signature_name')) . '</div>' : '';
         $signedBlock = '';
         if ($sig !== null && !empty($sig['image'])) {
@@ -1016,7 +1019,8 @@ final class DocumentRoutes
   .tbox tr.grand td { background: {$accent}; color: #fff; font-weight: bold; font-size: 12px; padding: 7px 8px; }
   .clear { clear: both; }
   .footer-text { margin-top: 26px; font-size: 9.5px; }
-  .signature { margin-top: 18px; font-weight: bold; }
+  .closing { margin-top: 18px; }
+  .signature { margin-top: 4px; font-weight: bold; }
   .esign { margin-top: 30px; padding-top: 10px; border-top: 1px solid #ddd; }
   .esign-img { max-height: 90px; max-width: 320px; }
   .esign-meta { font-size: 10px; color: #555; margin-top: 4px; }
@@ -1063,6 +1067,7 @@ final class DocumentRoutes
   </div>
 
   {$footerText}
+  {$closing}
   {$signature}
   {$signedBlock}
 
