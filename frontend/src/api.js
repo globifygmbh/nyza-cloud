@@ -285,6 +285,9 @@ export const API = {
   newContact:    (body) => request('/api/contacts', { method: 'POST', body }),
   updateContact: (id, body) => request('/api/contacts/' + id, { method: 'PATCH', body }),
   deleteContact: (id) => request('/api/contacts/' + id, { method: 'DELETE' }),
+  contactsImportPreview: (file) => { const fd = new FormData(); fd.append('file', file); return request('/api/import/contacts/preview', { method: 'POST', body: fd }); },
+  contactsImportCommit:  (file) => { const fd = new FormData(); fd.append('file', file); return request('/api/import/contacts/commit', { method: 'POST', body: fd }); },
+  contactsImportWipe:    () => request('/api/import/contacts', { method: 'DELETE' }),
 
   // Apps · Zeiten (time tracking)
   timeEntries:   (opts = {}) => { const qs = []; if (opts.from) qs.push('from=' + opts.from); if (opts.to) qs.push('to=' + opts.to); if (opts.user_id) qs.push('user_id=' + opts.user_id); return request('/api/time' + (qs.length ? '?' + qs.join('&') : '')); },

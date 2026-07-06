@@ -5200,6 +5200,7 @@ function ContactsApp({ onBack }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all'); // all | customers
   const [editing, setEditing] = useState(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const load = useCallback(() => {
     API.contacts({ customers: filter === 'customers', q: search.trim() || undefined })
@@ -5230,7 +5231,10 @@ function ContactsApp({ onBack }) {
     <>
       <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Kontakte']}
         search={search} onSearch={setSearch}
-        right={<Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ kind: 'person' })}>Neuer Kontakt</Btn>}/>
+        right={<div style={{ display: 'flex', gap: 8 }}>
+          <Btn variant="glass" size="sm" icon={Ic.archive(14)} onClick={() => setImportOpen(true)}>Altdaten-Import</Btn>
+          <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ kind: 'person' })}>Neuer Kontakt</Btn>
+        </div>}/>
       <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px' }}>
         <div style={{ display: 'inline-flex', gap: 4, padding: 4, marginBottom: 22, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
           {[{ id: 'all', label: 'Alle' }, { id: 'customers', label: 'Kunden' }].map((t) => {
@@ -5279,7 +5283,118 @@ function ContactsApp({ onBack }) {
         )}
       </div>
       {editing && <ContactEditModal contact={editing} onSave={save} onClose={() => setEditing(null)}/>}
+      {importOpen && <ContactImportModal onClose={() => setImportOpen(false)} onDone={load}/>}
     </>
+  );
+}
+
+function ContactImportModal({ onClose, onDone }) {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState('');       // 'preview' | 'commit' | 'wipe' | ''
+  const [result, setResult] = useState(null);
+  const inputRef = useRef(null);
+
+  const pick = (f) => { if (!f) return; setFile(f); setPreview(null); setResult(null); };
+
+  const loadPreview = async () => {
+    if (!file || busy) return;
+    setBusy('preview');
+    try { setPreview(await API.contactsImportPreview(file)); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
+  };
+
+  const commit = async () => {
+    if (!file || !preview || busy) return;
+    if (!await confirmDialog({
+      title: 'Kontakte importieren?',
+      message: `${preview.new} neue Kontakt(e) werden angelegt und als Kunde markiert. Bereits vorhandene Namen werden übersprungen.`,
+      confirmLabel: 'Importieren', danger: true,
+    })) return;
+    setBusy('commit');
+    try { setResult(await API.contactsImportCommit(file)); toast('Import abgeschlossen', 'success'); onDone(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
+  };
+
+  const wipe = async () => {
+    if (busy) return;
+    if (!await confirmDialog({
+      title: 'ALLE Kontakte löschen?',
+      message: 'Das löscht wirklich jeden Kontakt unwiderruflich — nicht nur importierte. Nutze das nur für einen sauberen Neustart vor einem Re-Import.',
+      confirmLabel: 'Endgültig löschen', danger: true,
+    })) return;
+    setBusy('wipe');
+    try { const d = await API.contactsImportWipe(); toast(`${d.deleted} Kontakt(e) gelöscht`, 'success'); setPreview(null); setResult(null); onDone(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
+  };
+
+  const Stat = ({ label, value }) => (
+    <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 10.5, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{value}</div>
+    </div>
+  );
+
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 560, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.archive(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Altdaten-Import · Kontakte</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+
+        <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+          <div style={{ fontSize: 12.5, color: 'var(--fg-3)', lineHeight: 1.5 }}>
+            CSV-Export deiner Kunden (Organisation/Name, Adresse, USt-ID, E-Mail …). Alle importierten
+            Kontakte werden automatisch als <strong>Kunde</strong> markiert. Namen, die schon existieren, werden übersprungen.
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button onClick={() => inputRef.current?.click()} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderRadius: 12, border: '1px dashed var(--border-hi)', background: 'var(--surface)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, color: 'var(--fg-2)', flex: 1, minWidth: 0 }}>
+              {Ic.upload(15)}
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file ? file.name : 'CSV-Datei wählen…'}</span>
+            </button>
+            <Btn variant="glass" size="sm" disabled={!file || busy} onClick={loadPreview} icon={busy === 'preview' ? Ic.loader(14) : Ic.eye(14)}>Vorschau</Btn>
+          </div>
+          <input ref={inputRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={(e) => pick(e.target.files?.[0])}/>
+
+          {preview && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8 }}>
+                <Stat label="Zeilen gesamt" value={preview.count}/>
+                <Stat label="Neu" value={preview.new}/>
+                <Stat label="Schon vorhanden" value={preview.existing}/>
+                <Stat label="Firmen" value={preview.companies}/>
+                <Stat label="Personen" value={preview.persons}/>
+              </div>
+              {!!preview.warnings?.length && (
+                <div style={{ padding: '10px 12px', borderRadius: 12, background: 'oklch(0.72 0.18 30 / 0.1)', border: '1px solid oklch(0.72 0.18 30 / 0.3)' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{preview.warnings.length} Hinweis(e)</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 120, overflowY: 'auto' }}>
+                    {preview.warnings.map((w, i) => <div key={i} style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{w}</div>)}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {result && (
+            <div style={{ padding: '12px 14px', borderRadius: 12, background: 'oklch(0.7 0.15 165 / 0.12)', border: '1px solid oklch(0.7 0.15 165 / 0.3)', fontSize: 13 }}>
+              {result.imported} Kontakt(e) importiert, {result.skipped} übersprungen (bereits vorhanden).
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+          <Btn variant="danger" size="md" disabled={busy} onClick={wipe} icon={busy === 'wipe' ? Ic.loader(15) : Ic.trash(15)}>Alle Kontakte löschen</Btn>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn variant="ghost" onClick={onClose}>Schließen</Btn>
+            <Btn variant="primary" disabled={!preview || busy} onClick={commit} icon={busy === 'commit' ? Ic.loader(15) : Ic.check(15)}>Jetzt importieren</Btn>
+          </div>
+        </div>
+      </Glass>
+    </div>
   );
 }
 
