@@ -147,10 +147,10 @@ final class DocumentRoutes
 
         // Header fields (never number / type).
         if (array_key_exists('contact_id', $b)) {
-            $cid = ($b['contact_id'] !== null && $b['contact_id'] !== '') ? (int)$b['contact_id'] : null;
-            $sets[] = 'contact_id = ?'; $params[] = $cid;
+            $contactId = ($b['contact_id'] !== null && $b['contact_id'] !== '') ? (int)$b['contact_id'] : null;
+            $sets[] = 'contact_id = ?'; $params[] = $contactId;
             // Refresh the snapshot whenever contact_id is sent in the body.
-            $snapshot = self::buildSnapshot($uid, $cid);
+            $snapshot = self::buildSnapshot($uid, $contactId);
             $sets[] = 'client_snapshot = ?';
             $params[] = json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }
