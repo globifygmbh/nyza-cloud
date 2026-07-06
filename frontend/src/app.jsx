@@ -7052,14 +7052,14 @@ function periodOpts(p) {
 
 // Maps the cash-basis report onto the Austrian UVA (U30) Kennzahlen so the
 // figures can be typed straight into FinanzOnline. Click any amount to copy it.
-function UvaPreview({ data }) {
+function UvaPreview({ data, onDrilldown }) {
   const KZ_BASE = { 20: '022', 10: '029', 13: '006' }; // Bemessungsgrundlage per rate
   const copy = (n) => {
     const s = Number(n || 0).toFixed(2).replace('.', ',');
     if (navigator.clipboard) navigator.clipboard.writeText(s).then(() => toast('Kopiert: ' + s, 'success')).catch(() => {});
   };
   const amount = (n, bold) => (
-    <span onClick={() => copy(n)} title="Klicken zum Kopieren" style={{ cursor: 'pointer', fontVariantNumeric: 'tabular-nums', fontWeight: bold ? 700 : 500, borderBottom: '1px dotted var(--border-hi)' }}>{fmtEUR(n)}</span>
+    <span onClick={(e) => { e.stopPropagation(); copy(n); }} title="Klicken zum Kopieren" style={{ cursor: 'pointer', fontVariantNumeric: 'tabular-nums', fontWeight: bold ? 700 : 500, borderBottom: '1px dotted var(--border-hi)' }}>{fmtEUR(n)}</span>
   );
   const kz = (code) => <span style={{ display: 'inline-block', minWidth: 42, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>KZ {code}</span>;
   const rows = (data.income_by_rate || []).filter((r) => r.net > 0 || r.tax > 0);
@@ -7068,8 +7068,10 @@ function UvaPreview({ data }) {
   const vst = data.expense.vst;
   const zahllast = data.ust_zahllast;
   const soll = data.ust_method !== 'ist';
-  const r = (label, code, base, ust, bold) => (
-    <tr style={{ borderTop: '1px solid var(--border)' }}>
+  const r = (label, code, base, ust, bold, onClick) => (
+    <tr onClick={onClick} style={{ borderTop: '1px solid var(--border)', cursor: onClick ? 'pointer' : 'default' }}
+      onMouseEnter={onClick ? (e) => { e.currentTarget.style.background = 'var(--surface-hi)'; } : undefined}
+      onMouseLeave={onClick ? (e) => { e.currentTarget.style.background = 'none'; } : undefined}>
       <td style={{ padding: '7px 0' }}>{code ? kz(code) : <span style={{ display: 'inline-block', minWidth: 42 }}/>}<span style={{ fontWeight: bold ? 700 : 500 }}>{label}</span></td>
       <td style={{ textAlign: 'right' }}>{base != null ? amount(base, bold) : ''}</td>
       <td style={{ textAlign: 'right' }}>{ust != null ? amount(ust, bold) : ''}</td>
@@ -7094,9 +7096,9 @@ function UvaPreview({ data }) {
         </thead>
         <tbody>
           {r('Gesamtbetrag Bemessungsgrundlage', '000', incUst.net, null, true)}
-          {rows.map((x) => r((x.rate === 20 ? 'Normalsteuersatz' : x.rate === 10 ? 'Ermäßigt' : x.rate === 13 ? 'Ermäßigt' : 'Sonstiger Satz') + ' ' + x.rate + ' %', KZ_BASE[x.rate], x.net, x.tax))}
+          {rows.map((x) => r((x.rate === 20 ? 'Normalsteuersatz' : x.rate === 10 ? 'Ermäßigt' : x.rate === 13 ? 'Ermäßigt' : 'Sonstiger Satz') + ' ' + x.rate + ' %', KZ_BASE[x.rate], x.net, x.tax, false, onDrilldown && (() => onDrilldown(x.rate, false, x.tax))))}
           {r('Summe Umsatzsteuer', null, null, ustTotal, true)}
-          {r('Gesamtbetrag der Vorsteuern', '060', null, vst, false)}
+          {r('Gesamtbetrag der Vorsteuern', '060', null, vst, false, onDrilldown && (() => onDrilldown(null, true, vst)))}
           <tr style={{ borderTop: '2px solid var(--border-hi)' }}>
             <td style={{ padding: '9px 0' }}>{kz('095')}<span style={{ fontWeight: 700 }}>{zahllast >= 0 ? 'Vorauszahlung (Zahllast)' : 'Überschuss (Gutschrift)'}</span></td>
             <td/>
@@ -7121,12 +7123,23 @@ function AuswertungView({ data, year, onYear, period, onPeriod }) {
     </div>
   );
   const pct = (r) => r + ' %';
+  const [drill, setDrill] = useState(null); // { title, sumLabel, sumValue, rows, isExpense }
 
   // Quarter sums from monthly.
   const quarters = [0, 0, 0, 0];
   if (data) data.monthly.forEach((m) => { quarters[Math.floor((m.month - 1) / 3)] += m.profit; });
   const maxCust = data && data.by_customer.length ? Math.max(...data.by_customer.map((c) => c.net), 1) : 1;
   const maxMonth = data ? Math.max(1, ...data.monthly.map((m) => Math.max(m.income_net, m.expense_net))) : 1;
+
+  const openRateDrilldown = (rate, isExpense, sumValue) => {
+    const src = isExpense ? (data.expense_tx || []) : (data.income_tx || []);
+    const rows = rate == null ? src : src.filter((r) => Math.round(r.rate) === Math.round(rate));
+    setDrill({
+      title: rate == null ? `Alle ${isExpense ? 'Belege (Vorsteuer)' : 'Rechnungen (Umsatzsteuer)'}` : `Mit ${rate} % ${isExpense ? 'Vorsteuer' : 'Umsatzsteuer'}`,
+      sumLabel: isExpense ? 'eine Vorsteuer' : 'eine Umsatzsteuer',
+      sumValue, rows, isExpense,
+    });
+  };
 
   return (
     <div style={{ maxWidth: 900 }}>
@@ -7175,15 +7188,19 @@ function AuswertungView({ data, year, onYear, period, onPeriod }) {
             </div>
           </div>
 
-          {/* USt / Vorsteuer per rate */}
+          {/* USt / Vorsteuer per rate — click a row for the underlying documents */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 28 }}>
             <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '14px 16px' }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Umsatzsteuer (Einnahmen)</div>
               {data.income_by_rate.length === 0 ? <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>Keine Daten</div> : (
                 <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
-                  <thead><tr style={{ color: 'var(--fg-3)', textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 500, paddingBottom: 6 }}>Satz</th><th style={{ fontWeight: 500 }}>Netto</th><th style={{ fontWeight: 500 }}>USt</th></tr></thead>
+                  <thead><tr style={{ color: 'var(--fg-3)', textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 500, paddingBottom: 6 }}>Satz</th><th style={{ fontWeight: 500 }}>Netto</th><th style={{ fontWeight: 500 }}>Brutto</th><th style={{ fontWeight: 500 }}>USt</th><th/></tr></thead>
                   <tbody>{data.income_by_rate.map((r) => (
-                    <tr key={r.rate} style={{ fontVariantNumeric: 'tabular-nums' }}><td style={{ padding: '3px 0' }}>{pct(r.rate)}</td><td style={{ textAlign: 'right' }}>{fmtEUR(r.net)}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtEUR(r.tax)}</td></tr>
+                    <tr key={r.rate} onClick={() => openRateDrilldown(r.rate, false, r.tax)} style={{ fontVariantNumeric: 'tabular-nums', cursor: 'pointer' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-hi)'; }} onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}>
+                      <td style={{ padding: '5px 0' }}>{pct(r.rate)}</td><td style={{ textAlign: 'right' }}>{fmtEUR(r.net)}</td><td style={{ textAlign: 'right', color: 'var(--fg-3)' }}>{fmtEUR(r.gross)}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtEUR(r.tax)}</td>
+                      <td style={{ textAlign: 'right', color: 'var(--fg-4)', paddingLeft: 6 }}>{Ic.chevronR(11)}</td>
+                    </tr>
                   ))}</tbody>
                 </table>
               )}
@@ -7192,9 +7209,13 @@ function AuswertungView({ data, year, onYear, period, onPeriod }) {
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Vorsteuer (Ausgaben)</div>
               {data.expense_by_rate.length === 0 ? <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>Keine Daten</div> : (
                 <table style={{ width: '100%', fontSize: 12.5, borderCollapse: 'collapse' }}>
-                  <thead><tr style={{ color: 'var(--fg-3)', textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 500, paddingBottom: 6 }}>Satz</th><th style={{ fontWeight: 500 }}>Netto</th><th style={{ fontWeight: 500 }}>Vorsteuer</th></tr></thead>
+                  <thead><tr style={{ color: 'var(--fg-3)', textAlign: 'right' }}><th style={{ textAlign: 'left', fontWeight: 500, paddingBottom: 6 }}>Satz</th><th style={{ fontWeight: 500 }}>Netto</th><th style={{ fontWeight: 500 }}>Brutto</th><th style={{ fontWeight: 500 }}>Vorsteuer</th><th/></tr></thead>
                   <tbody>{data.expense_by_rate.map((r) => (
-                    <tr key={r.rate} style={{ fontVariantNumeric: 'tabular-nums' }}><td style={{ padding: '3px 0' }}>{pct(r.rate)}{r.tax_nondeduct > 0 ? ' *' : ''}</td><td style={{ textAlign: 'right' }}>{fmtEUR(r.net)}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtEUR(r.vst)}</td></tr>
+                    <tr key={r.rate} onClick={() => openRateDrilldown(r.rate, true, r.vst)} style={{ fontVariantNumeric: 'tabular-nums', cursor: 'pointer' }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-hi)'; }} onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}>
+                      <td style={{ padding: '5px 0' }}>{pct(r.rate)}{r.tax_nondeduct > 0 ? ' *' : ''}</td><td style={{ textAlign: 'right' }}>{fmtEUR(r.net)}</td><td style={{ textAlign: 'right', color: 'var(--fg-3)' }}>{fmtEUR(r.gross)}</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtEUR(r.vst)}</td>
+                      <td style={{ textAlign: 'right', color: 'var(--fg-4)', paddingLeft: 6 }}>{Ic.chevronR(11)}</td>
+                    </tr>
                   ))}</tbody>
                 </table>
               )}
@@ -7203,7 +7224,7 @@ function AuswertungView({ data, year, onYear, period, onPeriod }) {
           </div>
 
           {/* UVA-Vorschau (FinanzOnline, AT) */}
-          <UvaPreview data={data}/>
+          <UvaPreview data={data} onDrilldown={openRateDrilldown}/>
 
           {/* Quarters */}
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Gewinn pro Quartal</div>
@@ -7255,6 +7276,7 @@ function AuswertungView({ data, year, onYear, period, onPeriod }) {
           </div>
         </>
       )}
+      {drill && <RateDrilldownModal {...drill} onClose={() => setDrill(null)}/>}
     </div>
   );
 }
@@ -7291,6 +7313,49 @@ function txTable(title, rows, isExpense) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// Click-through detail, SevDesk-style: "Mit X% Umsatzsteuer" → every underlying document.
+function RateDrilldownModal({ title, sumLabel, sumValue, rows, isExpense, onClose }) {
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 560, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '86vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>{title}</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--border)', fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.5 }}>
+          Folgende {isExpense ? 'Belege' : 'Rechnungen'} beinhalten Positionen mit dieser Besteuerung.
+          In Summe ergibt sich dadurch {sumLabel} von <strong>{fmtEUR(sumValue)}</strong>.
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '4px 24px 18px' }}>
+          {(!rows || rows.length === 0) ? <div style={{ padding: '20px 0', color: 'var(--fg-3)', fontSize: 13 }}>Keine Buchungen.</div> : (
+            <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+              <thead><tr style={{ color: 'var(--fg-3)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                <th style={{ textAlign: 'left', fontWeight: 500, padding: '10px 0 8px' }}>Dokument</th>
+                <th style={{ textAlign: 'left', fontWeight: 500 }}>Datum</th>
+                <th style={{ textAlign: 'right', fontWeight: 500 }}>Netto</th>
+                <th style={{ textAlign: 'right', fontWeight: 500 }}>Brutto</th>
+                <th style={{ textAlign: 'right', fontWeight: 500 }}>{isExpense ? 'Vorsteuer' : 'Steuer'}</th>
+              </tr></thead>
+              <tbody>{rows.map((r, i) => (
+                <tr key={i} style={{ borderTop: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>
+                  <td style={{ padding: '9px 0', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {(isExpense ? 'Beleg ' : 'Rechnung ') + (r.ref || '')}
+                    {r.partner ? <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>{r.partner}</div> : null}
+                  </td>
+                  <td style={{ color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>{fmtDateShort(r.date)}</td>
+                  <td style={{ textAlign: 'right' }}>{fmtEUR(r.net)}</td>
+                  <td style={{ textAlign: 'right' }}>{fmtEUR(r.gross)}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 600 }}>{fmtEUR(r.tax)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          )}
+        </div>
+      </Glass>
     </div>
   );
 }

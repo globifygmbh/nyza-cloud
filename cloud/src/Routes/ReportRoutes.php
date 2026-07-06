@@ -114,7 +114,8 @@ final class ReportRoutes
             : 'd.paid_at IS NOT NULL AND DATE(d.paid_at) BETWEEN ? AND ?';
         $ir = $pdo->prepare(
             'SELECT i.tax_rate rate, COALESCE(SUM(ROUND(i.quantity*i.unit_price_net,2)),0) net, '
-            . 'COALESCE(SUM(ROUND(ROUND(i.quantity*i.unit_price_net,2)*i.tax_rate/100,2)),0) tax '
+            . 'COALESCE(SUM(ROUND(ROUND(i.quantity*i.unit_price_net,2)*i.tax_rate/100,2)),0) tax, '
+            . 'COUNT(DISTINCT d.id) cnt '
             . 'FROM document_items i JOIN documents d ON d.id=i.document_id '
             . "WHERE d.company_id=? AND d.type='invoice' AND $incUstWhere "
             . 'GROUP BY i.tax_rate ORDER BY i.tax_rate DESC'
@@ -122,6 +123,7 @@ final class ReportRoutes
         $ir->execute([$uid, $from, $to]);
         $incomeByRate = array_map(static fn($r) => [
             'rate' => (float)$r['rate'], 'net' => round((float)$r['net'], 2), 'tax' => round((float)$r['tax'], 2),
+            'gross' => round((float)$r['net'] + (float)$r['tax'], 2), 'count' => (int)$r['cnt'],
         ], $ir->fetchAll());
 
         $er = $pdo->prepare(
