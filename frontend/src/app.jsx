@@ -7231,6 +7231,63 @@ function UvaPreview({ data, onDrilldown }) {
   );
 }
 
+// Jährliche Ausgaben-Kennzahlen für die Beilage E1a (Einkommensteuererklärung).
+// Kategorie → Kennzahl ist ein Transkriptions-Hinweis, keine geprüfte Steuerberatung.
+function E1aPreview({ data, onDrilldown }) {
+  const copy = (n) => {
+    const s = Number(n || 0).toFixed(2).replace('.', ',');
+    if (navigator.clipboard) navigator.clipboard.writeText(s).then(() => toast('Kopiert: ' + s, 'success')).catch(() => {});
+  };
+  const rows = (data.expense_by_kz || []).filter((r) => r.net !== 0);
+  const total = rows.reduce((a, r) => a + r.net, 0);
+  return (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '16px 18px', marginBottom: 28 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-display)' }}>E1a-Vorschau (Einkommensteuer)</div>
+        <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, padding: '2px 7px', borderRadius: 999, background: 'var(--accent-grad)', color: '#fff' }}>AT · E1a</span>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 14 }}>
+        Betriebsausgaben {data.period ? '· ' + data.period.label : ''} nach Kennzahl (netto, Zahldatum) · Zeile anklicken für die einzelnen Belege
+      </div>
+      {rows.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Keine Ausgaben im Zeitraum.</div> : (
+        <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ color: 'var(--fg-3)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              <th style={{ textAlign: 'left', fontWeight: 500, paddingBottom: 6 }}>Kennzahl</th>
+              <th style={{ textAlign: 'right', fontWeight: 500 }}>Betrag (netto)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.kz} onClick={() => onDrilldown && onDrilldown(r.kz, r.label, r.net)} style={{ borderTop: '1px solid var(--border)', cursor: onDrilldown ? 'pointer' : 'default' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-hi)'; }} onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}>
+                <td style={{ padding: '7px 0' }}>
+                  <span style={{ display: 'inline-block', minWidth: 46, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>KZ {r.kz}</span>
+                  <span>{r.label}</span>
+                </td>
+                <td style={{ textAlign: 'right' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtEUR(r.net)}
+                    <button onClick={(e) => { e.stopPropagation(); copy(r.net); }} title="Zum Abtippen kopieren" style={{ display: 'inline-flex', padding: 2, border: 'none', background: 'none', color: 'var(--fg-4)', cursor: 'pointer' }}>{Ic.copy(11)}</button>
+                  </span>
+                </td>
+              </tr>
+            ))}
+            <tr style={{ borderTop: '2px solid var(--border-hi)' }}>
+              <td style={{ padding: '9px 0', fontWeight: 700 }}>Summe Betriebsausgaben</td>
+              <td style={{ textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtEUR(total)}</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+      <div style={{ fontSize: 10.5, color: 'var(--fg-4)', marginTop: 10 }}>
+        Hinweis: Kategorie-zu-Kennzahl-Zuordnung ist ein Ausfüll-Hinweis, keine geprüfte Steuerberatung — bitte vor dem Absenden mit dem aktuellen Formular/Steuerberater abgleichen.
+        Einnahmenseitige Kennzahlen (Betriebseinnahmen) sind hier nicht abgebildet.
+      </div>
+    </div>
+  );
+}
+
 function AuswertungView({ data, year, onYear, period, onPeriod }) {
   const card = (label, value, sub, accent) => (
     <div style={{ padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
@@ -7257,6 +7314,11 @@ function AuswertungView({ data, year, onYear, period, onPeriod }) {
       sumLabel: isExpense ? 'eine Vorsteuer' : 'eine Umsatzsteuer',
       sumValue, rows, isExpense,
     });
+  };
+
+  const openKzDrilldown = (kz, label, sumValue) => {
+    const rows = (data.expense_tx || []).filter((r) => r.kz === kz);
+    setDrill({ title: `KZ ${kz} · ${label}`, sumLabel: 'eine Ausgabensumme', sumValue, rows, isExpense: true });
   };
 
   return (
@@ -7343,6 +7405,11 @@ function AuswertungView({ data, year, onYear, period, onPeriod }) {
 
           {/* UVA-Vorschau (FinanzOnline, AT) */}
           <UvaPreview data={data} onDrilldown={openRateDrilldown}/>
+
+          {/* E1a-Vorschau (Einkommensteuererklärung) — nur bei ganzjähriger Ansicht sinnvoll */}
+          {!data.period.month && !data.period.quarter && (
+            <E1aPreview data={data} onDrilldown={openKzDrilldown}/>
+          )}
 
           {/* Quarters */}
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Gewinn pro Quartal</div>
@@ -7763,7 +7830,9 @@ function LedgerEntryModal({ accounts, onClose, onSaved }) {
 }
 
 const SUB_INTERVALS = { monthly: 'monatlich', quarterly: 'quartalsweise', yearly: 'jährlich' };
-const EXP_CATEGORIES = ['Wareneinkauf', 'Hardware', 'Software', 'Büro', 'Werbung/Marketing', 'Reisekosten', 'Kfz', 'Beratung/Recht', 'Miete', 'Gebühren/Bank', 'Telefon/Internet', 'Fortbildung', 'Sonstiges'];
+// Aligned with the E1a-Kennzahlen (Einkommensteuererklärung) so the jährliche
+// Auswertung sie automatisch richtig gruppieren kann — siehe ReportRoutes::kzForCategory.
+const EXP_CATEGORIES = ['Wareneinkauf/Material', 'Büro/Software/Telefon', 'Werbung/Marketing', 'Reisekosten/Kfz', 'Beratung/Recht', 'Miete/Pacht', 'Versicherungen', 'Zinsen/Bankspesen', 'Fortbildung', 'Sonstiges'];
 
 // Pick an existing DMS file (search + recent) — used to link a receipt.
 function DmsFilePicker({ onPick, onClose }) {

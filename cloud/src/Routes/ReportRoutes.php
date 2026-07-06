@@ -169,12 +169,29 @@ final class ReportRoutes
             . 'ORDER BY e.paid_at ASC, e.id ASC LIMIT 1000'
         );
         $et->execute([$uid, $from, $to]);
-        $expenseTx = array_map(static fn($r) => [
-            'date' => substr((string)$r['paid_at'], 0, 10),
-            'ref' => $r['category'], 'partner' => $r['vendor'] ?: ($r['contact_name'] ?: ''),
-            'net' => round((float)$r['net'], 2), 'tax' => round((float)$r['tax'], 2), 'gross' => round((float)$r['gross'], 2),
-            'rate' => (float)$r['tax_rate'], 'deductible' => (int)$r['deductible'],
-        ], $et->fetchAll());
+        $expenseTx = array_map(static function ($r) {
+            $kz = self::kzForCategory((string)$r['category']);
+            return [
+                'date' => substr((string)$r['paid_at'], 0, 10),
+                'ref' => $r['category'], 'partner' => $r['vendor'] ?: ($r['contact_name'] ?: ''),
+                'net' => round((float)$r['net'], 2), 'tax' => round((float)$r['tax'], 2), 'gross' => round((float)$r['gross'], 2),
+                'rate' => (float)$r['tax_rate'], 'deductible' => (int)$r['deductible'],
+                'kz' => $kz['kz'], 'kz_label' => $kz['label'],
+            ];
+        }, $et->fetchAll());
+
+        // E1a-Kennzahlen (Einkommensteuererklärung, jährliche EÜR-Beilage) — same
+        // cash-basis expenses as above, grouped by Kennzahl instead of category.
+        $expenseByKz = [];
+        foreach ($expenseTx as $r) {
+            $k = $r['kz'];
+            if (!isset($expenseByKz[$k])) $expenseByKz[$k] = ['kz' => $k, 'label' => $r['kz_label'], 'net' => 0.0, 'gross' => 0.0, 'count' => 0];
+            $expenseByKz[$k]['net'] += $r['net'];
+            $expenseByKz[$k]['gross'] += $r['gross'];
+            $expenseByKz[$k]['count']++;
+        }
+        ksort($expenseByKz);
+        $expenseByKz = array_map(static fn($r) => ['kz' => $r['kz'], 'label' => $r['label'], 'net' => round($r['net'], 2), 'gross' => round($r['gross'], 2), 'count' => $r['count']], array_values($expenseByKz));
 
         return Json::ok($res, [
             'year'     => $year,
@@ -193,6 +210,7 @@ final class ReportRoutes
             'by_customer' => $byCustomer,
             'income_by_rate' => $incomeByRate,
             'expense_by_rate' => $expenseByRate,
+            'expense_by_kz' => $expenseByKz,
             'period'   => ['year' => $year, 'month' => $month, 'quarter' => $quarter, 'from' => $from, 'to' => $to, 'label' => $label],
             'income_tx' => $incomeTx,
             'expense_tx' => $expenseTx,
@@ -298,6 +316,36 @@ final class ReportRoutes
     }
 
     private static function n($v): string { return number_format((float)$v, 2, ',', ''); }
+
+    /**
+     * Best-effort mapping of a free-text expense category to its E1a Kennzahl
+     * (Beilage zur Einkommensteuererklärung, jährliche EÜR). Numbers/labels are
+     * as confirmed by the user against their current form — NOT independently
+     * verified against the official BMF form for every possible category, so
+     * this stays a transcription aid, same spirit as the UVA-Vorschau.
+     * Order matters: more specific keywords are checked before generic ones
+     * (e.g. "Software-Miete" must hit 9210, not the generic "miet" → 9200).
+     */
+    private static function kzForCategory(string $category): array
+    {
+        $c = mb_strtolower($category);
+        $rules = [
+            [9225, 'Versicherungen', ['versicherung', 'haftpflicht']],
+            [9235, 'Rechts-, Prüfungs- und Beratungsaufwand', ['beratung', 'steuerberat', 'rechtsanwalt', 'buchhalt', 'prüfung']],
+            [9245, 'Aus- und Fortbildung', ['fortbildung', 'schulung', 'weiterbildung', 'kurs']],
+            [9160, 'Reise- und Fahrtspesen', ['reise', 'kfz', 'fahrt', 'kilometer', 'diät']],
+            [9230, 'Werbeaufwand', ['werb', 'marketing', 'repräsentat', 'inserat']],
+            [9250, 'Zinsen und ähnliche Aufwendungen', ['zins', 'bankspes', 'kontoführ', 'bank']],
+            [9210, 'Büroaufwand', ['büro', 'buero', 'telefon', 'internet', 'software', 'lizenz', 'hosting', 'domain', 'cloud', 'mobil']],
+            [9200, 'Miet- und Pachtaufwand', ['miet', 'pacht', 'raumkosten']],
+        ];
+        foreach ($rules as [$kz, $label, $keywords]) {
+            foreach ($keywords as $kw) {
+                if (str_contains($c, $kw)) return ['kz' => $kz, 'label' => $label];
+            }
+        }
+        return ['kz' => 9290, 'label' => 'Übrige Betriebsausgaben'];
+    }
 
     private static function de(?string $ymd): string
     {
