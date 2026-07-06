@@ -7,6 +7,7 @@ use Nyza\CompanyContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
+use Nyza\Storage;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\App;
@@ -39,7 +40,46 @@ final class LegacyImportRoutes
             $g->post('/invoices/commit',  [self::class, 'invoicesCommit']);
             $g->post('/vouchers/preview', [self::class, 'vouchersPreview']);
             $g->post('/vouchers/commit',  [self::class, 'vouchersCommit']);
+            $g->delete('/invoices',       [self::class, 'wipeInvoices']);
+            $g->delete('/expenses',       [self::class, 'wipeExpenses']);
         })->add(new AuthMiddleware());
+    }
+
+    // ───── Wipe (for a clean re-import) ─────────────────────────────────────
+
+    /** Deletes every invoice for the active company — for starting a legacy import over from scratch. */
+    public static function wipeInvoices(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
+        $pdo = Database::pdo();
+        $n = $pdo->prepare('DELETE FROM documents WHERE company_id = ? AND type = ?');
+        $n->execute([$cid, 'invoice']);
+        $deleted = $n->rowCount();
+        $pdo->prepare('DELETE FROM counters WHERE company_id = ? AND name = ?')->execute([$cid, 'invoice']);
+        return Json::ok($res, ['deleted' => $deleted]);
+    }
+
+    /** Deletes every expense + every voucher-derived income entry for the active company. */
+    public static function wipeExpenses(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
+        $pdo = Database::pdo();
+
+        $s = $pdo->prepare('SELECT receipt_path FROM expenses WHERE company_id = ? AND receipt_path IS NOT NULL');
+        $s->execute([$cid]);
+        foreach ($s->fetchAll() as $row) { Storage::deleteRel($row['receipt_path']); }
+
+        $e = $pdo->prepare('DELETE FROM expenses WHERE company_id = ?');
+        $e->execute([$cid]);
+        $deletedExpenses = $e->rowCount();
+
+        $d = $pdo->prepare("DELETE FROM documents WHERE company_id = ? AND type = 'invoice' AND number LIKE 'BELEG-%'");
+        $d->execute([$cid]);
+        $deletedIncome = $d->rowCount();
+
+        return Json::ok($res, ['deleted_expenses' => $deletedExpenses, 'deleted_income' => $deletedIncome]);
     }
 
     // ───── Rechnungen ────────────────────────────────────────────────────────
@@ -58,6 +98,7 @@ final class LegacyImportRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $cid = CompanyContext::active($req, $uid);
+        $force = !empty(((array)$req->getParsedBody())['force'] ?? null);
         $rows = self::readCsv($req, $res);
         if ($rows instanceof Response) return $rows;
         [$records, $warnings] = self::parseInvoiceRows($rows);
@@ -79,8 +120,10 @@ final class LegacyImportRoutes
             foreach ($records as $r) {
                 // Credit notes (Stornorechnungen) come through with negative net/gross —
                 // still type=invoice, so cash-basis reporting nets them out naturally.
-                $exists->execute([$cid, 'invoice', $r['number']]);
-                if ($exists->fetch()) { $skipped++; continue; }
+                if (!$force) {
+                    $exists->execute([$cid, 'invoice', $r['number']]);
+                    if ($exists->fetch()) { $skipped++; continue; }
+                }
 
                 $snap = json_encode(['name' => $r['snapshot_name']], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 $insDoc->execute([$uid, $cid, 'invoice', $r['number'], $snap, $r['doc_date'], $r['subject'], $r['net'], $r['tax'], $r['gross'], $r['paid_at']]);
@@ -186,6 +229,7 @@ final class LegacyImportRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $cid = CompanyContext::active($req, $uid);
+        $force = !empty(((array)$req->getParsedBody())['force'] ?? null);
         $rows = self::readCsv($req, $res);
         if ($rows instanceof Response) return $rows;
         [$expenses, $income, $warnings] = self::parseVoucherRows($rows);
@@ -210,14 +254,18 @@ final class LegacyImportRoutes
         $pdo->beginTransaction();
         try {
             foreach ($expenses as $r) {
-                $existsExp->execute([$cid, $r['vendor'], $r['exp_date'], $r['category'], $r['gross']]);
-                if ($existsExp->fetch()) { $skipExp++; continue; }
+                if (!$force) {
+                    $existsExp->execute([$cid, $r['vendor'], $r['exp_date'], $r['category'], $r['gross']]);
+                    if ($existsExp->fetch()) { $skipExp++; continue; }
+                }
                 $insExp->execute([$uid, $cid, $r['exp_date'], $r['vendor'], $r['description'], $r['category'], $r['net'], $r['tax_rate'], $r['tax'], $r['gross'], $r['paid_at']]);
                 $impExp++;
             }
             foreach ($income as $r) {
-                $existsDoc->execute([$cid, 'invoice', $r['number']]);
-                if ($existsDoc->fetch()) { $skipInc++; continue; }
+                if (!$force) {
+                    $existsDoc->execute([$cid, 'invoice', $r['number']]);
+                    if ($existsDoc->fetch()) { $skipInc++; continue; }
+                }
                 $snap = json_encode(['name' => $r['vendor']], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 $insDoc->execute([$uid, $cid, 'invoice', $r['number'], $snap, $r['exp_date'], $r['description'] ?: $r['vendor'], $r['net'], $r['tax'], $r['gross'], $r['paid_at']]);
                 $docId = (int)$pdo->lastInsertId();

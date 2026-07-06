@@ -6668,8 +6668,9 @@ function LegacyImportModal({ onClose, onDone }) {
   const [kind, setKind] = useState('invoices');
   const [files, setFiles] = useState({});     // { invoices: File, vouchers: File }
   const [previews, setPreviews] = useState({}); // { invoices: {...}, vouchers: {...} }
-  const [busy, setBusy] = useState('');       // 'preview' | 'commit' | ''
+  const [busy, setBusy] = useState('');       // 'preview' | 'commit' | 'wipe' | ''
   const [results, setResults] = useState({}); // { invoices: {...}, vouchers: {...} }
+  const [force, setForce] = useState(false);
   const inputRef = useRef(null);
   const file = files[kind] || null;
   const preview = previews[kind] || null;
@@ -6692,16 +6693,41 @@ function LegacyImportModal({ onClose, onDone }) {
   const commit = async () => {
     if (!file || !preview || busy) return;
     const n = kind === 'invoices' ? preview.new : (preview.expenses.new + preview.income.new);
+    const skipMsg = force ? 'Duplikat-Prüfung ist AUS — wirklich jede Zeile wird importiert, auch mögliche Dubletten.'
+      : 'Bereits vorhandene Nummern/Beträge werden übersprungen.';
     if (!await confirmDialog({
       title: 'Altdaten importieren?',
-      message: `${n} neue ${kind === 'invoices' ? 'Rechnung(en)' : 'Beleg-Position(en)'} werden in dein System übernommen. Bereits vorhandene Nummern/Beträge werden übersprungen. Dieser Vorgang lässt sich nicht automatisch rückgängig machen.`,
+      message: `${n} neue ${kind === 'invoices' ? 'Rechnung(en)' : 'Beleg-Position(en)'} werden in dein System übernommen. ${skipMsg} Dieser Vorgang lässt sich nicht automatisch rückgängig machen.`,
       confirmLabel: 'Importieren', danger: true,
     })) return;
     setBusy('commit');
     try {
-      const d = await API.legacyCommit(kind, file);
+      const d = await API.legacyCommit(kind, file, force);
       setResults((s) => ({ ...s, [kind]: d }));
       toast('Import abgeschlossen', 'success');
+      onDone();
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
+  };
+
+  const wipe = async () => {
+    if (busy) return;
+    const label = kind === 'invoices' ? 'ALLE Rechnungen' : 'ALLE Belege/Ausgaben';
+    if (!await confirmDialog({
+      title: `${label} löschen?`,
+      message: `Das löscht wirklich JEDE Rechnung${kind === 'vouchers' ? '/Ausgabe' : ''} dieser Firma unwiderruflich — nicht nur importierte. Nutze das nur für einen sauberen Neustart vor einem Re-Import. Es gibt kein Zurück.`,
+      confirmLabel: 'Endgültig löschen', danger: true,
+    })) return;
+    setBusy('wipe');
+    try {
+      if (kind === 'invoices') {
+        const d = await API.legacyWipeInvoices();
+        toast(`${d.deleted} Rechnung(en) gelöscht`, 'success');
+      } else {
+        const d = await API.legacyWipeExpenses();
+        toast(`${d.deleted_expenses} Ausgabe(n) und ${d.deleted_income} Einnahme(n) gelöscht`, 'success');
+      }
+      setPreviews((s) => ({ ...s, [kind]: null }));
+      setResults((s) => ({ ...s, [kind]: null }));
       onDone();
     } catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
   };
@@ -6743,6 +6769,16 @@ function LegacyImportModal({ onClose, onDone }) {
         <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
           <div style={{ fontSize: 12.5, color: 'var(--fg-3)', lineHeight: 1.5 }}>{LEGACY_KINDS.find((k) => k.id === kind)?.desc}</div>
 
+          <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-hi)', border: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <span style={{ color: 'var(--fg-3)', flexShrink: 0, marginTop: 1 }}>{Ic.bolt(14)}</span>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', lineHeight: 1.5 }}>
+              „Schon vorhanden"/übersprungen kann zwei Gründe haben: (1) die Quelldatei enthält dieselbe Zeile
+              wirklich doppelt (kommt in Altsystem-Exporten vor), oder (2) es liegen schon Ausgaben/Rechnungen
+              im System (z. B. durch den automatischen Mail-Belege-Import). Für einen wirklich sauberen Neustart
+              erst unten „Alles löschen", dann neu importieren.
+            </div>
+          </div>
+
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <button onClick={() => inputRef.current?.click()} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderRadius: 12, border: '1px dashed var(--border-hi)', background: 'var(--surface)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, color: 'var(--fg-2)', flex: 1, minWidth: 0 }}>
               {Ic.upload(15)}
@@ -6751,6 +6787,11 @@ function LegacyImportModal({ onClose, onDone }) {
             <Btn variant="glass" size="sm" disabled={!file || busy} onClick={loadPreview} icon={busy === 'preview' ? Ic.loader(14) : Ic.eye(14)}>Vorschau</Btn>
           </div>
           <input ref={inputRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={(e) => pick(e.target.files?.[0])}/>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--fg-2)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} style={{ width: 15, height: 15, accentColor: 'var(--accent)' }}/>
+            Duplikat-Prüfung überspringen (jede Zeile importieren, auch mögliche Dubletten)
+          </label>
 
           {preview && kind === 'invoices' && (
             <>
@@ -6801,9 +6842,14 @@ function LegacyImportModal({ onClose, onDone }) {
           )}
         </div>
 
-        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <Btn variant="ghost" onClick={onClose}>Schließen</Btn>
-          <Btn variant="primary" disabled={!preview || busy} onClick={commit} icon={busy === 'commit' ? Ic.loader(15) : Ic.check(15)}>Jetzt importieren</Btn>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+          <Btn variant="danger" size="md" disabled={busy} onClick={wipe} icon={busy === 'wipe' ? Ic.loader(15) : Ic.trash(15)}>
+            {kind === 'invoices' ? 'Alle Rechnungen löschen' : 'Alle Belege/Ausgaben löschen'}
+          </Btn>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn variant="ghost" onClick={onClose}>Schließen</Btn>
+            <Btn variant="primary" disabled={!preview || busy} onClick={commit} icon={busy === 'commit' ? Ic.loader(15) : Ic.check(15)}>Jetzt importieren</Btn>
+          </div>
         </div>
       </Glass>
     </div>

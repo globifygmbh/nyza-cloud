@@ -474,7 +474,9 @@ export const API = {
   importCommit: (records) => request('/api/import/commit', { method: 'POST', body: { records } }),
   // ───── Altdaten-Import (Rechnungen/Belege aus altem System) ─────
   legacyPreview: (kind, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/import/legacy/' + kind + '/preview', { method: 'POST', body: fd }); },
-  legacyCommit:  (kind, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/import/legacy/' + kind + '/commit', { method: 'POST', body: fd }); },
+  legacyCommit:  (kind, file, force) => { const fd = new FormData(); fd.append('file', file); if (force) fd.append('force', '1'); return request('/api/import/legacy/' + kind + '/commit', { method: 'POST', body: fd }); },
+  legacyWipeInvoices: () => request('/api/import/legacy/invoices', { method: 'DELETE' }),
+  legacyWipeExpenses: () => request('/api/import/legacy/expenses', { method: 'DELETE' }),
 
   // Buchhaltung · Doppik (double-entry / GmbH)
   ledgerAccounts:    () => request('/api/ledger/accounts'),
