@@ -7059,7 +7059,10 @@ function UvaPreview({ data, onDrilldown }) {
     if (navigator.clipboard) navigator.clipboard.writeText(s).then(() => toast('Kopiert: ' + s, 'success')).catch(() => {});
   };
   const amount = (n, bold) => (
-    <span onClick={(e) => { e.stopPropagation(); copy(n); }} title="Klicken zum Kopieren" style={{ cursor: 'pointer', fontVariantNumeric: 'tabular-nums', fontWeight: bold ? 700 : 500, borderBottom: '1px dotted var(--border-hi)' }}>{fmtEUR(n)}</span>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontVariantNumeric: 'tabular-nums', fontWeight: bold ? 700 : 500 }}>
+      {fmtEUR(n)}
+      <button onClick={(e) => { e.stopPropagation(); copy(n); }} title="Zum Abtippen kopieren" style={{ display: 'inline-flex', padding: 2, border: 'none', background: 'none', color: 'var(--fg-4)', cursor: 'pointer' }}>{Ic.copy(11)}</button>
+    </span>
   );
   const kz = (code) => <span style={{ display: 'inline-block', minWidth: 42, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>KZ {code}</span>;
   const rows = (data.income_by_rate || []).filter((r) => r.net > 0 || r.tax > 0);
@@ -7084,7 +7087,7 @@ function UvaPreview({ data, onDrilldown }) {
         <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, padding: '2px 7px', borderRadius: 999, background: 'var(--accent-grad)', color: '#fff' }}>AT · U30</span>
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 14 }}>
-        Umsatzsteuervoranmeldung {data.period ? '· ' + data.period.label : ''} · Basis: {soll ? 'Soll (Rechnungs-/Leistungsdatum)' : 'Ist (Zahldatum)'} · Beträge zum Abtippen — klick zum Kopieren
+        Umsatzsteuervoranmeldung {data.period ? '· ' + data.period.label : ''} · Basis: {soll ? 'Soll (Rechnungs-/Leistungsdatum)' : 'Ist (Zahldatum)'} · Zeile anklicken für die einzelnen Rechnungen/Belege, {Ic.copy(10)} zum Kopieren
       </div>
       <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
         <thead>
