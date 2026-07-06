@@ -6324,6 +6324,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const [repYear, setRepYear] = useState(() => new Date().getFullYear());
   const [repPeriod, setRepPeriod] = useState('year');
   const [importOpen, setImportOpen] = useState(false);
+  const [legacyImportOpen, setLegacyImportOpen] = useState(false);
   const [doubleEntry, setDoubleEntry] = useState(false);
   const [editing, setEditing] = useState(null);
   const [prodEditing, setProdEditing] = useState(null);
@@ -6386,7 +6387,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const newBtn = tab === 'products' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setProdEditing({})}>Produkt</Btn>
     : tab === 'subscriptions' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setSubEditing({ interval_unit: 'monthly', tax_rate: 20, active: 1 })}>Neues Abo</Btn>
     : tab === 'expenses' ? <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setExpEditing({ category: 'Sonstiges', tax_rate: 20, deductible: 1 })}>Neue Ausgabe</Btn>
-    : tab === 'reports' ? <div style={{ display: 'flex', gap: 8 }}><Btn variant="glass" size="sm" icon={Ic.fileGen(14)} onClick={() => setImportOpen(true)}>CSV-Import</Btn><Btn variant="glass" size="sm" icon={Ic.download(14)} onClick={() => { window.location.href = API.datevUrl(repYear, periodOpts(repPeriod)); }}>DATEV-CSV</Btn></div>
+    : tab === 'reports' ? <div style={{ display: 'flex', gap: 8 }}><Btn variant="glass" size="sm" icon={Ic.fileGen(14)} onClick={() => setImportOpen(true)}>CSV-Import</Btn><Btn variant="glass" size="sm" icon={Ic.archive(14)} onClick={() => setLegacyImportOpen(true)}>Altdaten-Import</Btn><Btn variant="glass" size="sm" icon={Ic.download(14)} onClick={() => { window.location.href = API.datevUrl(repYear, periodOpts(repPeriod)); }}>DATEV-CSV</Btn></div>
     : <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ type: tab })}>{tab === 'offer' ? 'Neues Angebot' : 'Neue Rechnung'}</Btn>;
 
   return (
@@ -6563,6 +6564,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
       {subEditing && <SubscriptionModal sub={subEditing} contacts={contacts} onSave={saveSub} onClose={() => setSubEditing(null)}/>}
       {expEditing && <ExpenseModal exp={expEditing} contacts={contacts} onSave={saveExp} onClose={() => setExpEditing(null)} onChanged={load}/>}
       {importOpen && <ImportModal onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); }}/>}
+      {legacyImportOpen && <LegacyImportModal onClose={() => setLegacyImportOpen(false)} onDone={() => load()}/>}
       {tagTarget && (() => {
         const h = tagTarget.type === 'expense' ? expTags : docTags;
         return <TagPickerModal title={'Tags · ' + tagTarget.name} tags={h.tags}
@@ -6653,6 +6655,159 @@ function parseNum(s) {
   else if (hasC) t = t.replace(/\./g, '').replace(',', '.');
   const n = parseFloat(t);
   return isNaN(n) ? 0 : n;
+}
+
+// One-off migration import for the two known legacy exports (Rechnungen /
+// Belege). Unlike ImportModal there is no column-mapping step — the format is
+// fixed and known, so it's upload → server-side preview → confirm → commit.
+const LEGACY_KINDS = [
+  { id: 'invoices', label: 'Rechnungen', desc: 'CSV-Export deiner Rechnungen (Nummer, Datum, Bezahlt-Datum, Beträge, Empfänger).' },
+  { id: 'vouchers', label: 'Belege', desc: 'CSV-Export deiner Belege/Ausgaben (Lieferant, Kategorie, Beträge, USt-Satz).' },
+];
+function LegacyImportModal({ onClose, onDone }) {
+  const [kind, setKind] = useState('invoices');
+  const [files, setFiles] = useState({});     // { invoices: File, vouchers: File }
+  const [previews, setPreviews] = useState({}); // { invoices: {...}, vouchers: {...} }
+  const [busy, setBusy] = useState('');       // 'preview' | 'commit' | ''
+  const [results, setResults] = useState({}); // { invoices: {...}, vouchers: {...} }
+  const inputRef = useRef(null);
+  const file = files[kind] || null;
+  const preview = previews[kind] || null;
+  const result = results[kind] || null;
+
+  const pick = (f) => {
+    if (!f) return;
+    setFiles((s) => ({ ...s, [kind]: f }));
+    setPreviews((s) => ({ ...s, [kind]: null }));
+    setResults((s) => ({ ...s, [kind]: null }));
+  };
+
+  const loadPreview = async () => {
+    if (!file || busy) return;
+    setBusy('preview');
+    try { const d = await API.legacyPreview(kind, file); setPreviews((s) => ({ ...s, [kind]: d })); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
+  };
+
+  const commit = async () => {
+    if (!file || !preview || busy) return;
+    const n = kind === 'invoices' ? preview.new : (preview.expenses.new + preview.income.new);
+    if (!await confirmDialog({
+      title: 'Altdaten importieren?',
+      message: `${n} neue ${kind === 'invoices' ? 'Rechnung(en)' : 'Beleg-Position(en)'} werden in dein System übernommen. Bereits vorhandene Nummern/Beträge werden übersprungen. Dieser Vorgang lässt sich nicht automatisch rückgängig machen.`,
+      confirmLabel: 'Importieren', danger: true,
+    })) return;
+    setBusy('commit');
+    try {
+      const d = await API.legacyCommit(kind, file);
+      setResults((s) => ({ ...s, [kind]: d }));
+      toast('Import abgeschlossen', 'success');
+      onDone();
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
+  };
+
+  const Stat = ({ label, value }) => (
+    <div style={{ padding: '10px 12px', borderRadius: 12, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 10.5, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontSize: 15, fontWeight: 600, marginTop: 2 }}>{value}</div>
+    </div>
+  );
+
+  const Warnings = ({ list }) => !list || !list.length ? null : (
+    <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 12, background: 'oklch(0.72 0.18 30 / 0.1)', border: '1px solid oklch(0.72 0.18 30 / 0.3)' }}>
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{list.length} Hinweis(e)</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 140, overflowY: 'auto' }}>
+        {list.map((w, i) => <div key={i} style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{w}</div>)}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 640, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.archive(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Altdaten-Import</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+
+        <div style={{ display: 'flex', gap: 6, padding: '12px 24px 0' }}>
+          {LEGACY_KINDS.map((k) => (
+            <button key={k.id} onClick={() => setKind(k.id)} style={{
+              padding: '8px 14px', borderRadius: 999, border: '1px solid var(--border)', fontFamily: 'inherit', fontSize: 13, cursor: 'pointer',
+              background: kind === k.id ? 'var(--accent)' : 'var(--surface-hi)', color: kind === k.id ? '#fff' : 'var(--fg)',
+            }}>{k.label}</button>
+          ))}
+        </div>
+
+        <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+          <div style={{ fontSize: 12.5, color: 'var(--fg-3)', lineHeight: 1.5 }}>{LEGACY_KINDS.find((k) => k.id === kind)?.desc}</div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button onClick={() => inputRef.current?.click()} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderRadius: 12, border: '1px dashed var(--border-hi)', background: 'var(--surface)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, color: 'var(--fg-2)', flex: 1, minWidth: 0 }}>
+              {Ic.upload(15)}
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file ? file.name : 'CSV-Datei wählen…'}</span>
+            </button>
+            <Btn variant="glass" size="sm" disabled={!file || busy} onClick={loadPreview} icon={busy === 'preview' ? Ic.loader(14) : Ic.eye(14)}>Vorschau</Btn>
+          </div>
+          <input ref={inputRef} type="file" accept=".csv,text/csv" style={{ display: 'none' }} onChange={(e) => pick(e.target.files?.[0])}/>
+
+          {preview && kind === 'invoices' && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8 }}>
+                <Stat label="Zeilen gesamt" value={preview.count}/>
+                <Stat label="Neu" value={preview.new}/>
+                <Stat label="Schon vorhanden" value={preview.existing}/>
+                <Stat label="Bezahlt" value={preview.paid}/>
+                <Stat label="Offen" value={preview.open}/>
+                <Stat label="Summe (Brutto)" value={fmtEUR(preview.sum_gross)}/>
+                <Stat label="Zeitraum" value={preview.min_date ? fmtDateShort(preview.min_date) + ' – ' + fmtDateShort(preview.max_date) : '—'}/>
+              </div>
+              <Warnings list={preview.warnings}/>
+            </>
+          )}
+
+          {preview && kind === 'vouchers' && (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)' }}>Ausgaben</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8 }}>
+                <Stat label="Zeilen gesamt" value={preview.expenses.count}/>
+                <Stat label="Neu" value={preview.expenses.new}/>
+                <Stat label="Schon vorhanden" value={preview.expenses.existing}/>
+                <Stat label="Bezahlt" value={preview.expenses.paid}/>
+                <Stat label="Offen" value={preview.expenses.open}/>
+                <Stat label="Summe (Brutto)" value={fmtEUR(preview.expenses.sum_gross)}/>
+              </div>
+              {preview.income.count > 0 && (
+                <>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)', marginTop: 4 }}>Als Einnahmen erkannt (Kategorie „Einnahmen/Erlöse")</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8 }}>
+                    <Stat label="Zeilen gesamt" value={preview.income.count}/>
+                    <Stat label="Neu" value={preview.income.new}/>
+                    <Stat label="Summe (Brutto)" value={fmtEUR(preview.income.sum_gross)}/>
+                  </div>
+                </>
+              )}
+              <Warnings list={preview.warnings}/>
+            </>
+          )}
+
+          {result && (
+            <div style={{ padding: '12px 14px', borderRadius: 12, background: 'oklch(0.7 0.15 165 / 0.12)', border: '1px solid oklch(0.7 0.15 165 / 0.3)', fontSize: 13 }}>
+              {kind === 'invoices'
+                ? <>{result.imported} Rechnung(en) importiert, {result.skipped} übersprungen (bereits vorhanden).</>
+                : <>{result.imported_expenses} Ausgabe(n) und {result.imported_income} Einnahme(n) importiert, {result.skipped_expenses + result.skipped_income} übersprungen (bereits vorhanden).</>}
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Schließen</Btn>
+          <Btn variant="primary" disabled={!preview || busy} onClick={commit} icon={busy === 'commit' ? Ic.loader(15) : Ic.check(15)}>Jetzt importieren</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
 }
 
 function ImportModal({ onClose, onDone }) {

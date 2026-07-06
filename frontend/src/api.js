@@ -472,6 +472,9 @@ export const API = {
   datevUrl:  (year, opts = {}) => url('/api/reports/datev') + '?year=' + year + (opts.month ? '&month=' + opts.month : '') + (opts.quarter ? '&quarter=' + opts.quarter : '') + '&download=1&token=' + (getToken() || '') + (getCompany() ? '&company_id=' + getCompany() : ''),
   importParse:  (file) => { const fd = new FormData(); fd.append('file', file); return request('/api/import/parse', { method: 'POST', body: fd }); },
   importCommit: (records) => request('/api/import/commit', { method: 'POST', body: { records } }),
+  // ───── Altdaten-Import (Rechnungen/Belege aus altem System) ─────
+  legacyPreview: (kind, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/import/legacy/' + kind + '/preview', { method: 'POST', body: fd }); },
+  legacyCommit:  (kind, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/import/legacy/' + kind + '/commit', { method: 'POST', body: fd }); },
 
   // Buchhaltung · Doppik (double-entry / GmbH)
   ledgerAccounts:    () => request('/api/ledger/accounts'),
