@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Nyza\Routes;
 
+use Nyza\CompanyContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -284,10 +285,11 @@ final class TimeRoutes
             ];
         }
 
+        $companyId = CompanyContext::active($req, $uid);
         $pdo = Database::pdo();
         $pdo->beginTransaction();
         try {
-            $docId = DocumentRoutes::createInvoice($uid, $cid, $items);
+            $docId = DocumentRoutes::createInvoice($uid, $companyId, $cid, $items);
             $ph = implode(',', array_fill(0, count($eligible), '?'));
             $pdo->prepare("UPDATE time_entries SET invoice_id = ? WHERE user_id = ? AND id IN ($ph)")
                 ->execute(array_merge([$docId, $uid], $eligible));
