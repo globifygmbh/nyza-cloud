@@ -55,7 +55,140 @@ final class ContentRoutes
 
             $g->get('/files/{fileId}',    [self::class, 'getFile']);
             $g->delete('/files/{fileId}', [self::class, 'deleteFile']);
+
+            $g->get('/media', [self::class, 'listMedia']);
+
+            $g->get('/inspiration',           [self::class, 'listInspiration']);
+            $g->post('/inspiration',          [self::class, 'createInspirationLink']);
+            $g->post('/inspiration/upload',   [self::class, 'uploadInspirationImage']);
+            $g->delete('/inspiration/{id}',   [self::class, 'deleteInspiration']);
+            $g->get('/inspiration/{id}/image',[self::class, 'getInspirationImage']);
         })->add(new AuthMiddleware());
+    }
+
+    // ───── Medienbibliothek (alle Dateien im Account) ──────────────────────────
+
+    public static function listMedia(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $q = $req->getQueryParams();
+        $accountId = (int)($q['account_id'] ?? 0);
+        if (!self::hasAccess($uid, $accountId)) return Json::err($res, 'Kein Zugriff', 403, 'forbidden');
+
+        $where = 'ci.account_id = ?'; $params = [$accountId];
+        $type = (string)($q['type'] ?? '');
+        if ($type === 'video') { $where .= " AND cf.mime LIKE 'video/%'"; }
+        elseif ($type === 'image') { $where .= " AND cf.mime LIKE 'image/%'"; }
+        elseif ($type === 'other') { $where .= " AND (cf.mime IS NULL OR (cf.mime NOT LIKE 'video/%' AND cf.mime NOT LIKE 'image/%'))"; }
+
+        $s = Database::pdo()->prepare(
+            "SELECT cf.id, cf.name, cf.mime, cf.size, cf.created_at, ci.id AS idea_id, ci.title AS idea_title "
+            . "FROM content_files cf JOIN content_ideas ci ON ci.id = cf.idea_id WHERE $where ORDER BY cf.created_at DESC LIMIT 500"
+        );
+        $s->execute($params);
+        $files = array_map(static fn($r) => [
+            'id' => (int)$r['id'], 'name' => $r['name'], 'mime' => $r['mime'], 'size' => (int)$r['size'],
+            'created_at' => $r['created_at'], 'idea_id' => (int)$r['idea_id'], 'idea_title' => $r['idea_title'],
+        ], $s->fetchAll());
+        return Json::ok($res, ['files' => $files]);
+    }
+
+    // ───── Inspiration board ────────────────────────────────────────────────────
+
+    public static function listInspiration(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $accountId = (int)($req->getQueryParams()['account_id'] ?? 0);
+        if (!self::hasAccess($uid, $accountId)) return Json::err($res, 'Kein Zugriff', 403, 'forbidden');
+        $s = Database::pdo()->prepare('SELECT * FROM content_inspiration WHERE account_id = ? ORDER BY id DESC');
+        $s->execute([$accountId]);
+        return Json::ok($res, ['items' => array_map([self::class, 'shapeInspiration'], $s->fetchAll())]);
+    }
+
+    public static function createInspirationLink(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $b = (array)$req->getParsedBody();
+        $accountId = (int)($b['account_id'] ?? 0);
+        if (!self::hasAccess($uid, $accountId)) return Json::err($res, 'Kein Zugriff', 403, 'forbidden');
+        $url = trim((string)($b['url'] ?? ''));
+        if ($url === '' || !preg_match('#^https?://#i', $url)) return Json::err($res, 'Gültiger Link erforderlich', 422);
+        $note = trim((string)($b['note'] ?? ''));
+        Database::pdo()->prepare('INSERT INTO content_inspiration (account_id, kind, url, note, created_by) VALUES (?, "link", ?, ?, ?)')
+            ->execute([$accountId, mb_substr($url, 0, 1000), $note !== '' ? mb_substr($note, 0, 500) : null, $uid]);
+        $id = (int)Database::pdo()->lastInsertId();
+        return Json::ok($res, ['item' => self::fetchInspiration($id)], 201);
+    }
+
+    public static function uploadInspirationImage(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $b = (array)$req->getParsedBody();
+        $accountId = (int)($b['account_id'] ?? 0);
+        if (!self::hasAccess($uid, $accountId)) return Json::err($res, 'Kein Zugriff', 403, 'forbidden');
+        $file = $req->getUploadedFiles()['file'] ?? null;
+        if (!$file || $file->getError() !== UPLOAD_ERR_OK) return Json::err($res, 'Keine Datei', 422);
+        if ((int)$file->getSize() > self::FILE_MAX) return Json::err($res, 'Datei zu groß (max 200 MB)', 413);
+        $note = trim((string)($b['note'] ?? ''));
+
+        $name = $file->getClientFilename() ?: 'screenshot.png';
+        $mime = $file->getClientMediaType() ?: 'application/octet-stream';
+        $rel = Storage::relPath($uid, $name);
+        $file->moveTo(Storage::abs($rel));
+        Database::pdo()->prepare('INSERT INTO content_inspiration (account_id, kind, file_path, file_name, file_mime, note, created_by) VALUES (?, "image", ?, ?, ?, ?, ?)')
+            ->execute([$accountId, $rel, mb_substr($name, 0, 255), mb_substr($mime, 0, 100), $note !== '' ? mb_substr($note, 0, 500) : null, $uid]);
+        $id = (int)Database::pdo()->lastInsertId();
+        return Json::ok($res, ['item' => self::fetchInspiration($id)], 201);
+    }
+
+    public static function getInspirationImage(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        $s = Database::pdo()->prepare('SELECT * FROM content_inspiration WHERE id = ?');
+        $s->execute([$id]);
+        $row = $s->fetch();
+        if (!$row || !self::hasAccess($uid, (int)$row['account_id']) || empty($row['file_path'])) return Json::err($res, 'Not found', 404);
+        $abs = Storage::abs($row['file_path']);
+        if (!is_file($abs)) return Json::err($res, 'Not found', 404);
+        $data = (string)file_get_contents($abs);
+        while (ob_get_level() > 0) { @ob_end_clean(); }
+        header('Content-Type: ' . ($row['file_mime'] ?: 'application/octet-stream'));
+        header('Content-Disposition: inline; filename="' . addslashes((string)$row['file_name']) . '"');
+        header('Content-Length: ' . strlen($data));
+        header('Cache-Control: private, max-age=3600');
+        echo $data;
+        exit;
+    }
+
+    public static function deleteInspiration(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        $s = Database::pdo()->prepare('SELECT * FROM content_inspiration WHERE id = ?');
+        $s->execute([$id]);
+        $row = $s->fetch();
+        if (!$row || !self::hasAccess($uid, (int)$row['account_id'])) return Json::err($res, 'Not found', 404);
+        if (!empty($row['file_path'])) Storage::deleteRel($row['file_path']);
+        Database::pdo()->prepare('DELETE FROM content_inspiration WHERE id = ?')->execute([$id]);
+        return Json::ok($res, ['ok' => true]);
+    }
+
+    private static function fetchInspiration(int $id): ?array
+    {
+        $s = Database::pdo()->prepare('SELECT * FROM content_inspiration WHERE id = ?');
+        $s->execute([$id]);
+        $r = $s->fetch();
+        return $r ? self::shapeInspiration($r) : null;
+    }
+
+    private static function shapeInspiration(array $r): array
+    {
+        return [
+            'id' => (int)$r['id'], 'account_id' => (int)$r['account_id'], 'kind' => $r['kind'],
+            'url' => $r['url'], 'file_name' => $r['file_name'], 'file_mime' => $r['file_mime'],
+            'note' => $r['note'], 'created_at' => $r['created_at'],
+        ];
     }
 
     // ───── Accounts ──────────────────────────────────────────────────────────

@@ -316,6 +316,13 @@ export const API = {
   uploadContentFile:    (ideaId, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/content/ideas/' + ideaId + '/files', { method: 'POST', body: fd }); },
   contentFileUrl:       (fileId, download) => url('/api/content/files/' + fileId) + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
   deleteContentFile:    (fileId) => request('/api/content/files/' + fileId, { method: 'DELETE' }),
+  contentMedia:         (accountId, type) => request('/api/content/media?account_id=' + accountId + (type ? '&type=' + type : '')),
+
+  contentInspiration:      (accountId) => request('/api/content/inspiration?account_id=' + accountId),
+  addContentInspLink:      (accountId, urlStr, note) => request('/api/content/inspiration', { method: 'POST', body: { account_id: accountId, url: urlStr, note } }),
+  uploadContentInspImage:  (accountId, file, note) => { const fd = new FormData(); fd.append('account_id', accountId); fd.append('file', file); if (note) fd.append('note', note); return request('/api/content/inspiration/upload', { method: 'POST', body: fd }); },
+  deleteContentInsp:       (id) => request('/api/content/inspiration/' + id, { method: 'DELETE' }),
+  contentInspImageUrl:     (id) => url('/api/content/inspiration/' + id + '/image') + '?token=' + (getToken() || ''),
 
   // Apps · Zeiten (time tracking)
   timeEntries:   (opts = {}) => { const qs = []; if (opts.from) qs.push('from=' + opts.from); if (opts.to) qs.push('to=' + opts.to); if (opts.user_id) qs.push('user_id=' + opts.user_id); return request('/api/time' + (qs.length ? '?' + qs.join('&') : '')); },

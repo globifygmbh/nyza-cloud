@@ -5561,6 +5561,12 @@ function ContentApp({ onBack }) {
   const setStatus = async (idea, status) => {
     try { await API.updateContentIdea(idea.id, { status }); loadIdeas(); } catch (e) { toast(e.message, 'error'); }
   };
+  const reschedule = async (idea, dateStr) => {
+    try { await API.updateContentIdea(idea.id, { scheduled_at: dateStr }); loadIdeas(); } catch (e) { toast(e.message, 'error'); }
+  };
+  const openIdeaById = async (id) => {
+    try { const d = await API.contentIdea(id); setEditing(d.idea); } catch (e) { toast(e.message, 'error'); }
+  };
 
   const sortRows = (rows) => {
     const dir = sort.dir === 'asc' ? 1 : -1;
@@ -5590,6 +5596,9 @@ function ContentApp({ onBack }) {
             <div style={{ display: 'flex', padding: 3, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
               <IconBtn active={view === 'table'} onClick={() => setView('table')} size={32} title="Tabelle">{Ic.list(14)}</IconBtn>
               <IconBtn active={view === 'kanban'} onClick={() => setView('kanban')} size={32} title="Board">{Ic.grid(14)}</IconBtn>
+              <IconBtn active={view === 'calendar'} onClick={() => setView('calendar')} size={32} title="Kalender">{Ic.calendar(14)}</IconBtn>
+              <IconBtn active={view === 'media'} onClick={() => setView('media')} size={32} title="Medienbibliothek">{Ic.images(14)}</IconBtn>
+              <IconBtn active={view === 'inspiration'} onClick={() => setView('inspiration')} size={32} title="Inspiration">{Ic.sparkle(14)}</IconBtn>
             </div>
             <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={quickCreate} disabled={!accountId}>Neue Idee</Btn>
           </div>
@@ -5634,7 +5643,14 @@ function ContentApp({ onBack }) {
               <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{rows.length} Idee{rows.length === 1 ? '' : 'n'}</span>
             </div>
 
-            {ideas === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+            {view === 'media' ? (
+              <ContentMediaView accountId={accountId} onOpenIdea={openIdeaById}/>
+            ) : view === 'inspiration' ? (
+              <ContentInspirationView accountId={accountId}/>
+            ) : ideas === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+              : view === 'calendar' ? (
+                <ContentCalendarView ideas={rows} onOpenIdea={setEditing} onReschedule={reschedule}/>
+              )
               : rows.length === 0 ? <EmptyHint icon={Ic.camera(40)} title="Keine Ideen" desc="Leg deine erste Content-Idee an."
                   actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={quickCreate}>Neue Idee</Btn>}/>
               : view === 'table' ? (
@@ -6052,6 +6068,195 @@ function ContentIdeaModal({ idea, accountId, categories, hashtags, onClose, onCh
           <Btn variant="primary" disabled={busy} onClick={() => save(false)} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
         </div>
       </Glass>
+    </div>
+  );
+}
+
+// ───── Content: Kalender-Monatsansicht (Drag & Drop) ────────────────────────
+const WEEKDAYS_DE = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+function ContentCalendarView({ ideas, onOpenIdea, onReschedule }) {
+  const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d; });
+  const dragId = useRef(null);
+
+  const byDate = useMemo(() => {
+    const m = {};
+    for (const i of ideas) { if (i.scheduled_at) (m[i.scheduled_at] = m[i.scheduled_at] || []).push(i); }
+    return m;
+  }, [ideas]);
+  const unplanned = ideas.filter((i) => !i.scheduled_at);
+
+  const year = cursor.getFullYear(), month = cursor.getMonth();
+  const first = new Date(year, month, 1);
+  const startOffset = (first.getDay() + 6) % 7; // Monday = 0
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startOffset; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const dateStr = (d) => `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+  return (
+    <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <IconBtn size={30} title="Vormonat" onClick={() => setCursor(new Date(year, month - 1, 1))} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronL(14)}</IconBtn>
+          <div style={{ fontSize: 14, fontWeight: 600, minWidth: 150, textAlign: 'center' }}>{cursor.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })}</div>
+          <IconBtn size={30} title="Folgemonat" onClick={() => setCursor(new Date(year, month + 1, 1))} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronR(14)}</IconBtn>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1, background: 'var(--border)', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', overflow: 'hidden' }}>
+          {WEEKDAYS_DE.map((w) => <div key={w} style={{ background: 'var(--surface)', padding: '6px 8px', fontSize: 10.5, fontWeight: 700, color: 'var(--fg-3)', textTransform: 'uppercase' }}>{w}</div>)}
+          {cells.map((d, i) => {
+            const ds = d ? dateStr(d) : null;
+            const dayIdeas = ds ? (byDate[ds] || []) : [];
+            return (
+              <div key={i} onDragOver={(e) => d && e.preventDefault()}
+                onDrop={() => { if (d && dragId.current) { onReschedule({ id: dragId.current }, ds); dragId.current = null; } }}
+                style={{ background: 'var(--surface)', minHeight: 92, padding: 6, opacity: d ? 1 : 0.4 }}>
+                {d && <div style={{ fontSize: 11, fontWeight: ds === todayStr ? 700 : 500, color: ds === todayStr ? 'var(--accent)' : 'var(--fg-3)', marginBottom: 4 }}>{d}</div>}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {dayIdeas.map((idea) => {
+                    const sm = statusMeta(idea.status);
+                    return (
+                      <div key={idea.id} draggable onDragStart={() => { dragId.current = idea.id; }} onClick={() => onOpenIdea(idea)}
+                        title={idea.title}
+                        style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 6, background: 'color-mix(in oklab, ' + sm.color + ' 18%, transparent)', color: sm.color, cursor: 'grab', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {idea.title}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ width: 220, flexShrink: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', padding: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 10 }}>Nicht geplant ({unplanned.length})</div>
+        <div onDragOver={(e) => e.preventDefault()} onDrop={() => { if (dragId.current) { onReschedule({ id: dragId.current }, null); dragId.current = null; } }}
+          style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 60 }}>
+          {unplanned.length === 0 ? <div style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>Alle Ideen sind geplant.</div> : unplanned.map((idea) => (
+            <div key={idea.id} draggable onDragStart={() => { dragId.current = idea.id; }} onClick={() => onOpenIdea(idea)}
+              style={{ padding: '7px 10px', borderRadius: 8, background: 'var(--surface-hi)', border: '1px solid var(--border)', fontSize: 11.5, cursor: 'grab' }}>
+              {idea.title}
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 10.5, color: 'var(--fg-4)', marginTop: 10, lineHeight: 1.4 }}>Idee auf einen Tag ziehen, um sie zu planen. Zurück hierher ziehen, um die Planung aufzuheben.</div>
+      </div>
+    </div>
+  );
+}
+
+// ───── Content: Medienbibliothek ─────────────────────────────────────────────
+function ContentMediaView({ accountId, onOpenIdea }) {
+  const [files, setFiles] = useState(null);
+  const [type, setType] = useState('');
+  useEffect(() => { setFiles(null); API.contentMedia(accountId, type).then((d) => setFiles(d.files || [])).catch(() => setFiles([])); }, [accountId, type]);
+  const fmtSize = (n) => n > 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + ' MB' : Math.round(n / 1024) + ' KB';
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        {[{ id: '', label: 'Alle' }, { id: 'video', label: 'Videos' }, { id: 'image', label: 'Fotos' }, { id: 'other', label: 'Sonstige' }].map((t) => (
+          <button key={t.id} onClick={() => setType(t.id)} style={{
+            height: 32, padding: '0 14px', borderRadius: 999, border: '1px solid ' + (type === t.id ? 'transparent' : 'var(--border)'), cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 540,
+            background: type === t.id ? 'var(--accent-grad)' : 'var(--surface-hi)', color: type === t.id ? '#fff' : 'var(--fg-2)',
+          }}>{t.label}</button>
+        ))}
+      </div>
+      {files === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+        : files.length === 0 ? <EmptyHint icon={Ic.images(40)} title="Keine Dateien" desc="Dateien, die du an Ideen anhängst, erscheinen hier gesammelt."/>
+        : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
+            {files.map((f) => (
+              <div key={f.id} onClick={() => onOpenIdea(f.idea_id)} title={f.name} style={{ cursor: 'pointer', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                {(f.mime || '').startsWith('image/') ? (
+                  <img src={API.contentFileUrl(f.id)} alt={f.name} style={{ width: '100%', height: 110, objectFit: 'cover', display: 'block' }}/>
+                ) : (f.mime || '').startsWith('video/') ? (
+                  <video src={API.contentFileUrl(f.id)} style={{ width: '100%', height: 110, objectFit: 'cover', display: 'block' }} muted/>
+                ) : (
+                  <div style={{ height: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-3)' }}>{Ic.fileGen(28)}</div>
+                )}
+                <div style={{ padding: '6px 8px' }}>
+                  <div style={{ fontSize: 11, fontWeight: 540, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</div>
+                  <div style={{ fontSize: 10, color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.idea_title} · {fmtSize(f.size)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
+
+// ───── Content: Inspiration-Board ────────────────────────────────────────────
+function ContentInspirationView({ accountId }) {
+  const [items, setItems] = useState(null);
+  const [urlInput, setUrlInput] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [over, setOver] = useState(false);
+  const fileRef = useRef(null);
+  const load = () => API.contentInspiration(accountId).then((d) => setItems(d.items || [])).catch(() => setItems([]));
+  useEffect(() => { load(); }, [accountId]);
+
+  const addLink = async () => {
+    if (!urlInput.trim()) return;
+    setBusy(true);
+    try { await API.addContentInspLink(accountId, urlInput.trim(), note.trim() || undefined); setUrlInput(''); setNote(''); load(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const upload = async (files) => {
+    setBusy(true);
+    try { for (const f of Array.from(files)) await API.uploadContentInspImage(accountId, f); load(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const del = async (item) => {
+    if (!await confirmDialog({ title: 'Löschen?', message: 'Dieser Inspiration-Eintrag wird entfernt.', confirmLabel: 'Löschen', danger: true })) return;
+    try { await API.deleteContentInsp(item.id); load(); } catch (e) { toast(e.message, 'error'); }
+  };
+  const hostOf = (u) => { try { return new URL(u).hostname.replace('www.', ''); } catch { return u; } };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+        <input value={urlInput} onChange={(e) => setUrlInput(e.target.value)} placeholder="TikTok-/Reels-/YouTube-/Pinterest-Link einfügen…" onKeyDown={(e) => e.key === 'Enter' && addLink()}
+          style={{ flex: '2 1 260px', height: 38, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', fontFamily: 'inherit' }}/>
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notiz (optional)" onKeyDown={(e) => e.key === 'Enter' && addLink()}
+          style={{ flex: '1 1 160px', height: 38, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', fontFamily: 'inherit' }}/>
+        <Btn variant="primary" size="sm" disabled={busy} onClick={addLink} icon={Ic.link(13)}>Link speichern</Btn>
+      </div>
+      <div onClick={() => fileRef.current?.click()} onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
+        onDrop={(e) => { e.preventDefault(); setOver(false); if (e.dataTransfer.files?.length) upload(e.dataTransfer.files); }}
+        style={{ padding: '14px', borderRadius: 12, border: '1px dashed ' + (over ? 'var(--accent)' : 'var(--border-hi)'), background: over ? 'color-mix(in oklab, var(--accent) 8%, transparent)' : 'var(--surface)', cursor: 'pointer', textAlign: 'center', color: 'var(--fg-3)', fontSize: 12.5, marginBottom: 18 }}>
+        Screenshot hierher ziehen oder klicken
+      </div>
+      <input ref={fileRef} type="file" multiple accept="image/*" style={{ display: 'none' }} onChange={(e) => { if (e.target.files?.length) upload(e.target.files); e.target.value = ''; }}/>
+
+      {items === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+        : items.length === 0 ? <EmptyHint icon={Ic.sparkle(40)} title="Noch keine Inspiration" desc="Sammle Links und Screenshots, die dich zu neuen Videos inspirieren."/>
+        : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+            {items.map((item) => (
+              <div key={item.id} style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                <span onClick={() => del(item)} title="Löschen" style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.55)', color: '#fff', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 1 }}>{Ic.close(12)}</span>
+                {item.kind === 'image' ? (
+                  <img src={API.contentInspImageUrl(item.id)} alt={item.file_name} style={{ width: '100%', height: 140, objectFit: 'cover', display: 'block' }}/>
+                ) : (
+                  <a href={item.url} target="_blank" rel="noreferrer" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, height: 140, color: 'var(--accent)', textDecoration: 'none', padding: 12, textAlign: 'center' }}>
+                    {Ic.link(24)}
+                    <span style={{ fontSize: 11.5, fontWeight: 600 }}>{hostOf(item.url)}</span>
+                  </a>
+                )}
+                {(item.note || item.kind === 'link') && (
+                  <div style={{ padding: '8px 10px', fontSize: 11, color: 'var(--fg-3)' }}>
+                    {item.note || (item.kind === 'link' ? item.url : '')}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
     </div>
   );
 }

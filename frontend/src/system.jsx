@@ -47,6 +47,9 @@ export const Ic = {
   archive:   (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/></svg>,
   pin:       (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="currentColor"><path d="M16 3a1 1 0 0 1 .7.3l4 4a1 1 0 0 1-.24 1.58L16 11.4V19a1 1 0 0 1-1.7.71L10 15.41l-5.29 5.3a1 1 0 0 1-1.42-1.42L8.59 14l-4.3-4.3A1 1 0 0 1 5 8h7.59l2.52-4.35A1 1 0 0 1 16 3z"/></svg>,
   folderUp:  (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M12 11v6M9 14l3-3 3 3"/></svg>,
+  calendar:  (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>,
+  images:    (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="15" height="13" rx="2"/><path d="m2 15 4-4 4 4 3-3 4 4"/><circle cx="7" cy="10" r="1.2"/><path d="M8 3h11a2 2 0 0 1 2 2v11"/></svg>,
+  sparkle:   (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/><circle cx="12" cy="12" r="3"/></svg>,
 };
 
 export function Glass({ children, style = {}, intensity = 1, hi = true, ...rest }) {
