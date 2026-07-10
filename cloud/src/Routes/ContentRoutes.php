@@ -114,10 +114,49 @@ final class ContentRoutes
         $url = trim((string)($b['url'] ?? ''));
         if ($url === '' || !preg_match('#^https?://#i', $url)) return Json::err($res, 'Gültiger Link erforderlich', 422);
         $note = trim((string)($b['note'] ?? ''));
-        Database::pdo()->prepare('INSERT INTO content_inspiration (account_id, kind, url, note, created_by) VALUES (?, "link", ?, ?, ?)')
-            ->execute([$accountId, mb_substr($url, 0, 1000), $note !== '' ? mb_substr($note, 0, 500) : null, $uid]);
+        $meta = self::fetchOEmbed($url);
+        Database::pdo()->prepare(
+            'INSERT INTO content_inspiration (account_id, kind, url, title, thumb_url, author_name, note, created_by) '
+            . 'VALUES (?, "link", ?, ?, ?, ?, ?, ?)'
+        )->execute([
+            $accountId, mb_substr($url, 0, 1000), $meta['title'] ?? null, $meta['thumb_url'] ?? null, $meta['author_name'] ?? null,
+            $note !== '' ? mb_substr($note, 0, 500) : null, $uid,
+        ]);
         $id = (int)Database::pdo()->lastInsertId();
         return Json::ok($res, ['item' => self::fetchInspiration($id)], 201);
+    }
+
+    /**
+     * Best-effort preview via each platform's public oEmbed endpoint — no API
+     * key needed. TikTok, YouTube and (since Meta's June 2026 policy reversal)
+     * Instagram all support this; anything else (e.g. Pinterest, which has no
+     * public oEmbed) just falls back to a plain link card. The requested host
+     * is always one of these three hardcoded, trusted endpoints — the user's
+     * URL is only ever passed along as a query value, never fetched directly,
+     * so this can't be used for SSRF against arbitrary hosts.
+     */
+    private static function fetchOEmbed(string $url): array
+    {
+        $host = strtolower((string)(parse_url($url, PHP_URL_HOST) ?: ''));
+        $endpoint = null;
+        if (str_contains($host, 'tiktok.com')) $endpoint = 'https://www.tiktok.com/oembed?url=' . urlencode($url);
+        elseif (str_contains($host, 'youtube.com') || str_contains($host, 'youtu.be')) $endpoint = 'https://www.youtube.com/oembed?url=' . urlencode($url) . '&format=json';
+        elseif (str_contains($host, 'instagram.com')) $endpoint = 'https://www.instagram.com/oembed/?url=' . urlencode($url);
+        if ($endpoint === null) return [];
+
+        $ctx = stream_context_create(['http' => [
+            'timeout' => 4, 'ignore_errors' => true,
+            'header' => "User-Agent: Mozilla/5.0 (compatible; NyzaCloud/1.0)\r\n",
+        ]]);
+        $body = @file_get_contents($endpoint, false, $ctx);
+        if ($body === false) return [];
+        $data = json_decode($body, true);
+        if (!is_array($data)) return [];
+        return [
+            'title' => isset($data['title']) ? mb_substr((string)$data['title'], 0, 500) : null,
+            'thumb_url' => isset($data['thumbnail_url']) ? mb_substr((string)$data['thumbnail_url'], 0, 1000) : null,
+            'author_name' => isset($data['author_name']) ? mb_substr((string)$data['author_name'], 0, 255) : null,
+        ];
     }
 
     public static function uploadInspirationImage(Request $req, Response $res): Response
@@ -186,7 +225,8 @@ final class ContentRoutes
     {
         return [
             'id' => (int)$r['id'], 'account_id' => (int)$r['account_id'], 'kind' => $r['kind'],
-            'url' => $r['url'], 'file_name' => $r['file_name'], 'file_mime' => $r['file_mime'],
+            'url' => $r['url'], 'title' => $r['title'] ?? null, 'thumb_url' => $r['thumb_url'] ?? null, 'author_name' => $r['author_name'] ?? null,
+            'file_name' => $r['file_name'], 'file_mime' => $r['file_mime'],
             'note' => $r['note'], 'created_at' => $r['created_at'],
         ];
     }

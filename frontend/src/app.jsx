@@ -6242,15 +6242,24 @@ function ContentInspirationView({ accountId }) {
                 <span onClick={() => del(item)} title="Löschen" style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,0.55)', color: '#fff', borderRadius: '50%', width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 1 }}>{Ic.close(12)}</span>
                 {item.kind === 'image' ? (
                   <img src={API.contentInspImageUrl(item.id)} alt={item.file_name} style={{ width: '100%', height: 140, objectFit: 'cover', display: 'block' }}/>
+                ) : item.thumb_url ? (
+                  <a href={item.url} target="_blank" rel="noreferrer" style={{ display: 'block', position: 'relative', height: 140 }}>
+                    <img src={item.thumb_url} alt={item.title || hostOf(item.url)} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}/>
+                    <span style={{ position: 'absolute', bottom: 6, left: 6, fontSize: 9.5, fontWeight: 700, letterSpacing: 0.3, padding: '2px 7px', borderRadius: 999, background: 'rgba(0,0,0,0.6)', color: '#fff', textTransform: 'uppercase' }}>{hostOf(item.url)}</span>
+                  </a>
                 ) : (
                   <a href={item.url} target="_blank" rel="noreferrer" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, height: 140, color: 'var(--accent)', textDecoration: 'none', padding: 12, textAlign: 'center' }}>
                     {Ic.link(24)}
                     <span style={{ fontSize: 11.5, fontWeight: 600 }}>{hostOf(item.url)}</span>
                   </a>
                 )}
-                {(item.note || item.kind === 'link') && (
-                  <div style={{ padding: '8px 10px', fontSize: 11, color: 'var(--fg-3)' }}>
-                    {item.note || (item.kind === 'link' ? item.url : '')}
+                {(item.title || item.note || item.kind === 'link') && (
+                  <div style={{ padding: '8px 10px' }}>
+                    {item.title && <div style={{ fontSize: 11.5, fontWeight: 540, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{item.title}</div>}
+                    {item.author_name && <div style={{ fontSize: 10.5, color: 'var(--fg-3)', marginTop: 2 }}>@{item.author_name}</div>}
+                    <div style={{ fontSize: 10.5, color: 'var(--fg-3)', marginTop: item.title ? 4 : 0 }}>
+                      {item.note || (!item.title && item.kind === 'link' ? item.url : '')}
+                    </div>
                   </div>
                 )}
               </div>
