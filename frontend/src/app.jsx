@@ -3482,6 +3482,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-snippets' && (
           <SnippetsApp onBack={() => setNav({ name: 'apps' })}/>
         )}
+        {nav.name === 'app-content' && (
+          <ContentApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -4363,6 +4366,7 @@ function AppsView({ onOpenApp }) {
     { id: 'portal',     label: 'Kundenportal', desc: 'Kunden-Zugänge',          icon: Ic.users(26),   grad: 'linear-gradient(135deg, oklch(0.68 0.15 165), oklch(0.6 0.13 200))' },
     { id: 'pdf',        label: 'PDF',          desc: 'Format ändern',           icon: Ic.filePdf(26), grad: 'linear-gradient(135deg, oklch(0.66 0.2 20), oklch(0.58 0.19 8))' },
     { id: 'snippets',   label: 'Textbausteine', desc: 'Vorlagen für Mails',     icon: Ic.fileGen(26), grad: 'linear-gradient(135deg, oklch(0.7 0.14 235), oklch(0.6 0.13 260))' },
+    { id: 'content',    label: 'Content',      desc: 'TikTok & Reels planen',   icon: Ic.camera(26),  grad: 'linear-gradient(135deg, oklch(0.68 0.2 350), oklch(0.6 0.2 300))' },
   ];
   const soon = [];
   const Tile = ({ a, disabled }) => (
@@ -5470,6 +5474,582 @@ function ContactEditModal({ contact, onSave, onClose }) {
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
           <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+// ───── Content app (TikTok/Reels/Shorts Planung) ────────────────────────────
+const CONTENT_STATUSES = [
+  { id: 'idee', label: 'Idee', color: 'oklch(0.6 0.02 260)' },
+  { id: 'script', label: 'Script', color: 'oklch(0.68 0.15 250)' },
+  { id: 'filmen', label: 'Filmen', color: 'oklch(0.7 0.17 30)' },
+  { id: 'schneiden', label: 'Schneiden', color: 'oklch(0.72 0.16 70)' },
+  { id: 'bereit', label: 'Bereit', color: 'oklch(0.72 0.16 200)' },
+  { id: 'geplant', label: 'Geplant', color: 'oklch(0.7 0.17 300)' },
+  { id: 'veroeffentlicht', label: 'Veröffentlicht', color: 'oklch(0.7 0.16 155)' },
+  { id: 'archiv', label: 'Archiv', color: 'oklch(0.55 0.02 260)' },
+];
+const CONTENT_PLATFORMS = [
+  { id: 'tiktok', label: 'TikTok' }, { id: 'instagram', label: 'Instagram' }, { id: 'youtube', label: 'YouTube Shorts' },
+  { id: 'facebook', label: 'Facebook' }, { id: 'threads', label: 'Threads' },
+];
+const CONTENT_STYLES = ['ASMR', 'Story', 'Voiceover', 'Talking Head', 'Cinematic', 'POV', 'Comedy', 'Trend', 'Review', 'Community'];
+const CONTENT_DURATIONS = ['10', '15', '20', '30', '60', '90'];
+const CONTENT_PRIO = { 0: { label: 'Niedrig', color: 'var(--fg-3)' }, 1: { label: 'Normal', color: 'var(--accent)' }, 2: { label: 'Hoch', color: '#ef4444' } };
+const statusMeta = (id) => CONTENT_STATUSES.find((s) => s.id === id) || CONTENT_STATUSES[0];
+const platformLabel = (id) => CONTENT_PLATFORMS.find((p) => p.id === id)?.label || id;
+
+function ContentApp({ onBack }) {
+  const [accounts, setAccounts] = useState(null);
+  const [accountId, setAccountId] = useState('');
+  const [view, setView] = useState('table'); // table | kanban
+  const [ideas, setIdeas] = useState(null);
+  const [categories, setCategories] = useState([]);
+  const [hashtags, setHashtags] = useState([]);
+  const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [catFilter, setCatFilter] = useState('');
+  const [sort, setSort] = useState({ by: 'status', dir: 'asc' });
+  const [editing, setEditing] = useState(null); // idea object, or {} for new
+  const [newAccountOpen, setNewAccountOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(null); // 'categories' | 'hashtags' | 'members'
+  const dragId = useRef(null);
+
+  useEffect(() => {
+    API.contentAccounts().then((d) => {
+      setAccounts(d.accounts || []);
+      if (!accountId && d.accounts?.[0]) setAccountId(String(d.accounts[0].id));
+    }).catch(() => setAccounts([]));
+  }, []);
+
+  const loadIdeas = useCallback(() => {
+    if (!accountId) { setIdeas([]); return; }
+    const opts = {}; if (statusFilter) opts.status = statusFilter; if (catFilter) opts.category_id = catFilter; if (q.trim()) opts.q = q.trim();
+    API.contentIdeas(accountId, opts).then((d) => setIdeas(d.ideas || [])).catch(() => setIdeas([]));
+  }, [accountId, statusFilter, catFilter, q]);
+  useEffect(() => { const t = setTimeout(loadIdeas, 150); return () => clearTimeout(t); }, [loadIdeas]);
+  useEffect(() => {
+    if (!accountId) return;
+    API.contentCategories(accountId).then((d) => setCategories(d.categories || [])).catch(() => setCategories([]));
+    API.contentHashtags(accountId).then((d) => setHashtags(d.hashtags || [])).catch(() => setHashtags([]));
+  }, [accountId]);
+
+  const activeAccount = (accounts || []).find((a) => String(a.id) === String(accountId));
+
+  const createAccount = async (name, seed) => {
+    try {
+      const d = await API.newContentAccount(name, seed);
+      const next = [...(accounts || []), d.account];
+      setAccounts(next); setAccountId(String(d.account.id)); setNewAccountOpen(false);
+      toast('Account angelegt', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
+  const quickCreate = async () => {
+    try { const d = await API.newContentIdea({ account_id: accountId, title: 'Neue Idee' }); setEditing(d.idea); loadIdeas(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const duplicate = async (idea) => {
+    try { await API.duplicateContentIdea(idea.id); toast('Dupliziert', 'success'); loadIdeas(); } catch (e) { toast(e.message, 'error'); }
+  };
+  const remove = async (idea) => {
+    if (!await confirmDialog({ title: 'Idee löschen?', message: `„${idea.title}" wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return;
+    try { await API.deleteContentIdea(idea.id); toast('Gelöscht', 'success'); loadIdeas(); } catch (e) { toast(e.message, 'error'); }
+  };
+  const setStatus = async (idea, status) => {
+    try { await API.updateContentIdea(idea.id, { status }); loadIdeas(); } catch (e) { toast(e.message, 'error'); }
+  };
+
+  const sortRows = (rows) => {
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    const idx = (id) => CONTENT_STATUSES.findIndex((s) => s.id === id);
+    return [...rows].sort((a, b) => {
+      let r = 0;
+      if (sort.by === 'status') r = idx(a.status) - idx(b.status);
+      else if (sort.by === 'priority') r = a.priority - b.priority;
+      else if (sort.by === 'scheduled_at') r = (a.scheduled_at || '9999').localeCompare(b.scheduled_at || '9999');
+      else if (sort.by === 'category') r = (a.category_name || '').localeCompare(b.category_name || '', 'de');
+      else r = (a.title || '').localeCompare(b.title || '', 'de');
+      return r * dir;
+    });
+  };
+  const rows = ideas ? sortRows(ideas) : [];
+  const toggleSort = (by) => setSort((s) => s.by === by ? { by, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { by, dir: 'asc' });
+  const sortIcon = (by) => sort.by === by ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+
+  const th = { textAlign: 'left', fontWeight: 500, padding: '8px 10px', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' };
+
+  return (
+    <>
+      <TopBar crumbs={[{ label: 'Apps', onClick: onBack }, 'Content']}
+        search={q} onSearch={setQ}
+        right={
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ display: 'flex', padding: 3, borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+              <IconBtn active={view === 'table'} onClick={() => setView('table')} size={32} title="Tabelle">{Ic.list(14)}</IconBtn>
+              <IconBtn active={view === 'kanban'} onClick={() => setView('kanban')} size={32} title="Board">{Ic.grid(14)}</IconBtn>
+            </div>
+            <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={quickCreate} disabled={!accountId}>Neue Idee</Btn>
+          </div>
+        }/>
+      <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '20px 32px 80px' }}>
+        {/* Account switcher */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+          {(accounts || []).map((a) => (
+            <button key={a.id} onClick={() => setAccountId(String(a.id))} style={{
+              height: 34, padding: '0 16px', borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 540,
+              background: String(a.id) === String(accountId) ? 'var(--accent-grad)' : 'var(--surface-hi)',
+              color: String(a.id) === String(accountId) ? '#fff' : 'var(--fg-2)',
+              boxShadow: String(a.id) === String(accountId) ? '0 4px 12px -4px var(--accent-glow)' : 'none',
+              border: '1px solid ' + (String(a.id) === String(accountId) ? 'transparent' : 'var(--border)'),
+            }}>{a.name}</button>
+          ))}
+          <IconBtn size={34} title="Neuer Account" onClick={() => setNewAccountOpen(true)} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.plus(15)}</IconBtn>
+          {accountId && (
+            <>
+              <div style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }}/>
+              <IconBtn size={34} title="Kategorien" onClick={() => setManageOpen('categories')} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.folder(14)}</IconBtn>
+              <IconBtn size={34} title="Hashtag-Bibliothek" onClick={() => setManageOpen('hashtags')} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>#</IconBtn>
+              <IconBtn size={34} title="Teilen / Mitglieder" onClick={() => setManageOpen('members')} style={{ border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.users(14)}</IconBtn>
+            </>
+          )}
+        </div>
+
+        {!accountId ? (
+          <EmptyHint icon={Ic.camera(40)} title="Noch kein Content-Account" desc="Lege einen Account an (z. B. für einen Kunden oder eine eigene Marke) und plane Kurzvideos für TikTok, Reels & Shorts."
+            actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setNewAccountOpen(true)}>Neuer Account</Btn>}/>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ height: 34, padding: '0 10px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', fontSize: 12.5, color: 'var(--fg)', cursor: 'pointer', fontFamily: 'inherit' }}>
+                <option value="">Alle Status</option>
+                {CONTENT_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+              <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} style={{ height: 34, padding: '0 10px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', fontSize: 12.5, color: 'var(--fg)', cursor: 'pointer', fontFamily: 'inherit' }}>
+                <option value="">Alle Kategorien</option>
+                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{rows.length} Idee{rows.length === 1 ? '' : 'n'}</span>
+            </div>
+
+            {ideas === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
+              : rows.length === 0 ? <EmptyHint icon={Ic.camera(40)} title="Keine Ideen" desc="Leg deine erste Content-Idee an."
+                  actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={quickCreate}>Neue Idee</Btn>}/>
+              : view === 'table' ? (
+                <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)' }}>
+                  <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse', minWidth: 960 }}>
+                    <thead>
+                      <tr style={{ background: 'var(--surface)', color: 'var(--fg-3)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+                        <th style={th} onClick={() => toggleSort('title')}>Titel{sortIcon('title')}</th>
+                        <th style={th} onClick={() => toggleSort('category')}>Kategorie{sortIcon('category')}</th>
+                        <th style={th} onClick={() => toggleSort('status')}>Status{sortIcon('status')}</th>
+                        <th style={th}>Plattform</th>
+                        <th style={th} onClick={() => toggleSort('priority')}>Priorität{sortIcon('priority')}</th>
+                        <th style={th}>Typ</th>
+                        <th style={th}>Aufnahme</th>
+                        <th style={th}>Hashtags</th>
+                        <th style={th} onClick={() => toggleSort('scheduled_at')}>Geplant für{sortIcon('scheduled_at')}</th>
+                        <th style={th}>Notizen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((idea) => {
+                        const sm = statusMeta(idea.status);
+                        return (
+                          <tr key={idea.id} onClick={() => setEditing(idea)} className="nyza-listrow"
+                            onContextMenu={(e) => { e.preventDefault(); openContextMenu(e.clientX, e.clientY, [
+                              { label: 'Öffnen', icon: Ic.fileGen(15), onClick: () => setEditing(idea) },
+                              { label: 'Duplizieren', icon: Ic.copy(15), onClick: () => duplicate(idea) },
+                              { separator: true },
+                              { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => remove(idea) },
+                            ]); }}
+                            style={{ borderTop: '1px solid var(--border)', cursor: 'pointer' }}>
+                            <td style={{ padding: '9px 10px', fontWeight: 540, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{idea.title}{idea.file_count > 0 && <span style={{ marginLeft: 6, color: 'var(--fg-4)' }}>{Ic.camera(11)}</span>}</td>
+                            <td style={{ padding: '9px 10px', color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>{idea.category_name || '—'}</td>
+                            <td style={{ padding: '9px 10px' }} onClick={(e) => e.stopPropagation()}>
+                              <select value={idea.status} onChange={(e) => setStatus(idea, e.target.value)} style={{ fontSize: 11.5, fontWeight: 700, padding: '3px 8px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: 'color-mix(in oklab, ' + sm.color + ' 20%, transparent)', color: sm.color }}>
+                                {CONTENT_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+                              </select>
+                            </td>
+                            <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>{(idea.platforms || []).map(platformLabel).join(', ') || '—'}</td>
+                            <td style={{ padding: '9px 10px', color: CONTENT_PRIO[idea.priority]?.color }}>{CONTENT_PRIO[idea.priority]?.label}</td>
+                            <td style={{ padding: '9px 10px', color: 'var(--fg-2)' }}>{idea.content_type || '—'}</td>
+                            <td style={{ padding: '9px 10px', color: 'var(--fg-2)' }}>{idea.capture_device === 'kamera' ? 'Kamera' : idea.capture_device === 'handy' ? 'Handy' : '—'}</td>
+                            <td style={{ padding: '9px 10px', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-3)' }}>{idea.hashtags || '—'}</td>
+                            <td style={{ padding: '9px 10px', whiteSpace: 'nowrap' }}>{idea.scheduled_at ? fmtDateShort(idea.scheduled_at) : '—'}</td>
+                            <td style={{ padding: '9px 10px', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--fg-3)' }}>{idea.notes || '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 12 }}>
+                  {CONTENT_STATUSES.map((s) => (
+                    <div key={s.id} onDragOver={(e) => e.preventDefault()}
+                      onDrop={() => { if (dragId.current) { setStatus({ id: dragId.current }, s.id); dragId.current = null; } }}
+                      style={{ width: 250, flexShrink: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-lg)', padding: 10, minHeight: 200 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: '2px 4px' }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }}/>
+                        <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)' }}>{s.label}</span>
+                        <span style={{ fontSize: 11, color: 'var(--fg-4)', marginLeft: 'auto' }}>{rows.filter((r) => r.status === s.id).length}</span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {rows.filter((r) => r.status === s.id).map((idea) => (
+                          <div key={idea.id} draggable onDragStart={() => { dragId.current = idea.id; }} onClick={() => setEditing(idea)}
+                            style={{ padding: '10px 12px', borderRadius: 'var(--r-md)', background: 'var(--surface-hi)', border: '1px solid var(--border)', cursor: 'grab', fontSize: 12.5 }}>
+                            <div style={{ fontWeight: 540, marginBottom: 4 }}>{idea.title}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              {idea.category_name && <span style={{ fontSize: 10.5, color: 'var(--fg-3)' }}>{idea.category_name}</span>}
+                              {(idea.platforms || []).map((p) => <span key={p} style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: 'var(--surface)', color: 'var(--fg-3)' }}>{platformLabel(p)}</span>)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+          </>
+        )}
+      </div>
+
+      {editing && (
+        <ContentIdeaModal idea={editing} accountId={accountId} categories={categories} hashtags={hashtags}
+          onClose={() => setEditing(null)} onChanged={loadIdeas} onDuplicate={duplicate} onDelete={remove}
+          onCategoriesChanged={() => API.contentCategories(accountId).then((d) => setCategories(d.categories || []))}/>
+      )}
+      {newAccountOpen && <ContentAccountModal onCreate={createAccount} onClose={() => setNewAccountOpen(false)}/>}
+      {manageOpen === 'categories' && (
+        <ContentCategoriesModal accountId={accountId} categories={categories} onClose={() => setManageOpen(null)}
+          onChanged={() => API.contentCategories(accountId).then((d) => setCategories(d.categories || []))}/>
+      )}
+      {manageOpen === 'hashtags' && (
+        <ContentHashtagsModal accountId={accountId} hashtags={hashtags} onClose={() => setManageOpen(null)}
+          onChanged={() => API.contentHashtags(accountId).then((d) => setHashtags(d.hashtags || []))}/>
+      )}
+      {manageOpen === 'members' && <ContentMembersModal accountId={accountId} accountName={activeAccount?.name} onClose={() => setManageOpen(null)}/>}
+    </>
+  );
+}
+
+function ContentAccountModal({ onCreate, onClose }) {
+  const [name, setName] = useState('');
+  const [seed, setSeed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!name.trim()) { toast('Name erforderlich', 'error'); return; }
+    setBusy(true);
+    try { await onCreate(name.trim(), seed); } finally { setBusy(false); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 420, borderRadius: 'var(--r-xl)', padding: 24 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.camera(18)}</div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0 }}>Neuer Content-Account</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="z. B. Arcade Room" onKeyDown={(e) => e.key === 'Enter' && submit()}
+          style={{ height: 44, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box', marginBottom: 12 }}/>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: 18 }}>
+          <input type="checkbox" checked={seed} onChange={(e) => setSeed(e.target.checked)} style={{ width: 16, height: 16, marginTop: 2, accentColor: 'var(--accent)', cursor: 'pointer' }}/>
+          <span style={{ fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.4 }}>Mit 50 Beispiel-Content-Ideen starten (Arcade-/Retro-Room-Vorlage, 8 Kategorien) — guter Startpunkt zum Ausprobieren, danach frei anpassbar.</span>
+        </label>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={submit} icon={busy ? Ic.loader(15) : Ic.check(15)}>Anlegen</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+function ContentCategoriesModal({ accountId, categories, onClose, onChanged }) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    try { await API.newContentCategory(accountId, name.trim()); setName(''); onChanged(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const del = async (c) => {
+    if (!await confirmDialog({ title: 'Kategorie löschen?', message: `„${c.name}" wird entfernt (Ideen bleiben, ohne Kategorie).`, confirmLabel: 'Löschen', danger: true })) return;
+    try { await API.deleteContentCategory(c.id); onChanged(); } catch (e) { toast(e.message, 'error'); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 420, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Kategorien</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '16px 24px', display: 'flex', gap: 8 }}>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Neue Kategorie" onKeyDown={(e) => e.key === 'Enter' && add()}
+            style={{ flex: 1, height: 38, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13.5, color: 'var(--fg)', fontFamily: 'inherit' }}/>
+          <Btn variant="primary" size="sm" disabled={busy} onClick={add} icon={Ic.plus(13)}>Add</Btn>
+        </div>
+        <div style={{ padding: '0 24px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {categories.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Keine Kategorien.</div> : categories.map((c) => (
+            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <span style={{ flex: 1, fontSize: 13 }}>{c.name}</span>
+              <IconBtn size={26} title="Löschen" onClick={() => del(c)}>{Ic.trash(13)}</IconBtn>
+            </div>
+          ))}
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+function ContentHashtagsModal({ accountId, hashtags, onClose, onChanged }) {
+  const [tag, setTag] = useState('');
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    if (!tag.trim()) return;
+    setBusy(true);
+    try { await API.newContentHashtag(accountId, tag.trim()); setTag(''); onChanged(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const del = async (h) => { try { await API.deleteContentHashtag(h.id); onChanged(); } catch (e) { toast(e.message, 'error'); } };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 460, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>Hashtag-Bibliothek</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '16px 24px', display: 'flex', gap: 8 }}>
+          <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="z. B. arcaderoom" onKeyDown={(e) => e.key === 'Enter' && add()}
+            style={{ flex: 1, height: 38, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13.5, color: 'var(--fg)', fontFamily: 'inherit' }}/>
+          <Btn variant="primary" size="sm" disabled={busy} onClick={add} icon={Ic.plus(13)}>Add</Btn>
+        </div>
+        <div style={{ padding: '0 24px 20px', overflowY: 'auto', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {hashtags.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Noch keine Hashtags gespeichert.</div> : hashtags.map((h) => (
+            <span key={h.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 6px 5px 12px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', fontSize: 12.5 }}>
+              #{h.tag}
+              <span onClick={() => del(h)} style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex', padding: 3 }}>{Ic.close(11)}</span>
+            </span>
+          ))}
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+function ContentMembersModal({ accountId, accountName, onClose }) {
+  const [members, setMembers] = useState(null);
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = () => API.contentMembers(accountId).then((d) => setMembers(d.members || [])).catch(() => setMembers([]));
+  useEffect(() => { load(); }, [accountId]);
+  const add = async () => {
+    if (!email.trim()) return;
+    setBusy(true);
+    try { await API.addContentMember(accountId, email.trim()); setEmail(''); toast('Hinzugefügt', 'success'); load(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const remove = async (m) => {
+    if (!await confirmDialog({ title: 'Entfernen?', message: `„${m.name}" verliert den Zugriff auf „${accountName}".`, confirmLabel: 'Entfernen', danger: true })) return;
+    try { await API.removeContentMember(accountId, m.user_id); load(); } catch (e) { toast(e.message, 'error'); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 460, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, margin: 0 }}>„{accountName}" teilen</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <div style={{ padding: '16px 24px 8px' }}>
+          <div style={{ fontSize: 12, color: 'var(--fg-3)', marginBottom: 10 }}>Andere Nyza-Cloud-Nutzer per E-Mail einladen — sie sehen dann diesen Account mit allen Ideen, Kategorien und Dateien.</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="mail@beispiel.at" onKeyDown={(e) => e.key === 'Enter' && add()}
+              style={{ flex: 1, height: 38, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13.5, color: 'var(--fg)', fontFamily: 'inherit' }}/>
+            <Btn variant="primary" size="sm" disabled={busy} onClick={add} icon={Ic.plus(13)}>Einladen</Btn>
+          </div>
+        </div>
+        <div style={{ padding: '12px 24px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {members === null ? <div style={{ color: 'var(--fg-3)' }}>{Ic.loader(18)}</div> : members.map((m) => (
+            <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 'var(--r-sm)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'var(--surface-hi)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11.5, fontWeight: 600, flexShrink: 0 }}>{(m.name || '?')[0]?.toUpperCase()}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}{m.is_owner && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--fg-3)', fontWeight: 400 }}>Ersteller</span>}</div>
+                <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>{m.email}</div>
+              </div>
+              {!m.is_owner && <IconBtn size={26} title="Entfernen" onClick={() => remove(m)}>{Ic.close(13)}</IconBtn>}
+            </div>
+          ))}
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
+function ContentIdeaModal({ idea, accountId, categories, hashtags, onClose, onChanged, onDuplicate, onDelete, onCategoriesChanged }) {
+  const [full, setFull] = useState(null);
+  const [f, setF] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [newCat, setNewCat] = useState('');
+  const fileRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+
+  const load = useCallback(() => {
+    if (!idea.id) { setFull(idea); setF(shapeForm(idea)); return; }
+    API.contentIdea(idea.id).then((d) => { setFull(d.idea); setF(shapeForm(d.idea)); }).catch((e) => toast(e.message, 'error'));
+  }, [idea.id]);
+  useEffect(() => { load(); }, [load]);
+
+  function shapeForm(i) {
+    return {
+      title: i.title || '', description: i.description || '', category_id: i.category_id ? String(i.category_id) : '',
+      status: i.status || 'idee', platforms: i.platforms || [], priority: i.priority ?? 1, content_type: i.content_type || '',
+      capture_device: i.capture_device || '', duration: i.duration || '', hook: i.hook || '', script: i.script || '',
+      shotlist: i.shotlist || '', hashtags: i.hashtags || '', music: i.music || '', sound_ideas: i.sound_ideas || '',
+      notes: i.notes || '', scheduled_at: i.scheduled_at || '',
+    };
+  }
+  const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+  const togglePlatform = (p) => setF((s) => ({ ...s, platforms: s.platforms.includes(p) ? s.platforms.filter((x) => x !== p) : [...s.platforms, p] }));
+  const addHashtagFromLib = (tag) => setF((s) => ({ ...s, hashtags: (s.hashtags ? s.hashtags.trim() + ' ' : '') + '#' + tag }));
+
+  const save = async (silent) => {
+    if (!f.title.trim()) { toast('Titel erforderlich', 'error'); return; }
+    setBusy(true);
+    const body = { ...f, title: f.title.trim(), category_id: f.category_id || null, scheduled_at: f.scheduled_at || null };
+    try {
+      if (full?.id) { await API.updateContentIdea(full.id, body); if (!silent) toast('Gespeichert', 'success'); }
+      else { const d = await API.newContentIdea({ account_id: accountId, ...body }); setFull(d.idea); }
+      onChanged();
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+
+  const addCategory = async () => {
+    if (!newCat.trim()) return;
+    try { const d = await API.newContentCategory(accountId, newCat.trim()); set('category_id', String(d.category.id)); setNewCat(''); onCategoriesChanged(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+
+  const onUpload = async (files) => {
+    if (!full?.id) { toast('Erst speichern, dann Dateien hochladen', 'error'); return; }
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) await API.uploadContentFile(full.id, file);
+      load();
+    } catch (e) { toast(e.message, 'error'); } finally { setUploading(false); }
+  };
+  const delFile = async (file) => {
+    if (!await confirmDialog({ title: 'Datei löschen?', message: `„${file.name}" wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return;
+    try { await API.deleteContentFile(file.id); load(); } catch (e) { toast(e.message, 'error'); }
+  };
+
+  if (!f) return null;
+  const fld = { padding: '0 10px', height: 38, borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
+  const ta = { ...fld, height: 'auto', padding: '8px 10px', resize: 'vertical' };
+  const lbl = { fontSize: 11.5, fontWeight: 600, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.3, marginBottom: 5, display: 'block' };
+  const field = (label, node) => <label style={{ display: 'flex', flexDirection: 'column', gap: 0 }}><span style={lbl}>{label}</span>{node}</label>;
+
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 820, borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '16px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <input value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="Titel der Idee"
+            style={{ flex: 1, height: 38, padding: '0 4px', border: 'none', outline: 'none', background: 'none', fontSize: 18, fontWeight: 600, fontFamily: 'var(--font-display)', color: 'var(--fg)' }}/>
+          {full?.id && <IconBtn size={32} title="Duplizieren" onClick={() => { onDuplicate(full); onClose(); }}>{Ic.copy(15)}</IconBtn>}
+          {full?.id && <IconBtn size={32} title="Löschen" onClick={() => { onDelete(full); onClose(); }}>{Ic.trash(15)}</IconBtn>}
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+
+        <div style={{ padding: '18px 22px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Allgemein */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+            {field('Status', <select value={f.status} onChange={(e) => set('status', e.target.value)} style={{ ...fld, cursor: 'pointer' }}>{CONTENT_STATUSES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select>)}
+            {field('Priorität', <select value={f.priority} onChange={(e) => set('priority', Number(e.target.value))} style={{ ...fld, cursor: 'pointer' }}>{[0, 1, 2].map((p) => <option key={p} value={p}>{CONTENT_PRIO[p].label}</option>)}</select>)}
+            {field('Content-Typ (Stil)', <select value={f.content_type} onChange={(e) => set('content_type', e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value="">—</option>{CONTENT_STYLES.map((s) => <option key={s} value={s}>{s}</option>)}</select>)}
+            {field('Dauer', <select value={f.duration} onChange={(e) => set('duration', e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value="">—</option>{CONTENT_DURATIONS.map((d) => <option key={d} value={d}>{d}s</option>)}</select>)}
+            {field('Aufnahme', <select value={f.capture_device} onChange={(e) => set('capture_device', e.target.value)} style={{ ...fld, cursor: 'pointer' }}><option value="">—</option><option value="handy">Handy</option><option value="kamera">Kamera</option></select>)}
+            {field('Geplant für', <input type="date" value={f.scheduled_at} onChange={(e) => set('scheduled_at', e.target.value)} style={fld}/>)}
+          </div>
+
+          {field('Kategorie', (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <select value={f.category_id} onChange={(e) => set('category_id', e.target.value)} style={{ ...fld, flex: 1, cursor: 'pointer' }}>
+                <option value="">— keine —</option>
+                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <input value={newCat} onChange={(e) => setNewCat(e.target.value)} placeholder="+ neue Kategorie" onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCategory())} style={{ ...fld, width: 150 }}/>
+            </div>
+          ))}
+
+          {field('Plattform', (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {CONTENT_PLATFORMS.map((p) => {
+                const on = f.platforms.includes(p.id);
+                return <button key={p.id} type="button" onClick={() => togglePlatform(p.id)} style={{
+                  padding: '6px 12px', borderRadius: 999, fontSize: 12.5, fontFamily: 'inherit', cursor: 'pointer',
+                  border: '1px solid ' + (on ? 'var(--accent)' : 'var(--border)'),
+                  background: on ? 'color-mix(in oklab, var(--accent) 15%, transparent)' : 'var(--surface-hi)',
+                  color: on ? 'var(--accent)' : 'var(--fg-2)',
+                }}>{p.label}</button>;
+              })}
+            </div>
+          ))}
+
+          {field('Beschreibung', <textarea value={f.description} onChange={(e) => set('description', e.target.value)} rows={2} placeholder="Worum geht's?" style={ta}/>)}
+          {field('Hook (erste 3 Sekunden)', <textarea value={f.hook} onChange={(e) => set('hook', e.target.value)} rows={2} placeholder="Wie startet das Video?" style={ta}/>)}
+          {field('Script', <textarea value={f.script} onChange={(e) => set('script', e.target.value)} rows={4} placeholder="Kompletter Sprechertext" style={ta}/>)}
+          {field('Shotlist', <textarea value={f.shotlist} onChange={(e) => set('shotlist', e.target.value)} rows={3} placeholder={'Shot 1: …\nShot 2: …'} style={ta}/>)}
+
+          {field('Hashtags', (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <textarea value={f.hashtags} onChange={(e) => set('hashtags', e.target.value)} rows={2} placeholder="#tag1 #tag2 …" style={ta}/>
+              {hashtags.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {hashtags.map((h) => <span key={h.id} onClick={() => addHashtagFromLib(h.tag)} style={{ cursor: 'pointer', fontSize: 11.5, padding: '3px 9px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', color: 'var(--fg-2)' }}>#{h.tag}</span>)}
+                </div>
+              )}
+            </div>
+          ))}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+            {field('Musik', <input value={f.music} onChange={(e) => set('music', e.target.value)} placeholder="Songtitel / Sound-Link (optional)" style={fld}/>)}
+            {field('Soundideen', <input value={f.sound_ideas} onChange={(e) => set('sound_ideas', e.target.value)} placeholder="natürliche Sounds, Voiceover, Trend, eigene Musik" style={fld}/>)}
+          </div>
+          {field('Notizen', <textarea value={f.notes} onChange={(e) => set('notes', e.target.value)} rows={2} placeholder="Freitext" style={ta}/>)}
+
+          {/* Dateien */}
+          <div>
+            <span style={lbl}>Dateien</span>
+            <div onClick={() => fileRef.current?.click()} onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files?.length) onUpload(e.dataTransfer.files); }}
+              style={{ padding: '16px', borderRadius: 12, border: '1px dashed var(--border-hi)', background: 'var(--surface)', cursor: full?.id ? 'pointer' : 'default', textAlign: 'center', color: 'var(--fg-3)', fontSize: 12.5, opacity: full?.id ? 1 : 0.5 }}>
+              {uploading ? <>{Ic.loader(16)} Lädt hoch…</> : full?.id ? 'Videos/Fotos hierher ziehen oder klicken' : 'Erst speichern, dann Dateien hochladen'}
+            </div>
+            <input ref={fileRef} type="file" multiple accept="video/*,image/*,.raw,.cr2,.nef,.arw" style={{ display: 'none' }} onChange={(e) => { if (e.target.files?.length) onUpload(e.target.files); e.target.value = ''; }}/>
+            {!!full?.files?.length && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 10, marginTop: 12 }}>
+                {full.files.map((file) => (
+                  <div key={file.id} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                    {(file.mime || '').startsWith('image/') ? (
+                      <img src={API.contentFileUrl(file.id)} alt={file.name} style={{ width: '100%', height: 80, objectFit: 'cover', display: 'block' }}/>
+                    ) : (file.mime || '').startsWith('video/') ? (
+                      <video src={API.contentFileUrl(file.id)} style={{ width: '100%', height: 80, objectFit: 'cover', display: 'block' }} muted/>
+                    ) : (
+                      <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-3)' }}>{Ic.fileGen(24)}</div>
+                    )}
+                    <div style={{ fontSize: 10, padding: '4px 6px', color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</div>
+                    <span onClick={() => delFile(file)} title="Löschen" style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.55)', color: '#fff', borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>{Ic.close(11)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Btn variant="ghost" onClick={onClose}>Schließen</Btn>
+          <Btn variant="primary" disabled={busy} onClick={() => save(false)} icon={busy ? Ic.loader(15) : Ic.check(15)}>Speichern</Btn>
         </div>
       </Glass>
     </div>

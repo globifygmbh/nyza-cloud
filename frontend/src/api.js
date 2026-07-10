@@ -289,6 +289,34 @@ export const API = {
   contactsImportCommit:  (file) => { const fd = new FormData(); fd.append('file', file); return request('/api/import/contacts/commit', { method: 'POST', body: fd }); },
   contactsImportWipe:    () => request('/api/import/contacts', { method: 'DELETE' }),
 
+  // Apps · Content (TikTok/Reels/Shorts Planung)
+  contentAccounts:      () => request('/api/content/accounts'),
+  newContentAccount:    (name, seed) => request('/api/content/accounts', { method: 'POST', body: { name, seed: !!seed } }),
+  renameContentAccount: (id, name) => request('/api/content/accounts/' + id, { method: 'PATCH', body: { name } }),
+  deleteContentAccount: (id) => request('/api/content/accounts/' + id, { method: 'DELETE' }),
+  contentMembers:       (id) => request('/api/content/accounts/' + id + '/members'),
+  addContentMember:     (id, email) => request('/api/content/accounts/' + id + '/members', { method: 'POST', body: { email } }),
+  removeContentMember:  (id, userId) => request('/api/content/accounts/' + id + '/members/' + userId, { method: 'DELETE' }),
+
+  contentCategories:    (accountId) => request('/api/content/categories?account_id=' + accountId),
+  newContentCategory:   (accountId, name) => request('/api/content/categories', { method: 'POST', body: { account_id: accountId, name } }),
+  updateContentCategory:(id, body) => request('/api/content/categories/' + id, { method: 'PATCH', body }),
+  deleteContentCategory:(id) => request('/api/content/categories/' + id, { method: 'DELETE' }),
+
+  contentHashtags:      (accountId) => request('/api/content/hashtags?account_id=' + accountId),
+  newContentHashtag:    (accountId, tag) => request('/api/content/hashtags', { method: 'POST', body: { account_id: accountId, tag } }),
+  deleteContentHashtag: (id) => request('/api/content/hashtags/' + id, { method: 'DELETE' }),
+
+  contentIdeas:         (accountId, opts = {}) => { const p = new URLSearchParams({ account_id: accountId, ...opts }); return request('/api/content/ideas?' + p.toString()); },
+  newContentIdea:       (body) => request('/api/content/ideas', { method: 'POST', body }),
+  contentIdea:          (id) => request('/api/content/ideas/' + id),
+  updateContentIdea:    (id, body) => request('/api/content/ideas/' + id, { method: 'PATCH', body }),
+  deleteContentIdea:    (id) => request('/api/content/ideas/' + id, { method: 'DELETE' }),
+  duplicateContentIdea: (id) => request('/api/content/ideas/' + id + '/duplicate', { method: 'POST', body: {} }),
+  uploadContentFile:    (ideaId, file) => { const fd = new FormData(); fd.append('file', file); return request('/api/content/ideas/' + ideaId + '/files', { method: 'POST', body: fd }); },
+  contentFileUrl:       (fileId, download) => url('/api/content/files/' + fileId) + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
+  deleteContentFile:    (fileId) => request('/api/content/files/' + fileId, { method: 'DELETE' }),
+
   // Apps · Zeiten (time tracking)
   timeEntries:   (opts = {}) => { const qs = []; if (opts.from) qs.push('from=' + opts.from); if (opts.to) qs.push('to=' + opts.to); if (opts.user_id) qs.push('user_id=' + opts.user_id); return request('/api/time' + (qs.length ? '?' + qs.join('&') : '')); },
   timeRunning:   () => request('/api/time/running'),
