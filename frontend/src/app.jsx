@@ -518,7 +518,10 @@ const mentionIdsIn = (body, users) => (users || []).filter((u) => u.name && body
 function CommentsPanel({ file, cfg, onClose }) {
   const [items, setItems] = useState(null);
   const [body, setBody] = useState('');
-  const [name, setName] = useState(cfg.defaultName || '');
+  // Guests (askName) type their name once per browser session — persisted so it
+  // survives switching images (this panel remounts per file) without retyping.
+  const [name, setName] = useState(() => cfg.defaultName || (cfg.askName ? (sessionStorage.getItem('nyza.guestName') || '') : ''));
+  const setNamePersist = (v) => { setName(v); if (cfg.askName) { try { sessionStorage.setItem('nyza.guestName', v); } catch {} } };
   const [busy, setBusy] = useState(false);
   const canMention = !cfg.askName;
   const users = useMentionables();
@@ -568,7 +571,7 @@ function CommentsPanel({ file, cfg, onClose }) {
       </div>
       <form onSubmit={send} style={{ padding: 12, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {cfg.askName && (
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Dein Name"
+          <input value={name} onChange={(e) => setNamePersist(e.target.value)} placeholder="Dein Name"
             style={{ height: 36, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}/>
         )}
         {canMention
