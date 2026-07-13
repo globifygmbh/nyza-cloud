@@ -185,7 +185,8 @@ function mdTabStyle(active) {
 // Gallery-capable: pass items[] + startIndex + srcFor()/downloadFor() to enable
 // ←/→ keys, on-screen arrows and touch-swipe between files. Single-file mode
 // (file + src + downloadHref) still works.
-export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onSaveText, comments, info = true, metaFor, onClose }) {
+const LABEL_DEFS = [['green', '#22c55e', 'Freigegeben', '1'], ['yellow', '#eab308', 'Auswahl', '2'], ['red', '#ef4444', 'Überarbeiten', '3']];
+export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onSaveText, comments, info = true, metaFor, onLabel, onClose }) {
   const gallery = Array.isArray(items) && items.length > 0;
   const [idx, setIdx] = useState(startIndex);
   const cur = gallery ? items[idx] : file;
@@ -210,11 +211,18 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
     setIdx((i) => (i + d + items.length) % items.length);
   }, [gallery, items]);
 
+  const setLabel = useCallback((lbl) => { if (onLabel) onLabel(cur, cur.label === lbl ? null : lbl); }, [onLabel, cur]);
+
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-      else if (e.key === 'ArrowRight') go(1);
+      const t = document.activeElement;
+      const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+      if (e.key === 'Escape') { onClose(); return; }
+      if (typing) return; // don't hijack keys while writing a comment etc.
+      if (e.key === 'ArrowRight') go(1);
       else if (e.key === 'ArrowLeft') go(-1);
+      else if (onLabel && (e.key === '1' || e.key === '2' || e.key === '3')) setLabel(LABEL_DEFS[Number(e.key) - 1][0]);
+      else if (onLabel && e.key === '0') onLabel(cur, null);
     };
     document.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
@@ -223,7 +231,7 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = prevOverflow;
     };
-  }, [onClose, go]);
+  }, [onClose, go, onLabel, setLabel, cur]);
 
   const kind = cur.kind || 'doc';
   // Recognise audio by kind OR extension, so files uploaded before the audio
@@ -256,6 +264,14 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
             {humanSize(cur.size)}{cur.mime_type ? ' · ' + cur.mime_type : ''}{gallery && items.length > 1 ? ' · ' + (idx + 1) + ' / ' + items.length : ''}
           </div>
         </div>
+        {onLabel && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: 4, borderRadius: 999, background: 'rgba(255,255,255,0.08)' }}>
+            {LABEL_DEFS.map(([lbl, col, nm, key]) => (
+              <button key={lbl} type="button" onClick={() => setLabel(lbl)} title={nm + ' (' + key + ')'}
+                style={{ width: 24, height: 24, borderRadius: '50%', border: '2px solid ' + (cur.label === lbl ? '#fff' : 'rgba(255,255,255,0.35)'), background: col, cursor: 'pointer', padding: 0 }}/>
+            ))}
+          </div>
+        )}
         {comments && (
           <Btn variant={showComments ? 'primary' : 'glass'} size="sm" icon={Ic.comment(14)} onClick={() => setShowComments((s) => !s)}>Kommentare</Btn>
         )}
@@ -3541,6 +3557,10 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           srcFor={(f) => fileSrc(f.id)} downloadFor={(f) => fileDownload(f.id)}
           metaFor={(f) => API.fileMeta(f.id)}
           onSaveText={async (f, content) => { await API.saveContent(f.id, content); refreshAll(); }}
+          onLabel={(f, label) => {
+            setViewing((v) => v ? { ...v, items: v.items.map((x) => x.id === f.id ? { ...x, label } : x) } : v);
+            onLabelFile(f, label);
+          }}
           comments={{
             load: (f) => API.fileComments(f.id).then((d) => d.comments || []),
             add: (f, { body, mentions }) => API.addFileComment(f.id, body, mentions).then((d) => d.comments || []),
@@ -4001,6 +4021,7 @@ function FolderView({
   const [creatingSubfolder, setCreatingSubfolder] = useState(false);
   const { tags, idsFor, createTag, toggle: toggleTag, removeTag } = useEntityTags('file', refreshTick);
   const [tagFilter, setTagFilter] = useState(null);   // tagId | null
+  const [labelFilter, setLabelFilter] = useState(null); // 'red'|'yellow'|'green' | null
   const [tagTarget, setTagTarget] = useState(null);   // file being tagged
   const [locked, setLocked] = useState(false);
   const [pin, setPin] = useState('');
@@ -4050,7 +4071,10 @@ function FolderView({
   const q = search.toLowerCase();
   const files = sortFiles((data.files || [])
     .filter((f) => !q || f.name.toLowerCase().includes(q))
-    .filter((f) => !tagFilter || idsFor(f.id).includes(tagFilter)), sort);
+    .filter((f) => !tagFilter || idsFor(f.id).includes(tagFilter))
+    .filter((f) => !labelFilter || f.label === labelFilter), sort);
+  const labelCount = {};
+  (data.files || []).forEach((f) => { if (f.label) labelCount[f.label] = (labelCount[f.label] || 0) + 1; });
 
   // Tag filter shows only tags actually used in THIS folder (with local counts).
   const folderTagCount = {};
@@ -4146,6 +4170,23 @@ function FolderView({
               );
             })}
             {tagFilter && <button onClick={() => setTagFilter(null)} style={{ fontSize: 12, color: 'var(--fg-3)', background: 'none', border: 'none', cursor: 'pointer' }}>Filter aufheben</button>}
+          </div>
+        )}
+
+        {folder.kind === 'gallery' && (labelCount.red || labelCount.yellow || labelCount.green) && (
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+            <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>Markierung:</span>
+            {[['green', '#22c55e', 'Freigegeben'], ['yellow', '#eab308', 'Auswahl'], ['red', '#ef4444', 'Überarbeiten']].filter(([lbl]) => labelCount[lbl]).map(([lbl, col, nm]) => {
+              const on = labelFilter === lbl;
+              return (
+                <button key={lbl} onClick={() => setLabelFilter(on ? null : lbl)} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 999,
+                  fontSize: 12, fontWeight: 600, cursor: 'pointer', color: on ? '#fff' : col,
+                  background: on ? col : 'color-mix(in oklab, ' + col + ' 14%, transparent)', border: '1.5px solid ' + col,
+                }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: on ? '#fff' : col }}/>{nm}<span style={{ opacity: 0.75, fontWeight: 500 }}>{labelCount[lbl]}</span></button>
+              );
+            })}
+            {labelFilter && <button onClick={() => setLabelFilter(null)} style={{ fontSize: 12, color: 'var(--fg-3)', background: 'none', border: 'none', cursor: 'pointer' }}>Filter aufheben</button>}
           </div>
         )}
 

@@ -84,6 +84,7 @@ export function PublicSharePage({ token }) {
   const [viewMode, setViewMode] = useState('grid');
   const [selMode, setSelMode] = useState(false);
   const [sel, setSel] = useState(() => new Set());
+  const [labelFilter, setLabelFilter] = useState(null); // 'red'|'yellow'|'green' | null
   const [cols, setCols] = useState(() => (typeof window !== 'undefined' && window.innerWidth <= 600) ? 2 : (typeof window !== 'undefined' && window.innerWidth <= 1000) ? 3 : 4);
   useEffect(() => {
     const h = () => setCols(window.innerWidth <= 600 ? 2 : window.innerWidth <= 1000 ? 3 : 4);
@@ -144,7 +145,10 @@ export function PublicSharePage({ token }) {
   const images = items.filter((f) => f.kind === 'image');
   // Sort media newest-first by capture time (EXIF taken_at) → upload date.
   const capAt = (f) => { const s = f.taken_at || f.created_at || ''; const d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? 0 : d.getTime(); };
-  const media = items.filter((f) => f.kind === 'image' || f.kind === 'video').sort((a, b) => capAt(a) - capAt(b));
+  const mediaAll = items.filter((f) => f.kind === 'image' || f.kind === 'video').sort((a, b) => capAt(a) - capAt(b));
+  const media = mediaAll.filter((f) => !labelFilter || f.label === labelFilter);
+  const labelCount = {};
+  mediaAll.forEach((f) => { if (f.label) labelCount[f.label] = (labelCount[f.label] || 0) + 1; });
 
   // ── Gallery mode: folder name as title, masonry of images in original aspect,
   //    click → fullscreen viewer, bulk download. Perfect for Hochzeit/Geburtstag.
@@ -153,7 +157,7 @@ export function PublicSharePage({ token }) {
       <div style={{ height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
         <ShareHeader owner={data.owner}/>
 
-        {(() => { const cv = data.cover_file_id && media.find((m) => m.id === data.cover_file_id); return cv ? (
+        {(() => { const cv = data.cover_file_id && mediaAll.find((m) => m.id === data.cover_file_id); return cv ? (
           <div style={{ maxWidth: 1400, margin: '0 auto', padding: '24px 28px 0' }}>
             <div style={{ position: 'relative', borderRadius: 'var(--r-xl)', overflow: 'hidden', maxHeight: 420 }}>
               <img src={API.shareFileUrl(token, cv.id, password)} alt={name} style={{ width: '100%', maxHeight: 420, objectFit: 'cover', display: 'block' }}/>
@@ -167,7 +171,7 @@ export function PublicSharePage({ token }) {
           <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 22 }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10 }}>Galerie</div>
-              {!(data.cover_file_id && media.find((m) => m.id === data.cover_file_id)) && <h1 className="nyza-gallery-title" style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 600, letterSpacing: -1.6, margin: 0, lineHeight: 1.0, wordBreak: 'break-word' }}>{name}</h1>}
+              {!(data.cover_file_id && mediaAll.find((m) => m.id === data.cover_file_id)) && <h1 className="nyza-gallery-title" style={{ fontFamily: 'var(--font-display)', fontSize: 52, fontWeight: 600, letterSpacing: -1.6, margin: 0, lineHeight: 1.0, wordBreak: 'break-word' }}>{name}</h1>}
               <p style={{ fontSize: 14, color: 'var(--fg-2)', marginTop: 12 }}>
                 {media.length} {media.length === 1 ? 'Medium' : 'Medien'} · {humanSize(totalSize)}
                 {data.expires_at && <> · bis {new Date(data.expires_at).toLocaleDateString('de-DE')}</>}
@@ -182,6 +186,23 @@ export function PublicSharePage({ token }) {
               </div>
             )}
           </div>
+
+          {data.show_labels !== false && (labelCount.red || labelCount.yellow || labelCount.green) && (
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>Markierung:</span>
+              {[['green', '#22c55e', 'Freigegeben'], ['yellow', '#eab308', 'Auswahl'], ['red', '#ef4444', 'Überarbeiten']].filter(([lbl]) => labelCount[lbl]).map(([lbl, col, nm]) => {
+                const on = labelFilter === lbl;
+                return (
+                  <button key={lbl} onClick={() => setLabelFilter(on ? null : lbl)} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 999,
+                    fontSize: 12.5, fontWeight: 600, cursor: 'pointer', color: on ? '#fff' : col,
+                    background: on ? col : 'color-mix(in oklab, ' + col + ' 14%, transparent)', border: '1.5px solid ' + col,
+                  }}><span style={{ width: 8, height: 8, borderRadius: '50%', background: on ? '#fff' : col }}/>{nm}<span style={{ opacity: 0.75, fontWeight: 500 }}>{labelCount[lbl]}</span></button>
+                );
+              })}
+              {labelFilter && <button onClick={() => setLabelFilter(null)} style={{ fontSize: 12.5, color: 'var(--fg-3)', background: 'none', border: 'none', cursor: 'pointer' }}>Filter aufheben</button>}
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
             {Array.from({ length: cols }, (_, ci) => media.filter((_, i) => i % cols === ci)).map((col, ci) => (
@@ -227,7 +248,7 @@ export function PublicSharePage({ token }) {
           </div>
 
           {/* any non-media files still listed below */}
-          {items.length > media.length && (
+          {items.length > mediaAll.length && (
             <div style={{ marginTop: 32, display: 'grid', gap: 8 }}>
               {items.filter((f) => f.kind !== 'image' && f.kind !== 'video').map((f) => (
                 <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
@@ -245,7 +266,8 @@ export function PublicSharePage({ token }) {
         </div>
 
         {viewing && (() => {
-          const gal = items.filter((f) => ['image', 'video', 'pdf', 'audio'].includes(f.kind) || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(f.name));
+          const gal = items.filter((f) => ['image', 'video', 'pdf', 'audio'].includes(f.kind) || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(f.name))
+            .filter((f) => !labelFilter || f.label === labelFilter || f.id === viewing.id);
           const list = gal.length ? gal : [viewing];
           return (
             <MediaViewer items={list} startIndex={Math.max(0, list.findIndex((x) => x.id === viewing.id))}
@@ -257,6 +279,11 @@ export function PublicSharePage({ token }) {
                 add: (f, { body, author_name }) => API.addShareComment(token, f.id, { body, author_name, password }).then((d) => d.comments || []),
                 askName: true,
               }}
+              onLabel={data.show_labels !== false ? (f, label) => {
+                API.shareSetLabel(token, f.id, label, password).then(() => {
+                  setState((s) => ({ ...s, data: { ...s.data, files: (s.data.files || []).map((x) => x.id === f.id ? { ...x, label } : x) } }));
+                }).catch(() => {});
+              } : undefined}
               onClose={() => setViewing(null)}/>
           );
         })()}
