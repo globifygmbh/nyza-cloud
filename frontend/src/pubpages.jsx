@@ -8,8 +8,28 @@ import {
   humanSize, applyAccent,
 } from './system.jsx';
 import { Dropzone, UploadRow, MediaViewer, UploadReview } from './app.jsx';
-import { uploadClient } from './uploads.js';
+import { uploadClient, withUploadLock } from './uploads.js';
 import { toast } from './toast.jsx';
+
+// Reveals items in batches as the user scrolls near the bottom, instead of
+// mounting hundreds of <img> nodes at once (galleries can hold 400+ photos).
+// Resets to the first batch whenever the underlying list length changes
+// (e.g. a mark filter is toggled).
+function useInfiniteReveal(totalLength, step = 60) {
+  const [count, setCount] = useState(step);
+  const sentinelRef = useRef(null);
+  useEffect(() => { setCount(step); }, [totalLength, step]);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || count >= totalLength) return;
+    const obs = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) setCount((c) => Math.min(totalLength, c + step));
+    }, { rootMargin: '800px' });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [count, totalLength, step]);
+  return [Math.min(count, totalLength), sentinelRef];
+}
 
 export function CenteredLoader() {
   return (
@@ -106,6 +126,28 @@ export function PublicSharePage({ token }) {
   useEffect(() => { load(); }, []);
   useEffect(() => { if (state.data?.owner?.accent) applyAccent(state.data.owner.accent); }, [state.data?.owner?.accent]);
 
+  // Hoisted above the early returns below (data defaults to {} while still
+  // loading/erroring) so useInfiniteReveal is called unconditionally on
+  // every render — required by the Rules of Hooks.
+  const data = state.data || {};
+  const isFolder = !!data.folder;
+  const items = isFolder ? (data.files || []) : (data.file ? [data.file] : []);
+  const name = isFolder ? data.folder.name : (data.file?.name || 'Geteilte Datei');
+  const totalSize = isFolder ? data.total_size : (data.file?.size || 0);
+  const galleryMode = isFolder && data.gallery;
+  const images = items.filter((f) => f.kind === 'image');
+  // Sort media newest-first by capture time (EXIF taken_at) → upload date.
+  const capAt = (f) => { const s = f.taken_at || f.created_at || ''; const d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? 0 : d.getTime(); };
+  const mediaAll = items.filter((f) => f.kind === 'image' || f.kind === 'video').sort((a, b) => capAt(a) - capAt(b));
+  const media = mediaAll.filter((f) => !labelFilter || f.label === labelFilter);
+  const labelCount = {};
+  mediaAll.forEach((f) => { if (f.label) labelCount[f.label] = (labelCount[f.label] || 0) + 1; });
+  // Reveal media thumbnails in batches as the user scrolls — mounting
+  // hundreds of <img> nodes at once on a big gallery folder is what makes
+  // it feel slow, not the actual network transfer (lazy-loading + server
+  // thumbnail caching already handle that part).
+  const [visibleCount, sentinelRef] = useInfiniteReveal(media.length, 60);
+
   if (state.status === 'loading') return <CenteredLoader/>;
   if (state.status === 'notfound') return <CenteredMessage title="Nicht gefunden" desc="Dieser Share-Link existiert nicht oder wurde gelöscht."/>;
   if (state.status === 'expired')  return <CenteredMessage title="Link abgelaufen" desc="Dieser Share-Link ist nicht mehr gültig."/>;
@@ -135,20 +177,6 @@ export function PublicSharePage({ token }) {
       </div>
     );
   }
-
-  const data = state.data;
-  const isFolder = !!data.folder;
-  const items = isFolder ? data.files : (data.file ? [data.file] : []);
-  const name = isFolder ? data.folder.name : (data.file?.name || 'Geteilte Datei');
-  const totalSize = isFolder ? data.total_size : (data.file?.size || 0);
-  const galleryMode = isFolder && data.gallery;
-  const images = items.filter((f) => f.kind === 'image');
-  // Sort media newest-first by capture time (EXIF taken_at) → upload date.
-  const capAt = (f) => { const s = f.taken_at || f.created_at || ''; const d = new Date(String(s).replace(' ', 'T')); return isNaN(d) ? 0 : d.getTime(); };
-  const mediaAll = items.filter((f) => f.kind === 'image' || f.kind === 'video').sort((a, b) => capAt(a) - capAt(b));
-  const media = mediaAll.filter((f) => !labelFilter || f.label === labelFilter);
-  const labelCount = {};
-  mediaAll.forEach((f) => { if (f.label) labelCount[f.label] = (labelCount[f.label] || 0) + 1; });
 
   // ── Gallery mode: folder name as title, masonry of images in original aspect,
   //    click → fullscreen viewer, bulk download. Perfect for Hochzeit/Geburtstag.
@@ -205,7 +233,7 @@ export function PublicSharePage({ token }) {
           )}
 
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-            {Array.from({ length: cols }, (_, ci) => media.filter((_, i) => i % cols === ci)).map((col, ci) => (
+            {Array.from({ length: cols }, (_, ci) => media.slice(0, visibleCount).filter((_, i) => i % cols === ci)).map((col, ci) => (
               <div key={ci} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {col.map((f) => {
                   const picked = sel.has(f.id);
@@ -246,6 +274,7 @@ export function PublicSharePage({ token }) {
               </div>
             ))}
           </div>
+          {visibleCount < media.length && <div ref={sentinelRef} style={{ height: 1 }}/>}
 
           {/* any non-media files still listed below */}
           {items.length > mediaAll.length && (
@@ -522,19 +551,21 @@ export function PublicUploadPage({ token }) {
     }));
     setUploads(items);
     let allOk = true;
-    for (let i = 0; i < files.length; i++) {
-      setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'uploading' } : x));
-      try {
-        await uploadClient(token, files[i],
-          { password, uploaderName: uploaderName || undefined },
-          (p) => setUploads((u) => u.map((x, j) => j === i ? { ...x, pct: p } : x)));
-        setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'done', pct: 1 } : x));
-      } catch (err) {
-        allOk = false;
-        setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'error' } : x));
-        toast(err.message, 'error');
+    await withUploadLock(async () => {
+      for (let i = 0; i < files.length; i++) {
+        setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'uploading' } : x));
+        try {
+          await uploadClient(token, files[i],
+            { password, uploaderName: uploaderName || undefined },
+            (p) => setUploads((u) => u.map((x, j) => j === i ? { ...x, pct: p } : x)));
+          setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'done', pct: 1 } : x));
+        } catch (err) {
+          allOk = false;
+          setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'error' } : x));
+          toast(err.message, 'error');
+        }
       }
-    }
+    });
     if (allOk) setTimeout(() => setDone(true), 600);
   };
 
@@ -542,10 +573,12 @@ export function PublicUploadPage({ token }) {
     if (link.requires_uploader_name && !uploaderName.trim()) { toast('Bitte zuerst deinen Namen eingeben', 'error'); return; }
     setItemBusy((b) => ({ ...b, [key]: true }));
     let ok = 0;
-    for (const f of files) {
-      try { await uploadClient(token, f, { password, uploaderName: uploaderName || undefined, checklistKey: key }); ok++; }
-      catch (err) { toast(err.message, 'error'); }
-    }
+    await withUploadLock(async () => {
+      for (const f of files) {
+        try { await uploadClient(token, f, { password, uploaderName: uploaderName || undefined, checklistKey: key }); ok++; }
+        catch (err) { toast(err.message, 'error'); }
+      }
+    });
     setCounts((c) => ({ ...c, [key]: (c[key] || 0) + ok }));
     setItemBusy((b) => ({ ...b, [key]: false }));
     if (ok) toast(ok + (ok === 1 ? ' Datei' : ' Dateien') + ' hochgeladen', 'success');

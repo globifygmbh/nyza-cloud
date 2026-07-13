@@ -11,6 +11,21 @@ const MAX_RETRIES = 3;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Chrome (and other browsers) freeze/throttle background tabs after a few
+// minutes to save CPU/battery — queued microtasks (XHR onload/onprogress
+// handlers) stop running, so the upload loop stalls until the tab is
+// foregrounded again. Holding a Web Lock is one of the documented
+// exemptions from that freezing, so we keep one held for the duration of
+// the upload run. Falls back to running unguarded where unsupported.
+export function withUploadLock(fn) {
+  if (typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) return fn();
+  try {
+    return navigator.locks.request('nyza-upload', fn);
+  } catch {
+    return fn();
+  }
+}
+
 async function appendWithRetry(appendFn, sid, blob, onChunkProgress) {
   let attempt = 0;
   for (;;) {

@@ -146,6 +146,11 @@ input, textarea {
 .nyza-masonry .gallery-label-btns { z-index: 3; }
 .nyza-masonry > div:hover .gallery-label-btns { opacity: 1 !important; }
 @media (hover: none) { .gallery-label-btns { opacity: 1 !important; } }
+/* Touch devices show the mark buttons permanently (no hover) — keep them small. */
+@media (hover: none) {
+  .gallery-label-btns { padding: 3px !important; gap: 4px !important; }
+  .gallery-label-btns button { width: 16px !important; height: 16px !important; border-width: 1.5px !important; }
+}
 
 /* Owner gallery kebab — reveal on hover (desktop), always shown on touch */
 .gallery-kebab { opacity: 0; transition: opacity .18s; }

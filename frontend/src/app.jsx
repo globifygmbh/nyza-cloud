@@ -9,7 +9,7 @@ import {
 } from './system.jsx';
 import { toast } from './toast.jsx';
 import { confirmDialog, openContextMenu } from './overlays.jsx';
-import { uploadOwner } from './uploads.js';
+import { uploadOwner, withUploadLock } from './uploads.js';
 
 // Heavy CodeMirror editor — only fetched when a text file is actually opened.
 const CodeEditor = lazy(() => import('./editor.jsx'));
@@ -187,6 +187,7 @@ function mdTabStyle(active) {
 // (file + src + downloadHref) still works.
 const LABEL_DEFS = [['green', '#22c55e', 'Freigegeben', '1'], ['yellow', '#eab308', 'Auswahl', '2'], ['red', '#ef4444', 'Überarbeiten', '3']];
 export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onSaveText, comments, info = true, metaFor, onLabel, onClose }) {
+  const isMobile = useIsMobile();
   const gallery = Array.isArray(items) && items.length > 0;
   const [idx, setIdx] = useState(startIndex);
   const cur = gallery ? items[idx] : file;
@@ -242,7 +243,7 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
   const onTouchEnd = (e) => {
     if (touch.current == null) return;
     const dx = e.changedTouches[0].clientX - touch.current;
-    if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1);
+    if (Math.abs(dx) > 50) go(dx < 0 ? -1 : 1);
     touch.current = null;
   };
 
@@ -255,40 +256,40 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
       animation: 'fadeIn 0.2s ease',
     }}>
       <div onClick={stop} style={{
-        height: 60, padding: '0 24px', display: 'flex', alignItems: 'center', gap: 16,
-        color: '#fff', flexShrink: 0,
+        minHeight: 60, padding: isMobile ? '10px 12px' : '0 24px', display: 'flex', flexWrap: 'wrap', alignItems: 'center',
+        gap: isMobile ? 8 : 16, rowGap: 8, color: '#fff', flexShrink: 0,
       }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: isMobile ? '1 1 100%' : 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cur.name}</div>
           <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
             {humanSize(cur.size)}{cur.mime_type ? ' · ' + cur.mime_type : ''}{gallery && items.length > 1 ? ' · ' + (idx + 1) + ' / ' + items.length : ''}
           </div>
         </div>
         {onLabel && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: 4, borderRadius: 999, background: 'rgba(255,255,255,0.08)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 4 : 6, padding: isMobile ? 3 : 4, borderRadius: 999, background: 'rgba(255,255,255,0.08)' }}>
             {LABEL_DEFS.map(([lbl, col, nm, key]) => (
               <button key={lbl} type="button" onClick={() => setLabel(lbl)} title={nm + ' (' + key + ')'}
-                style={{ width: 24, height: 24, borderRadius: '50%', border: '2px solid ' + (cur.label === lbl ? '#fff' : 'rgba(255,255,255,0.35)'), background: col, cursor: 'pointer', padding: 0 }}/>
+                style={{ width: isMobile ? 18 : 24, height: isMobile ? 18 : 24, borderRadius: '50%', border: (isMobile ? '1.5px' : '2px') + ' solid ' + (cur.label === lbl ? '#fff' : 'rgba(255,255,255,0.35)'), background: col, cursor: 'pointer', padding: 0, flexShrink: 0 }}/>
             ))}
           </div>
         )}
         {comments && (
-          <Btn variant={showComments ? 'primary' : 'glass'} size="sm" icon={Ic.comment(14)} onClick={() => setShowComments((s) => !s)}>Kommentare</Btn>
+          <Btn variant={showComments ? 'primary' : 'glass'} size="sm" icon={Ic.comment(14)} onClick={() => setShowComments((s) => !s)}>{isMobile ? '' : 'Kommentare'}</Btn>
         )}
         {info && (
           <button onClick={() => setShowInfo((s) => !s)} title="Infos" style={{
-            width: 36, height: 36, borderRadius: 'var(--r-sm)', cursor: 'pointer',
+            width: 36, height: 36, borderRadius: 'var(--r-sm)', cursor: 'pointer', flexShrink: 0,
             background: showInfo ? 'var(--accent-grad)' : 'rgba(255,255,255,0.08)', border: 'none',
             color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontFamily: 'var(--font-display)',
           }}>i</button>
         )}
         {curDl && (
           <a href={curDl} download={cur.name} style={{ display: 'inline-flex', textDecoration: 'none' }}>
-            <Btn variant="glass" size="sm" icon={Ic.download(14)}>Download</Btn>
+            <Btn variant="glass" size="sm" icon={Ic.download(14)}>{isMobile ? '' : 'Download'}</Btn>
           </a>
         )}
         <button onClick={onClose} title="Schließen (Esc)" style={{
-          width: 36, height: 36, borderRadius: 'var(--r-sm)',
+          width: 36, height: 36, borderRadius: 'var(--r-sm)', flexShrink: 0,
           background: 'rgba(255,255,255,0.08)', border: 'none', cursor: 'pointer',
           color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         }}>{Ic.close(18)}</button>
@@ -2198,7 +2199,11 @@ export function UploadProgress({ items, onClose, onCancel }) {
       const now = Date.now();
       if (sampleRef.current) {
         const dt = (now - sampleRef.current.t) / 1000;
-        if (dt >= 0.7) { const sp = (L.done - sampleRef.current.done) / dt; sampleRef.current = { t: now, done: L.done }; if (sp > 1) setEta((L.total - L.done) / sp); }
+        // A large gap means this tick itself got throttled/delayed (e.g. tab
+        // was hidden) — averaging speed across it would produce a bogus
+        // near-zero rate and an ETA in the hours. Just resync instead.
+        if (dt >= 0.7 && dt <= 10) { const sp = (L.done - sampleRef.current.done) / dt; sampleRef.current = { t: now, done: L.done }; if (sp > 1) setEta((L.total - L.done) / sp); }
+        else if (dt > 10) sampleRef.current = { t: now, done: L.done };
       } else sampleRef.current = { t: now, done: L.done };
     }, 1000);
     return () => clearInterval(id);
@@ -3232,23 +3237,27 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const pumpUploads = async () => {
     if (uploadWorking.current) return;
     uploadWorking.current = true;
-    try {
-      for (;;) {
-        const next = uploadsRef.current.find((x) => x.status === 'queued');
-        if (!next) break;
-        const ctrl = new AbortController();
-        uploadCtrls.current[next.id] = ctrl;
-        patchUpload(next.id, { status: 'uploading' });
-        try {
-          await uploadOwner(next.file, next.folderId, (p) => patchUpload(next.id, { pct: p }), ctrl.signal, next.mode);
-          patchUpload(next.id, { status: 'done', pct: 1, file: null });
-          refreshAll();
-        } catch (err) {
-          if (err && err.code === 'aborted') patchUpload(next.id, { status: 'canceled', file: null });
-          else { patchUpload(next.id, { status: 'error', file: null }); toast(err.message, 'error'); }
-        } finally { delete uploadCtrls.current[next.id]; }
-      }
-    } finally { uploadWorking.current = false; }
+    // Held for the whole run so the tab doesn't get frozen/throttled if the
+    // user switches away mid-upload (see withUploadLock).
+    await withUploadLock(async () => {
+      try {
+        for (;;) {
+          const next = uploadsRef.current.find((x) => x.status === 'queued');
+          if (!next) break;
+          const ctrl = new AbortController();
+          uploadCtrls.current[next.id] = ctrl;
+          patchUpload(next.id, { status: 'uploading' });
+          try {
+            await uploadOwner(next.file, next.folderId, (p) => patchUpload(next.id, { pct: p }), ctrl.signal, next.mode);
+            patchUpload(next.id, { status: 'done', pct: 1, file: null });
+            refreshAll();
+          } catch (err) {
+            if (err && err.code === 'aborted') patchUpload(next.id, { status: 'canceled', file: null });
+            else { patchUpload(next.id, { status: 'error', file: null }); toast(err.message, 'error'); }
+          } finally { delete uploadCtrls.current[next.id]; }
+        }
+      } finally { uploadWorking.current = false; }
+    });
   };
 
   const cancelUpload = (id) => {
