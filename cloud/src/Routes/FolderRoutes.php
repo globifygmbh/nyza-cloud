@@ -39,25 +39,18 @@ final class FolderRoutes
 
         // ?all=1 → flat list of every folder (used by the move-target picker).
         if (isset($qp['all'])) {
-            $stmt = $pdo->prepare(
-                'SELECT f.*, '
-                . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count '
-                . 'FROM folders f WHERE user_id = ? AND deleted_at IS NULL ORDER BY name'
-            );
+            $stmt = $pdo->prepare('SELECT * FROM folders WHERE user_id = ? AND deleted_at IS NULL ORDER BY name');
             $stmt->execute([$uid]);
-            return Json::ok($res, ['folders' => array_map([self::class, 'decorate'], $stmt->fetchAll())]);
+            return Json::ok($res, ['folders' => self::decorateWithStats($stmt->fetchAll(), $uid)]);
         }
 
         $parent = $qp['parent_id'] ?? null;
-        $sql = 'SELECT f.*, '
-             . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
-             . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
-             . 'FROM folders f WHERE user_id = ? AND deleted_at IS NULL '
+        $sql = 'SELECT * FROM folders WHERE user_id = ? AND deleted_at IS NULL '
              . ($parent === null ? 'AND parent_id IS NULL ' : 'AND parent_id = ? ')
              . 'ORDER BY pinned DESC, updated_at DESC';
         $stmt = $pdo->prepare($sql);
         $stmt->execute($parent === null ? [$uid] : [$uid, (int)$parent]);
-        return Json::ok($res, ['folders' => array_map([self::class, 'decorate'], $stmt->fetchAll())]);
+        return Json::ok($res, ['folders' => self::decorateWithStats($stmt->fetchAll(), $uid)]);
     }
 
     /** Strip the lock hash from a folder row and expose a `locked` boolean. */
@@ -66,6 +59,65 @@ final class FolderRoutes
         $f['locked'] = !empty($f['lock_hash']);
         unset($f['lock_hash']);
         return $f;
+    }
+
+    /** decorate() each row plus merge in its recursive item_count/total_size. */
+    private static function decorateWithStats(array $rows, int $ownerUid): array
+    {
+        $stats = self::recursiveStats($ownerUid);
+        return array_map(function ($f) use ($stats) {
+            $s = $stats[(int)$f['id']] ?? ['item_count' => 0, 'total_size' => 0];
+            return array_merge(self::decorate($f), $s);
+        }, $rows);
+    }
+
+    /**
+     * Recursive (folder + every live descendant folder) file count/size for
+     * every live folder owned by $ownerUid, computed in one pass over the
+     * whole tree — avoids per-folder correlated subqueries and WITH RECURSIVE
+     * (needs MySQL 8.0+ / MariaDB 10.2.2+, see delete() below for why that
+     * matters here).
+     * @return array<int, array{item_count:int, total_size:int}>
+     */
+    private static function recursiveStats(int $ownerUid): array
+    {
+        $pdo = Database::pdo();
+        $direct = [];
+        $stmt = $pdo->prepare(
+            'SELECT folder_id, COUNT(*) AS c, COALESCE(SUM(size),0) AS s FROM files '
+            . 'WHERE user_id = ? AND deleted_at IS NULL AND folder_id IS NOT NULL GROUP BY folder_id'
+        );
+        $stmt->execute([$ownerUid]);
+        foreach ($stmt->fetchAll() as $r) { $direct[(int)$r['folder_id']] = [(int)$r['c'], (int)$r['s']]; }
+
+        $children = [];
+        $ids = [];
+        $fstmt = $pdo->prepare('SELECT id, parent_id FROM folders WHERE user_id = ? AND deleted_at IS NULL');
+        $fstmt->execute([$ownerUid]);
+        foreach ($fstmt->fetchAll() as $r) {
+            $id = (int)$r['id'];
+            $ids[] = $id;
+            $pid = $r['parent_id'] !== null ? (int)$r['parent_id'] : 0;
+            $children[$pid][] = $id;
+        }
+
+        $memo = [];
+        $compute = function (int $id) use (&$compute, &$memo, $children, $direct): array {
+            if (isset($memo[$id])) return $memo[$id];
+            $c = $direct[$id][0] ?? 0;
+            $s = $direct[$id][1] ?? 0;
+            foreach ($children[$id] ?? [] as $childId) {
+                [$cc, $cs] = $compute($childId);
+                $c += $cc;
+                $s += $cs;
+            }
+            return $memo[$id] = [$c, $s];
+        };
+        foreach ($ids as $id) $compute($id);
+
+        $out = [];
+        foreach ($memo as $id => [$c, $s]) { $out[$id] = ['item_count' => $c, 'total_size' => $s]; }
+        return $out;
     }
 
     public static function create(Request $req, Response $res): Response
@@ -120,18 +172,18 @@ final class FolderRoutes
         // shared folder shows what's really inside it. deleted_at still filtered.
         $files = Database::pdo()->prepare('SELECT * FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, created_at DESC');
         $files->execute([$id]);
-        $sub = Database::pdo()->prepare(
-            'SELECT f.*, '
-            . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
-            . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
-            . 'FROM folders f WHERE parent_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC'
-        );
+        $sub = Database::pdo()->prepare('SELECT * FROM folders WHERE parent_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC');
         $sub->execute([$id]);
+        // Counts are recursive (include nested subfolders' files), so a folder
+        // that only contains subfolders still shows what's really inside it.
+        $stats = self::recursiveStats((int)$folder['user_id']);
         return Json::ok($res, [
-            'folder' => self::decorate($folder),
+            'folder' => array_merge(self::decorate($folder), $stats[$id] ?? ['item_count' => 0, 'total_size' => 0]),
             'path' => self::ancestorPath($id),
             'files' => $files->fetchAll(),
-            'subfolders' => array_map([self::class, 'decorate'], $sub->fetchAll()),
+            'subfolders' => array_map(function ($f) use ($stats) {
+                return array_merge(self::decorate($f), $stats[(int)$f['id']] ?? ['item_count' => 0, 'total_size' => 0]);
+            }, $sub->fetchAll()),
         ]);
     }
 
@@ -156,12 +208,9 @@ final class FolderRoutes
      *  access check has already authorised the viewer). */
     private static function fetchAny(int $id): ?array
     {
-        $stmt = Database::pdo()->prepare(
-            'SELECT f.*, '
-            . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
-            . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
-            . 'FROM folders f WHERE id = ? AND deleted_at IS NULL'
-        );
+        // item_count/total_size are filled in by the caller (show() merges in
+        // recursiveStats() once it knows the folder's actual owner).
+        $stmt = Database::pdo()->prepare('SELECT * FROM folders WHERE id = ? AND deleted_at IS NULL');
         $stmt->execute([$id]);
         $f = $stmt->fetch();
         return $f ?: null;
@@ -394,14 +443,11 @@ final class FolderRoutes
 
     public static function fetchOne(int $uid, int $id): ?array
     {
-        $stmt = Database::pdo()->prepare(
-            'SELECT f.*, '
-            . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
-            . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
-            . 'FROM folders f WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
-        );
+        $stmt = Database::pdo()->prepare('SELECT * FROM folders WHERE id = ? AND user_id = ? AND deleted_at IS NULL');
         $stmt->execute([$id, $uid]);
         $f = $stmt->fetch();
-        return $f ?: null;
+        if (!$f) return null;
+        $stats = self::recursiveStats($uid)[$id] ?? ['item_count' => 0, 'total_size' => 0];
+        return array_merge($f, $stats);
     }
 }
