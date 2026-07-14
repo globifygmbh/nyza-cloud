@@ -2064,6 +2064,56 @@ function SelectionBar({ count, onZip, onMove, onDelete, onClear, busy }) {
   );
 }
 
+// Drag-and-drop of an OS folder only exposes its contents via the
+// DataTransferItem FileSystemEntry API (dataTransfer.files just contains an
+// unreadable, unopenable stand-in "file" for it). We walk any dropped
+// directories recursively and stamp webkitRelativePath onto each File so the
+// result looks exactly like what a native <input webkitdirectory> picker
+// produces — runFolderUpload() already knows how to recreate that structure.
+async function readDataTransferFiles(dataTransfer) {
+  const items = dataTransfer && dataTransfer.items;
+  if (!items || !items.length || typeof items[0].webkitGetAsEntry !== 'function') {
+    return Array.from((dataTransfer && dataTransfer.files) || []);
+  }
+  const topEntries = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.kind !== 'file') continue;
+    const entry = it.webkitGetAsEntry();
+    if (entry) topEntries.push(entry);
+    else { const f = it.getAsFile(); if (f) topEntries.push(f); }
+  }
+  const readDir = (dirEntry) => new Promise((resolve, reject) => {
+    const reader = dirEntry.createReader();
+    const all = [];
+    // readEntries() only returns a batch at a time — must keep calling until empty.
+    const readBatch = () => reader.readEntries((batch) => {
+      if (!batch.length) { resolve(all); return; }
+      all.push(...batch);
+      readBatch();
+    }, reject);
+    readBatch();
+  });
+  const fileFromEntry = (fileEntry) => new Promise((resolve, reject) => fileEntry.file(resolve, reject));
+  const out = [];
+  const walk = async (entry, path) => {
+    if (entry instanceof File) { out.push(entry); return; }
+    if (entry.isFile) {
+      const file = await fileFromEntry(entry);
+      const relPath = path + entry.name;
+      if (relPath.includes('/')) {
+        try { Object.defineProperty(file, 'webkitRelativePath', { value: relPath, configurable: true }); } catch {}
+      }
+      out.push(file);
+    } else if (entry.isDirectory) {
+      const children = await readDir(entry);
+      for (const child of children) await walk(child, path + entry.name + '/');
+    }
+  };
+  for (const e of topEntries) await walk(e, '');
+  return out;
+}
+
 // ───── Dropzone ────────────────────────────────────────────────────────────
 export function Dropzone({ onFiles, label = 'Dateien hierher ziehen', sub = 'oder klicken zum Auswählen', children, big = false }) {
   const [over, setOver] = useState(false);
@@ -3279,36 +3329,48 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
     const fid = (typeof folderId === 'number' || (typeof folderId === 'string' && folderId !== '')) ? folderId : null;
     const files = filesArr && (filesArr instanceof FileList || Array.isArray(filesArr)) && filesArr.length ? Array.from(filesArr) : null;
     uploadTargetFolder.current = fid;
-    if (files) setReviewFiles(files);
+    if (files) {
+      // Dropped/selected folders carry webkitRelativePath ("Sub/foo.png") —
+      // recreate the folder structure instead of uploading the loose files.
+      if (files.some((f) => f.webkitRelativePath)) runFolderUpload(files, fid);
+      else setReviewFiles(files);
+    }
     else triggerUpload(fid);
   };
 
   const runFolderUpload = async (filesArr, targetFolderId = null) => {
+    // New subfolders inherit the tone of the folder they're uploaded into,
+    // so a dropped tree doesn't come out looking randomly/inconsistently
+    // colored — falls back to the app default when uploading at the root.
+    let parentTone = 'violet';
+    if (targetFolderId) {
+      try { const d = await API.folder(targetFolderId); parentTone = d.folder?.tone || 'violet'; } catch {}
+    }
     const folderMap = {};
-    const sorted = [...filesArr].sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath));
+    const sorted = [...filesArr].sort((a, b) => (a.webkitRelativePath || '').localeCompare(b.webkitRelativePath || ''));
     const dirPaths = new Set();
     for (const f of sorted) {
-      const parts = f.webkitRelativePath.split('/');
+      const parts = (f.webkitRelativePath || '').split('/');
       for (let i = 1; i < parts.length; i++) {
         dirPaths.add(parts.slice(0, i).join('/'));
       }
     }
     const sortedDirs = [...dirPaths].sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
-    toast('Erstelle Ordnerstruktur…', 'info');
+    if (sortedDirs.length) toast('Erstelle Ordnerstruktur…', 'info');
     for (const dirPath of sortedDirs) {
       const parts = dirPath.split('/');
       const name = parts[parts.length - 1];
       const parentPath = parts.slice(0, -1).join('/');
       const parentId = parentPath ? folderMap[parentPath] : targetFolderId;
       try {
-        const d = await API.newFolder({ name, parent_id: parentId, kind: 'normal', tone: 'violet' });
+        const d = await API.newFolder({ name, parent_id: parentId, kind: 'normal', tone: parentTone });
         folderMap[dirPath] = d.folder.id;
       } catch (e) {
         toast(`Ordner „${name}" konnte nicht erstellt werden`, 'error');
       }
     }
     enqueueUploads(sorted.map((f) => {
-      const parts = f.webkitRelativePath.split('/');
+      const parts = (f.webkitRelativePath || '').split('/');
       const dirPath = parts.slice(0, -1).join('/');
       return { file: f, folderId: dirPath ? folderMap[dirPath] : targetFolderId };
     }));
@@ -3397,7 +3459,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onUnlockFolder={(f) => setLockTarget({ folder: f, mode: 'remove' })}
             onMoveFiles={(ids) => openMove({ kind: 'files', ids })}
             onDeleteFolder={async (f) => { if (!await confirmDialog({ title: 'Ordner in den Papierkorb?', message: `„${f.name}" und alle enthaltenen Dateien werden in den Papierkorb verschoben. Du kannst sie dort wiederherstellen.`, confirmLabel: 'In Papierkorb', danger: true })) return; try { await API.deleteFolder(f.id); toast('Ordner in den Papierkorb', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
-            onNewFolder={async (name, kind, tone, templateId) => { try { const d = await API.newFolder({ name, kind, tone }); if (templateId) { const tpls = JSON.parse(localStorage.getItem('nyza.folderTemplates') || '[]'); const tpl = tpls.find((t) => t.id === templateId); if (tpl) { for (const sub of (tpl.folders || [])) { await API.newFolder({ name: sub, kind: 'normal', tone: 'violet', parent_id: d.folder.id }).catch(() => {}); } } } toast('Ordner erstellt', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
+            onNewFolder={async (name, kind, tone, templateId) => { try { const d = await API.newFolder({ name, kind, tone }); if (templateId) { const tpls = JSON.parse(localStorage.getItem('nyza.folderTemplates') || '[]'); const tpl = tpls.find((t) => t.id === templateId); if (tpl) { for (const sub of (tpl.folders || [])) { await API.newFolder({ name: sub, kind: 'normal', tone, parent_id: d.folder.id }).catch(() => {}); } } } toast('Ordner erstellt', 'success'); refreshAll(); } catch (e) { toast(e.message, 'error'); } }}
             onUpload={(fid, fs) => handleUpload(fid, fs)}
             onNewText={() => newText(null)}
             onUploadLink={() => { setUploadLinkFolder(null); setShowUploadLinkModal(true); }}
@@ -3614,7 +3676,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
                 const tmpl = templates.find((t) => t.id === templateId);
                 if (tmpl) {
                   for (const sub of tmpl.folders) {
-                    try { await API.newFolder({ name: sub, kind: 'normal', tone: 'violet', parent_id: d.folder.id }); } catch {}
+                    try { await API.newFolder({ name: sub, kind: 'normal', tone, parent_id: d.folder.id }); } catch {}
                   }
                 }
               }
@@ -4150,7 +4212,7 @@ function FolderView({
       <div
         onDragOver={(e) => { e.preventDefault(); setOver(true); }}
         onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); setOver(false); const fs = Array.from(e.dataTransfer.files || []); if (fs.length) onUpload(folder.id, fs); }}
+        onDrop={(e) => { e.preventDefault(); setOver(false); const dt = e.dataTransfer; readDataTransferFiles(dt).then((fs) => { if (fs.length) onUpload(folder.id, fs); }); }}
         onContextMenu={bgCtx}
         data-scroll style={{ flex: 1, overflow: 'auto', padding: '24px 32px 80px', position: 'relative', outline: over ? '2px dashed var(--accent)' : 'none', outlineOffset: -12 }}>
         <div style={{ marginBottom: 22 }}>
