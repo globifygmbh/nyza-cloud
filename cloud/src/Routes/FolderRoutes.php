@@ -120,7 +120,12 @@ final class FolderRoutes
         // shared folder shows what's really inside it. deleted_at still filtered.
         $files = Database::pdo()->prepare('SELECT * FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, created_at DESC');
         $files->execute([$id]);
-        $sub = Database::pdo()->prepare('SELECT * FROM folders WHERE parent_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC');
+        $sub = Database::pdo()->prepare(
+            'SELECT f.*, '
+            . '  (SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
+            . '  (SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
+            . 'FROM folders f WHERE parent_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC'
+        );
         $sub->execute([$id]);
         return Json::ok($res, [
             'folder' => self::decorate($folder),
