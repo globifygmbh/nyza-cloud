@@ -196,6 +196,7 @@ export const API = {
   assignTag:   (id, type, entityId) => request('/api/tags/' + id + '/assign', { method: 'POST', body: { type, id: entityId } }),
   unassignTag: (id, type, entityId) => request('/api/tags/' + id + '/unassign', { method: 'POST', body: { type, id: entityId } }),
   moveFile:    (id, folderId) => request('/api/files/' + id, { method: 'PATCH', body: { folder_id: folderId } }),
+  renameFile:  (id, name) => request('/api/files/' + id, { method: 'PATCH', body: { name } }),
   moveFiles:   (ids, folderId) => request('/api/files/move', { method: 'POST', body: { file_ids: ids, folder_id: folderId } }),
   fileComments:    (id) => request('/api/files/' + id + '/comments'),
   addFileComment:  (id, body, mentions) => request('/api/files/' + id + '/comments', { method: 'POST', body: { body, mentions } }),

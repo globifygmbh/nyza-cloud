@@ -2819,6 +2819,42 @@ export function RenameFolderModal({ folder, onClose, onSaved }) {
   );
 }
 
+export function RenameFileModal({ file, onClose, onSaved }) {
+  const [name, setName] = useState(file.name);
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef(null);
+  // Pre-select the name up to the last dot so typing over it doesn't touch
+  // the extension — matches Finder/Explorer rename behavior.
+  useEffect(() => {
+    const el = inputRef.current; if (!el) return;
+    const dot = file.name.lastIndexOf('.');
+    el.focus(); el.setSelectionRange(0, dot > 0 ? dot : file.name.length);
+  }, []);
+  const save = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    try { await API.renameFile(file.id, name.trim()); toast('Gespeichert', 'success'); onSaved && onSaved(); onClose(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="nyza-modal-backdrop" onClick={onClose}>
+      <Glass style={{ width: '100%', maxWidth: 440, borderRadius: 'var(--r-xl)', padding: 28 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px var(--accent-glow)' }}><FileIcon kind={file.kind || 'doc'} size={18} tint={file.hue}/></div>
+          <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0, letterSpacing: -0.3 }}>Datei umbenennen</h2>
+          <IconBtn size={32} onClick={onClose}>{Ic.close(16)}</IconBtn>
+        </div>
+        <input ref={inputRef} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()}
+          style={{ width: '100%', height: 42, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)' }}/>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+          <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>
+          <Btn variant="primary" disabled={busy || !name.trim()} onClick={save} icon={busy ? Ic.loader(15) : null}>Speichern</Btn>
+        </div>
+      </Glass>
+    </div>
+  );
+}
+
 // Set or remove a folder's vault password.
 function FolderLockModal({ folder, mode, onClose, onDone }) {
   const [pw, setPw] = useState('');
@@ -3214,6 +3250,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const [showProfile, setShowProfile] = useState(false);
   const [showSecurity, setShowSecurity] = useState(false);
   const [renameFolderTarget, setRenameFolderTarget] = useState(null);
+  const [renameFileTarget, setRenameFileTarget] = useState(null);
   const [lockTarget, setLockTarget] = useState(null); // { folder, mode }
   const [moveTarget, setMoveTarget] = useState(null); // { kind:'folder'|'files', folder?, ids? }
   const [allFolders, setAllFolders] = useState([]);
@@ -3453,6 +3490,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onOpenFolder={(f) => setNav({ name: 'folder', id: f.id })}
             onShareFolder={(f) => setShareTarget({ folder: f })}
             onRenameFolder={(f) => setRenameFolderTarget(f)}
+            onRenameFile={(f) => setRenameFileTarget(f)}
             onMoveFolder={(f) => openMove({ kind: 'folder', folder: f })}
             onFolderColor={setFolderColor}
             onLockFolder={(f) => setLockTarget({ folder: f, mode: 'set' })}
@@ -3508,6 +3546,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             onDownloadFile={downloadOne}
             onMoveFolder={(f) => openMove({ kind: 'folder', folder: f })}
             onRenameFolder={(f) => setRenameFolderTarget(f)}
+            onRenameFile={(f) => setRenameFileTarget(f)}
             onLockFolder={(f) => setLockTarget({ folder: f, mode: 'set' })}
             onUnlockFolder={(f) => setLockTarget({ folder: f, mode: 'remove' })}
             onShareFolderItem={(f) => setShareTarget({ folder: f })}
@@ -3605,6 +3644,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         onChangePassword={() => setShowPasswordModal(true)}/>}
       {renameFolderTarget && (
         <RenameFolderModal folder={renameFolderTarget} onClose={() => setRenameFolderTarget(null)} onSaved={refreshAll}/>
+      )}
+      {renameFileTarget && (
+        <RenameFileModal file={renameFileTarget} onClose={() => setRenameFileTarget(null)} onSaved={refreshAll}/>
       )}
       {lockTarget && (
         <FolderLockModal folder={lockTarget.folder} mode={lockTarget.mode} onClose={() => setLockTarget(null)} onDone={refreshAll}/>
@@ -3737,6 +3779,7 @@ function fileMenuItems(file, o) {
   return [
     { label: 'Öffnen', icon: Ic.eye(15), onClick: () => o.onOpen(file) },
     { label: 'Herunterladen', icon: Ic.download(15), onClick: () => o.onDownload(file) },
+    o.onRename && { label: 'Umbenennen', icon: Ic.fileGen(15), onClick: () => o.onRename(file) },
     isZip && o.onUnzip && { label: 'Entpacken', icon: Ic.archive(15), onClick: () => o.onUnzip(file) },
     o.onToggleStar && { label: file.starred ? 'Aus Favoriten entfernen' : 'Zu Favoriten', icon: Ic.star(15), onClick: () => o.onToggleStar(file) },
     o.onPin && { label: file.pinned ? 'Lösen' : 'Anpinnen', icon: Ic.pin(15), onClick: () => o.onPin(file) },
@@ -3778,7 +3821,7 @@ function folderMenuItems(folder, o) {
 // ───── Files (home) view ───────────────────────────────────────────────────
 function FilesView({
   user, stats, folders, view, setView, sort, setSort, search, setSearch, refreshTick,
-  onOpenFolder, onShareFolder, onRenameFolder, onMoveFolder, onFolderColor, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
+  onOpenFolder, onShareFolder, onRenameFolder, onRenameFile, onMoveFolder, onFolderColor, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
   onOpenFile, onShareFile, onShareInternalFile, onShareInternalFolder, onDeleteFile, onToggleStar, onDropFiles, onUnzip, onVersions, onDownloadFile,
   onPinFile, onPinFolder, onLockFolder, onUnlockFolder,
 }) {
@@ -3821,7 +3864,7 @@ function FilesView({
   const fileCtx = (f, e) => openContextMenu(e.clientX, e.clientY, fileMenuItems(f, {
     onOpen: (x) => onOpenFile(x, results?.files || []),
     onDownload: onDownloadFile, onToggleStar, onShare: onShareFile, onShareInternal: onShareInternalFile,
-    onDelete: onDeleteFile, onVersions, onUnzip, onPin: onPinFile,
+    onDelete: onDeleteFile, onVersions, onUnzip, onPin: onPinFile, onRename: onRenameFile,
   }));
 
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {
@@ -4083,7 +4126,7 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectM
 function FolderView({
   folderId, view, setView, sort, setSort, search, setSearch, refreshTick,
   onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onMoveFiles, onUploadLink, onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, afterChange,
-  onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onShareFolderItem, onShareInternalFile, onShareInternalFolder, onDeleteFolder, onFolderColor, onLabelFile,
+  onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onRenameFile, onShareFolderItem, onShareInternalFile, onShareInternalFolder, onDeleteFolder, onFolderColor, onLabelFile,
   onPinFile, onPinFolder, onLockFolder, onUnlockFolder,
 }) {
   const [data, setData] = useState(null);
@@ -4175,7 +4218,7 @@ function FolderView({
       onToggleStar, onShare: onShareFile, onShareInternal: onShareInternalFile, onMove: (x) => onMoveFiles([x.id]),
       onVersions, onDelete: onDeleteFile, onLabel: onLabelFile, onTags: (x) => setTagTarget(x),
       onZip: doZip, onMoveMany: () => onMoveFiles([...selected]), onDeleteMany: doBulkDelete,
-      onPin: onPinFile,
+      onPin: onPinFile, onRename: onRenameFile,
     }));
   };
   const folderCtx = (f, e) => openContextMenu(e.clientX, e.clientY, folderMenuItems(f, {

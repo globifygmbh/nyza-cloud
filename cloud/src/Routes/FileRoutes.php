@@ -193,12 +193,30 @@ final class FileRoutes
         $f = self::fetchOne($uid, (int)$args['id']);
         if (!$f) return Json::err($res, 'Not found', 404);
         $b = (array) $req->getParsedBody();
-        $target = array_key_exists('folder_id', $b) && $b['folder_id'] !== null ? (int)$b['folder_id'] : null;
-        if ($target !== null && !self::folderOwned($uid, $target)) {
+
+        $movingFolder = array_key_exists('folder_id', $b);
+        $target = $movingFolder && $b['folder_id'] !== null ? (int)$b['folder_id'] : null;
+        if ($movingFolder && $target !== null && !self::folderOwned($uid, $target)) {
             return Json::err($res, 'Zielordner nicht gefunden', 404);
         }
-        Database::pdo()->prepare('UPDATE files SET folder_id = ? WHERE id = ? AND user_id = ?')
-            ->execute([$target, (int)$f['id'], $uid]);
+
+        $name = null;
+        if (array_key_exists('name', $b)) {
+            $name = trim((string)$b['name']);
+            if ($name === '') return Json::err($res, 'Name required', 422);
+        }
+
+        $pdo = Database::pdo();
+        if ($movingFolder) {
+            // folder_id is written unconditionally here (explicit null → root),
+            // so it must only run when the caller actually asked to move —
+            // otherwise a rename-only request (no folder_id key) would wipe it.
+            $pdo->prepare('UPDATE files SET folder_id = ?, name = COALESCE(?, name) WHERE id = ? AND user_id = ?')
+                ->execute([$target, $name, (int)$f['id'], $uid]);
+        } elseif ($name !== null) {
+            $pdo->prepare('UPDATE files SET name = ? WHERE id = ? AND user_id = ?')
+                ->execute([$name, (int)$f['id'], $uid]);
+        }
         return Json::ok($res, ['file' => self::fetchOne($uid, (int)$f['id'])]);
     }
 
