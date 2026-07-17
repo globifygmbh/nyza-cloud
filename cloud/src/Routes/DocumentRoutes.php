@@ -105,17 +105,22 @@ final class DocumentRoutes
         $items = self::normalizeItems($b['items'] ?? []);
         $totals = self::computeTotals($items);
         $snapshot = self::buildSnapshot($uid, $contactId);
+        // Pre-fill "z. Hd." from the contact's own contact_person, but leave
+        // it freely editable per-document from here on (not written back).
+        $attnName = array_key_exists('attn_name', $b)
+            ? self::textOrNull($b['attn_name'])
+            : self::textOrNull($snapshot['contact_person'] ?? null);
 
         $pdo = Database::pdo();
         $pdo->beginTransaction();
         try {
             $number = self::nextNumber($cid, $type === 'offer' ? 'offer' : 'invoice', $type === 'offer' ? 'AN-' : 'RE-');
             $pdo->prepare(
-                'INSERT INTO documents (user_id, company_id, type, number, contact_id, client_snapshot, doc_date, delivery_date, '
+                'INSERT INTO documents (user_id, company_id, type, number, contact_id, attn_name, client_snapshot, doc_date, delivery_date, '
                 . 'intro_text, footer_text, notes, net, tax, gross) '
-                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             )->execute([
-                $uid, $cid, $type, $number, $contactId, json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                $uid, $cid, $type, $number, $contactId, $attnName, json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 $docDate, $deliveryDate, $intro, $footer, $notes,
                 $totals['net'], $totals['tax'], $totals['gross'],
             ]);
@@ -168,6 +173,9 @@ final class DocumentRoutes
         }
         if (array_key_exists('notes', $b)) {
             $sets[] = 'notes = ?'; $params[] = self::textOrNull($b['notes']);
+        }
+        if (array_key_exists('attn_name', $b)) {
+            $sets[] = 'attn_name = ?'; $params[] = self::textOrNull($b['attn_name']);
         }
 
         $pdo->beginTransaction();
@@ -254,11 +262,11 @@ final class DocumentRoutes
         try {
             $number = self::nextNumber($cid, 'invoice', 'RE-');
             $pdo->prepare(
-                'INSERT INTO documents (user_id, company_id, type, number, contact_id, client_snapshot, doc_date, delivery_date, '
+                'INSERT INTO documents (user_id, company_id, type, number, contact_id, attn_name, client_snapshot, doc_date, delivery_date, '
                 . 'intro_text, footer_text, notes, net, tax, gross, converted_from_offer_id) '
-                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             )->execute([
-                $uid, $cid, 'invoice', $number, $offer['contact_id'], $offer['client_snapshot'],
+                $uid, $cid, 'invoice', $number, $offer['contact_id'], $offer['attn_name'] ?? null, $offer['client_snapshot'],
                 date('Y-m-d'), $offer['delivery_date'], $offer['intro_text'], $offer['footer_text'], $offer['notes'],
                 $totals['net'], $totals['tax'], $totals['gross'], $id,
             ]);
@@ -266,6 +274,7 @@ final class DocumentRoutes
             // Copy items verbatim, preserving order.
             $copy = array_map(static fn(array $it) => [
                 'description'    => $it['description'],
+                'note'           => $it['note'] ?? null,
                 'quantity'       => $it['quantity'],
                 'unit'           => $it['unit'],
                 'unit_price_net' => $it['unit_price_net'],
@@ -590,16 +599,17 @@ final class DocumentRoutes
         $items = self::normalizeItems($rawItems);
         $totals = self::computeTotals($items);
         $snapshot = self::buildSnapshot($uid, $contactId);
+        $attnName = array_key_exists('attn_name', $meta) ? self::textOrNull($meta['attn_name']) : self::textOrNull($snapshot['contact_person'] ?? null);
         $pdo = Database::pdo();
         $ownTxn = !$pdo->inTransaction();
         if ($ownTxn) $pdo->beginTransaction();
         try {
             $number = self::nextNumber($companyId, 'invoice', 'RE-');
             $pdo->prepare(
-                'INSERT INTO documents (user_id, company_id, type, number, contact_id, client_snapshot, doc_date, delivery_date, '
-                . 'intro_text, footer_text, notes, net, tax, gross) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO documents (user_id, company_id, type, number, contact_id, attn_name, client_snapshot, doc_date, delivery_date, '
+                . 'intro_text, footer_text, notes, net, tax, gross) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             )->execute([
-                $uid, $companyId, 'invoice', $number, $contactId,
+                $uid, $companyId, 'invoice', $number, $contactId, $attnName,
                 json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 $meta['doc_date'] ?? date('Y-m-d'), $meta['delivery_date'] ?? null,
                 $meta['intro_text'] ?? null, $meta['footer_text'] ?? null, $meta['notes'] ?? null,
@@ -623,8 +633,10 @@ final class DocumentRoutes
         if (!is_array($raw)) return $out;
         foreach ($raw as $it) {
             if (!is_array($it)) continue;
+            $note = trim((string)($it['note'] ?? ''));
             $out[] = [
                 'description'    => mb_substr(trim((string)($it['description'] ?? '')), 0, 500),
+                'note'           => $note !== '' ? mb_substr($note, 0, 1000) : null,
                 'quantity'       => round((float)($it['quantity'] ?? 1), 3),
                 'unit'           => trim((string)($it['unit'] ?? '')) !== '' ? (string)$it['unit'] : 'Stk',
                 'unit_price_net' => round((float)($it['unit_price_net'] ?? 0), 2),
@@ -638,13 +650,13 @@ final class DocumentRoutes
     {
         if (!$items) return;
         $stmt = Database::pdo()->prepare(
-            'INSERT INTO document_items (document_id, position, description, quantity, unit, unit_price_net, tax_rate) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO document_items (document_id, position, description, note, quantity, unit, unit_price_net, tax_rate) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $pos = 1;
         foreach ($items as $it) {
             $stmt->execute([
-                $docId, $pos, $it['description'], $it['quantity'], $it['unit'], $it['unit_price_net'], $it['tax_rate'],
+                $docId, $pos, $it['description'], $it['note'] ?? null, $it['quantity'], $it['unit'], $it['unit_price_net'], $it['tax_rate'],
             ]);
             $pos++;
         }
@@ -708,6 +720,7 @@ final class DocumentRoutes
             'number'                  => $r['number'],
             'contact_id'              => $r['contact_id'] !== null ? (int)$r['contact_id'] : null,
             'contact_name'            => $r['contact_name'] ?? null,
+            'attn_name'               => $r['attn_name'] ?? null,
             'client_snapshot'         => self::decodeSnapshot($r['client_snapshot']),
             'doc_date'                => $r['doc_date'],
             'delivery_date'           => $r['delivery_date'],
@@ -750,6 +763,7 @@ final class DocumentRoutes
                 'id'             => (int)$it['id'],
                 'position'       => (int)$it['position'],
                 'description'    => $it['description'],
+                'note'           => $it['note'] ?? null,
                 'quantity'       => (float)$it['quantity'],
                 'unit'           => $it['unit'],
                 'unit_price_net' => (float)$it['unit_price_net'],
@@ -872,9 +886,12 @@ final class DocumentRoutes
 
         $logo = self::logoDataUri($uid);
 
-        // Recipient block.
+        // Recipient block. attn_name is the per-document "z. Hd." override
+        // (pre-filled from the contact's contact_person on create, but freely
+        // editable per-document from then on); older documents created before
+        // this field existed fall back to the frozen snapshot value.
         $rcptName = (string)($snap['name'] ?? '');
-        $rcptPerson = (string)($snap['contact_person'] ?? '');
+        $rcptPerson = trim((string)($d['attn_name'] ?? '')) !== '' ? (string)$d['attn_name'] : (string)($snap['contact_person'] ?? '');
         $rcptStreet = (string)($snap['street'] ?? '');
         $rcptCity = trim((string)($snap['zip'] ?? '') . ' ' . (string)($snap['city'] ?? ''));
         $rcptCountry = (string)($snap['country'] ?? '');
@@ -895,9 +912,12 @@ final class DocumentRoutes
             if (!isset($byRate[$key])) $byRate[$key] = ['rate' => $rate, 'net' => 0.0, 'tax' => 0.0];
             $byRate[$key]['net'] += $lineNet;
             $byRate[$key]['tax'] += $lineTax;
+            $note = trim((string)($it['note'] ?? ''));
+            $descHtml = nl2br(self::e($it['description']));
+            if ($note !== '') $descHtml .= '<div class="c-note">' . nl2br(self::e($note)) . '</div>';
             $rowsHtml .= '<tr>'
                 . '<td class="c-pos">' . (int)$it['position'] . '</td>'
-                . '<td class="c-desc">' . nl2br(self::e($it['description'])) . '</td>'
+                . '<td class="c-desc">' . $descHtml . '</td>'
                 . '<td class="c-num">' . self::num($it['quantity']) . '</td>'
                 . '<td class="c-unit">' . self::e($it['unit']) . '</td>'
                 . '<td class="c-num">' . self::money($it['unit_price_net']) . '</td>'
@@ -976,7 +996,7 @@ final class DocumentRoutes
 
         // Recipient lines.
         $rcptHtml = '<div class="r-name">' . self::e($rcptName) . '</div>';
-        if ($rcptPerson !== '') $rcptHtml .= '<div>' . self::e($rcptPerson) . '</div>';
+        if ($rcptPerson !== '') $rcptHtml .= '<div>z. Hd. ' . self::e($rcptPerson) . '</div>';
         if ($rcptStreet !== '') $rcptHtml .= '<div>' . self::e($rcptStreet) . '</div>';
         if ($rcptCity !== '')   $rcptHtml .= '<div>' . self::e($rcptCity) . '</div>';
         if ($rcptCountry !== '') $rcptHtml .= '<div>' . self::e($rcptCountry) . '</div>';
@@ -1008,6 +1028,7 @@ final class DocumentRoutes
     letter-spacing: .4px; padding: 6px 6px; text-align: left; }
   table.items tbody td { padding: 6px 6px; border-bottom: 1px solid #eceaf5; vertical-align: top; }
   .c-pos { width: 8%; } .c-desc { width: 44%; } .c-unit { width: 10%; }
+  .c-note { font-size: 10.5px; color: #6b6478; margin-top: 2px; }
   .c-num { text-align: right; white-space: nowrap; }
   th.c-num { text-align: right; }
   .totals { width: 100%; margin-top: 12px; }

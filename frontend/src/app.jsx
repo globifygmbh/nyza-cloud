@@ -9049,14 +9049,15 @@ function SubscriptionModal({ sub, contacts, onSave, onClose }) {
 function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClose, onOpenPdf }) {
   const today = new Date().toISOString().slice(0, 10);
   const [contactId, setContactId] = useState(doc.contact_id ? String(doc.contact_id) : '');
+  const [attnName, setAttnName] = useState(doc.attn_name || '');
   const [docDate, setDocDate] = useState(doc.doc_date || today);
   const [deliveryDate, setDeliveryDate] = useState(doc.delivery_date || '');
   const [intro, setIntro] = useState(doc.intro_text || '');
   const [footer, setFooter] = useState(doc.footer_text || '');
   const [notes, setNotes] = useState(doc.notes || '');
   const [items, setItems] = useState(() => (doc.items && doc.items.length)
-    ? doc.items.map((it) => ({ description: it.description, quantity: it.quantity, unit: it.unit, unit_price_net: it.unit_price_net, tax_rate: it.tax_rate }))
-    : [{ description: '', quantity: 1, unit: 'Stk', unit_price_net: 0, tax_rate: 20 }]);
+    ? doc.items.map((it) => ({ description: it.description, note: it.note || '', quantity: it.quantity, unit: it.unit, unit_price_net: it.unit_price_net, tax_rate: it.tax_rate }))
+    : [{ description: '', note: '', quantity: 1, unit: 'Stk', unit_price_net: 0, tax_rate: 20 }]);
   const [busy, setBusy] = useState(false);
   const [profile, setProfile] = useState(null);
   const type = doc.type || 'invoice';
@@ -9087,9 +9088,9 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
   };
 
   const setItem = (i, k, v) => setItems((arr) => arr.map((it, j) => j === i ? { ...it, [k]: v } : it));
-  const addRow = () => setItems((arr) => [...arr, { description: '', quantity: 1, unit: 'Stk', unit_price_net: 0, tax_rate: 20 }]);
+  const addRow = () => setItems((arr) => [...arr, { description: '', note: '', quantity: 1, unit: 'Stk', unit_price_net: 0, tax_rate: 20 }]);
   const rmRow = (i) => setItems((arr) => arr.length > 1 ? arr.filter((_, j) => j !== i) : arr);
-  const addProduct = (pid) => { const p = products.find((x) => String(x.id) === String(pid)); if (!p) return; setItems((arr) => [...arr, { description: p.name, quantity: 1, unit: p.unit, unit_price_net: p.unit_price_net, tax_rate: p.tax_rate }]); };
+  const addProduct = (pid) => { const p = products.find((x) => String(x.id) === String(pid)); if (!p) return; setItems((arr) => [...arr, { description: p.name, note: '', quantity: 1, unit: p.unit, unit_price_net: p.unit_price_net, tax_rate: p.tax_rate }]); };
 
   const lineNet = (it) => Math.round((Number(it.quantity) || 0) * (Number(it.unit_price_net) || 0) * 100) / 100;
   const net = items.reduce((a, it) => a + lineNet(it), 0);
@@ -9098,7 +9099,7 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
 
   const submit = async () => {
     setBusy(true);
-    const r = await onSave({ id: doc.id, type, contact_id: contactId || null, doc_date: docDate || null, delivery_date: deliveryDate || null, intro_text: intro || null, footer_text: footer || null, notes: notes || null, items });
+    const r = await onSave({ id: doc.id, type, contact_id: contactId || null, attn_name: attnName || null, doc_date: docDate || null, delivery_date: deliveryDate || null, intro_text: intro || null, footer_text: footer || null, notes: notes || null, items });
     setBusy(false);
     return r;
   };
@@ -9120,7 +9121,14 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kunde</span>
-              <select value={contactId} onChange={(e) => setContactId(e.target.value)} style={{ ...fld, cursor: 'pointer' }}>
+              <select value={contactId} onChange={(e) => {
+                const v = e.target.value; setContactId(v);
+                // Pre-fill (don't overwrite a manual edit) from the contact's own contact_person.
+                if (!attnName.trim()) {
+                  const c = contacts.find((x) => String(x.id) === v);
+                  if (c && c.contact_person) setAttnName(c.contact_person);
+                }
+              }} style={{ ...fld, cursor: 'pointer' }}>
                 <option value="">— Kunde wählen —</option>
                 {contacts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
@@ -9134,6 +9142,10 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
               <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} style={fld}/>
             </label>
           </div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>z. Hd. (optional)</span>
+            <input value={attnName} onChange={(e) => setAttnName(e.target.value)} placeholder="Name der Ansprechperson beim Kunden" style={fld}/>
+          </label>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -9157,18 +9169,22 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
                 </select>
               )}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {items.map((it, i) => (
-                <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <input value={it.description} onChange={(e) => setItem(i, 'description', e.target.value)} placeholder="Beschreibung" style={{ ...fld, flex: 1, minWidth: 0 }}/>
-                  <input type="number" step="0.01" value={it.quantity} onChange={(e) => setItem(i, 'quantity', e.target.value)} title="Menge" style={{ ...numIn, width: 64 }}/>
-                  <input value={it.unit} onChange={(e) => setItem(i, 'unit', e.target.value)} title="Einheit" style={{ ...fld, width: 56 }}/>
-                  <input type="number" step="0.01" value={it.unit_price_net} onChange={(e) => setItem(i, 'unit_price_net', e.target.value)} title="Einzelpreis netto" style={{ ...numIn, width: 90 }}/>
-                  <select value={it.tax_rate} onChange={(e) => setItem(i, 'tax_rate', e.target.value)} title="USt-Satz" style={{ ...fld, width: 64, cursor: 'pointer' }}>
-                    <option value={20}>20%</option><option value={13}>13%</option><option value={10}>10%</option><option value={0}>0%</option>
-                  </select>
-                  <div style={{ width: 84, textAlign: 'right', fontSize: 13, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtEUR(lineNet(it))}</div>
-                  <span onClick={() => rmRow(i)} title="Entfernen" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex', flexShrink: 0 }}>{Ic.close(14)}</span>
+                <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input value={it.description} onChange={(e) => setItem(i, 'description', e.target.value)} placeholder="Beschreibung" style={{ ...fld, flex: 1, minWidth: 0 }}/>
+                    <input type="number" step="0.01" value={it.quantity} onChange={(e) => setItem(i, 'quantity', e.target.value)} title="Menge" style={{ ...numIn, width: 64 }}/>
+                    <input value={it.unit} onChange={(e) => setItem(i, 'unit', e.target.value)} title="Einheit" style={{ ...fld, width: 56 }}/>
+                    <input type="number" step="0.01" value={it.unit_price_net} onChange={(e) => setItem(i, 'unit_price_net', e.target.value)} title="Einzelpreis netto" style={{ ...numIn, width: 90 }}/>
+                    <select value={it.tax_rate} onChange={(e) => setItem(i, 'tax_rate', e.target.value)} title="USt-Satz" style={{ ...fld, width: 64, cursor: 'pointer' }}>
+                      <option value={20}>20%</option><option value={13}>13%</option><option value={10}>10%</option><option value={0}>0%</option>
+                    </select>
+                    <div style={{ width: 84, textAlign: 'right', fontSize: 13, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtEUR(lineNet(it))}</div>
+                    <span onClick={() => rmRow(i)} title="Entfernen" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex', flexShrink: 0 }}>{Ic.close(14)}</span>
+                  </div>
+                  <input value={it.note} onChange={(e) => setItem(i, 'note', e.target.value)} placeholder="Zusatzinfo (optional, erscheint klein unter der Position)"
+                    style={{ ...fld, height: 30, fontSize: 12, color: 'var(--fg-3)' }}/>
                 </div>
               ))}
             </div>
