@@ -56,6 +56,7 @@ final class PortalRoutes
         $app->get('/api/portal/{token}/upload-folder/{fid}',                 [self::class, 'uploadFolderShow']);
         $app->get('/api/portal/{token}/upload-folder/{fid}/file/{id}',       [self::class, 'uploadFolderFile']);
         $app->get('/api/portal/{token}/upload-folder/{fid}/file/{id}/thumb', [self::class, 'uploadFolderThumb']);
+        $app->post('/api/portal/{token}/upload-folder/{fid}/subfolder',     [self::class, 'uploadFolderCreate']);
     }
 
     // ───── owner ────────────────────────────────────────────────────────────
@@ -291,7 +292,7 @@ final class PortalRoutes
     {
         if ($p['password_hash'] && !self::pwOk($p, $req)) return ['error' => 'password_required', 'status' => 401];
         if (!empty($p['upload_password_hash']) && !self::uploadPwOk($p, $req)) return ['error' => 'upload_password_required', 'status' => 401];
-        if ($folderId === null || !isset(self::uploadFolderIds((int)$p['id'])[$folderId])) {
+        if ($folderId === null || !self::uploadFolderAllowed((int)$p['id'], (int)$p['user_id'], $folderId)) {
             return ['error' => 'folder_not_allowed', 'status' => 403];
         }
         return null;
@@ -303,6 +304,7 @@ final class PortalRoutes
         return $pw !== null && password_verify((string)$pw, (string)$p['upload_password_hash']);
     }
 
+    /** The folder ids the owner explicitly granted (top of each allowed subtree). */
     private static function uploadFolderIds(int $portalId): array
     {
         $ids = [];
@@ -310,6 +312,28 @@ final class PortalRoutes
         $s->execute([$portalId]);
         foreach ($s->fetchAll() as $r) $ids[(int)$r['folder_id']] = true;
         return $ids;
+    }
+
+    /** A granted folder implicitly grants its whole subtree — including
+     *  subfolders the customer creates later — so we walk up from $folderId
+     *  looking for a granted ancestor instead of requiring an exact match. */
+    private static function uploadFolderAllowed(int $portalId, int $ownerUid, int $folderId): bool
+    {
+        $roots = self::uploadFolderIds($portalId);
+        if (isset($roots[$folderId])) return true;
+        if (!$roots) return false;
+        $pdo = Database::pdo();
+        $stmt = $pdo->prepare('SELECT parent_id FROM folders WHERE id = ? AND user_id = ?');
+        $cur = $folderId;
+        $guard = 0;
+        while ($guard++ < 50) {
+            $stmt->execute([$cur, $ownerUid]);
+            $row = $stmt->fetch();
+            if (!$row || $row['parent_id'] === null) return false;
+            $cur = (int)$row['parent_id'];
+            if (isset($roots[$cur])) return true;
+        }
+        return false;
     }
 
     public static function uploadUnlock(Request $req, Response $res, array $args): Response
@@ -353,12 +377,43 @@ final class PortalRoutes
         $folderId = (int)$args['fid'];
         $err = self::uploadGate($p, $req, $folderId);
         if ($err) return Json::err($res, $err['error'], $err['status']);
+        $sub = Database::pdo()->prepare(
+            'SELECT f.id, f.name, f.tone, '
+            . '(SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
+            . '(SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
+            . 'FROM folders f WHERE parent_id = ? AND deleted_at IS NULL ORDER BY name'
+        );
+        $sub->execute([$folderId]);
         $s = Database::pdo()->prepare('SELECT * FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, created_at DESC');
         $s->execute([$folderId]);
-        return Json::ok($res, ['files' => array_map(static fn($f) => [
-            'id' => (int)$f['id'], 'name' => $f['name'], 'kind' => $f['kind'], 'size' => (int)$f['size'],
-            'hue' => (int)$f['hue'], 'created_at' => $f['created_at'] ?? null,
-        ], $s->fetchAll())]);
+        return Json::ok($res, [
+            'subfolders' => array_map(static fn($f) => [
+                'id' => (int)$f['id'], 'name' => $f['name'], 'tone' => $f['tone'],
+                'item_count' => (int)$f['item_count'], 'total_size' => (int)$f['total_size'],
+            ], $sub->fetchAll()),
+            'files' => array_map(static fn($f) => [
+                'id' => (int)$f['id'], 'name' => $f['name'], 'kind' => $f['kind'], 'size' => (int)$f['size'],
+                'hue' => (int)$f['hue'], 'created_at' => $f['created_at'] ?? null,
+            ], $s->fetchAll()),
+        ]);
+    }
+
+    /** The customer may create subfolders anywhere inside a granted subtree —
+     *  no delete/rename, just this one additive action. */
+    public static function uploadFolderCreate(Request $req, Response $res, array $args): Response
+    {
+        $p = self::byToken((string)$args['token']);
+        if (!$p) return Json::err($res, 'Not found', 404);
+        $folderId = (int)$args['fid'];
+        $err = self::uploadGate($p, $req, $folderId);
+        if ($err) return Json::err($res, $err['error'], $err['status']);
+        $b = (array)$req->getParsedBody();
+        $name = trim((string)($b['name'] ?? ''));
+        if ($name === '') return Json::err($res, 'Name erforderlich', 422);
+        Database::pdo()->prepare('INSERT INTO folders (user_id, parent_id, name, kind, tone) VALUES (?, ?, ?, ?, ?)')
+            ->execute([(int)$p['user_id'], $folderId, mb_substr($name, 0, 160), 'normal', 'violet']);
+        $id = (int)Database::pdo()->lastInsertId();
+        return Json::ok($res, ['folder' => ['id' => $id, 'name' => mb_substr($name, 0, 160), 'tone' => 'violet', 'item_count' => 0, 'total_size' => 0]], 201);
     }
 
     public static function uploadFolderFile(Request $req, Response $res, array $args): Response

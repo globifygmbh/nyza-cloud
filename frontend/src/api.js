@@ -483,6 +483,8 @@ export const API = {
     url('/api/portal/' + token + '/upload-folder/' + folderId + '/file/' + fileId) + '?' + [viewPw ? 'p=' + encodeURIComponent(viewPw) : '', uploadPw ? 'up=' + encodeURIComponent(uploadPw) : '', dl ? 'download=1' : ''].filter(Boolean).join('&'),
   portalUploadFolderThumbUrl: (token, folderId, fileId, viewPw, uploadPw) =>
     url('/api/portal/' + token + '/upload-folder/' + folderId + '/file/' + fileId + '/thumb') + '?' + [viewPw ? 'p=' + encodeURIComponent(viewPw) : '', uploadPw ? 'up=' + encodeURIComponent(uploadPw) : ''].filter(Boolean).join('&'),
+  portalUploadFolderCreate: (token, folderId, name, uploadPw, viewPw) =>
+    request('/api/portal/' + token + '/upload-folder/' + folderId + '/subfolder', { method: 'POST', body: { name, upload_password: uploadPw, password: viewPw }, skipAuth: true }),
   // ───── Textbausteine (snippets) ─────
   snippets:       (params = {}) => request('/api/snippets' + (Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '')),
   createSnippet:  (body) => request('/api/snippets', { method: 'POST', body }),
