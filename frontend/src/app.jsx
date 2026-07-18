@@ -2649,8 +2649,8 @@ function ConstraintBox({ icon, title, enabled, onToggle, children }) {
   );
 }
 
-export function UploadLinkModal({ folders, defaultFolderId, onClose, onCreated, basePath }) {
-  const [folderId, setFolderId] = useState(defaultFolderId || folders?.[0]?.id || null);
+export function UploadLinkModal({ allFolders, defaultFolderId, onClose, onCreated, basePath }) {
+  const [folderId, setFolderId] = useState(defaultFolderId || null);
   const [title, setTitle] = useState('Dateien hochladen');
   const [description, setDescription] = useState('');
   const [withPassword, setWithPassword] = useState(false);
@@ -2718,11 +2718,9 @@ export function UploadLinkModal({ folders, defaultFolderId, onClose, onCreated, 
               <Field label="Beschreibung (optional)">
                 <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Hi! Bitte alle Rohdaten hier ablegen." style={{ width: '100%', minHeight: 64, padding: '12px 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg-2)', lineHeight: 1.5, resize: 'vertical' }}/>
               </Field>
-              {folders && folders.length > 0 && (
-                <Field label="Zielordner">
-                  <select value={folderId || ''} onChange={(e) => setFolderId(Number(e.target.value))} style={{ width: '100%', height: 40, padding: '0 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit' }}>
-                    {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-                  </select>
+              {allFolders && allFolders.length > 0 && (
+                <Field label="Zielordner" hint="Ordner, in den hochgeladene Dateien landen">
+                  <FolderTreePicker allFolders={allFolders} value={folderId} onChange={setFolderId}/>
                 </Field>
               )}
               <div>
@@ -2896,24 +2894,7 @@ function FolderLockModal({ folder, mode, onClose, onDone }) {
 // folder into its own subtree is invalid). `allowRoot` adds a top-level target.
 export function MoveModal({ title = 'Verschieben nach', allFolders, excludeId, allowRoot = true, onMove, onClose }) {
   const [busy, setBusy] = useState(false);
-
-  // depth + descendant exclusion from the flat list.
-  const byParent = {};
-  allFolders.forEach((f) => { (byParent[f.parent_id || 0] ||= []).push(f); });
-  const excluded = new Set();
-  if (excludeId) {
-    const walk = (id) => { excluded.add(id); (byParent[id] || []).forEach((c) => walk(c.id)); };
-    walk(excludeId);
-  }
-  const rows = [];
-  const visit = (parentId, depth) => {
-    (byParent[parentId] || []).forEach((f) => {
-      if (excluded.has(f.id)) return;
-      rows.push({ f, depth });
-      visit(f.id, depth + 1);
-    });
-  };
-  visit(0, 0);
+  const rows = folderTreeRows(allFolders, excludeId);
 
   const pick = async (target) => {
     setBusy(true);
@@ -2957,6 +2938,63 @@ function moveRowStyle(depth) {
     fontFamily: 'inherit', fontSize: 13.5, textAlign: 'left',
     background: 'transparent', color: 'var(--fg)',
   };
+}
+
+// Flatten a folder list into a depth-ordered [{f, depth}] tree for nested
+// pickers (Verschieben, Upload-Link Zielordner, Portal-Freigaben) — shared so
+// every "pick a folder" UI in the app looks/behaves the same.
+function folderTreeRows(allFolders, excludeId) {
+  const byParent = {};
+  allFolders.forEach((f) => { (byParent[f.parent_id || 0] ||= []).push(f); });
+  const excluded = new Set();
+  if (excludeId) {
+    const walk = (id) => { excluded.add(id); (byParent[id] || []).forEach((c) => walk(c.id)); };
+    walk(excludeId);
+  }
+  const rows = [];
+  const visit = (parentId, depth) => {
+    (byParent[parentId] || []).forEach((f) => {
+      if (excluded.has(f.id)) return;
+      rows.push({ f, depth });
+      visit(f.id, depth + 1);
+    });
+  };
+  visit(0, 0);
+  return rows;
+}
+
+// Inline (non-modal) nested folder tree picker — single-select (value is a
+// folder id) or multi-select (value is a Set of ids).
+function FolderTreePicker({ allFolders, value, onChange, multi = false, excludeId, maxHeight = 220 }) {
+  const rows = folderTreeRows(allFolders, excludeId);
+  const isSel = (id) => multi ? value.has(id) : value === id;
+  const toggle = (id) => {
+    if (multi) { const next = new Set(value); next.has(id) ? next.delete(id) : next.add(id); onChange(next); }
+    else onChange(id);
+  };
+  return (
+    <div style={{ maxHeight, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 4, background: 'var(--surface-hi)' }}>
+      {rows.map(({ f, depth }) => {
+        const sel = isSel(f.id);
+        return (
+          <button key={f.id} type="button" onClick={() => toggle(f.id)} style={{
+            display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+            padding: '7px 10px', paddingLeft: 10 + depth * 18,
+            borderRadius: 'var(--r-xs)', border: 'none', cursor: 'pointer',
+            fontFamily: 'inherit', fontSize: 13, textAlign: 'left',
+            background: sel ? 'var(--accent)' : 'transparent', color: sel ? '#fff' : 'var(--fg)',
+          }}>
+            {multi && (
+              <span style={{ width: 14, height: 14, borderRadius: 4, border: '1.5px solid ' + (sel ? '#fff' : 'var(--border-hi)'), display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, background: sel ? 'rgba(255,255,255,0.2)' : 'transparent' }}>{sel && Ic.check(10)}</span>
+            )}
+            <span style={{ color: sel ? '#fff' : 'var(--accent)', flexShrink: 0 }}>{f.kind === 'gallery' ? Ic.fileImg(14) : Ic.folder(14)}</span>
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+          </button>
+        );
+      })}
+      {rows.length === 0 && <div style={{ padding: 14, textAlign: 'center', color: 'var(--fg-3)', fontSize: 12.5 }}>Keine Ordner vorhanden.</div>}
+    </div>
+  );
 }
 
 // ───── small shared bits ───────────────────────────────────────────────────
@@ -3286,11 +3324,14 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
 
   const loadStats = useCallback(() => { API.stats().then(setStats).catch(() => {}); }, []);
   const loadFolders = useCallback(() => { API.folders().then((d) => setFolders(d.folders || [])).catch(() => {}); }, []);
-  useEffect(() => { loadStats(); loadFolders(); }, [loadStats, loadFolders]);
+  // Full (nested) folder tree — needed up-front by the Verschieben-, Upload-Link-
+  // and Portal-Ordner-Picker, not just lazily when Verschieben is opened.
+  const loadAllFolders = useCallback(() => { API.allFolders().then((d) => setAllFolders(d.folders || [])).catch(() => {}); }, []);
+  useEffect(() => { loadStats(); loadFolders(); loadAllFolders(); }, [loadStats, loadFolders, loadAllFolders]);
 
   // a token bumped to force child views to reload after uploads/changes
   const [refreshTick, setRefreshTick] = useState(0);
-  const refreshAll = () => { loadStats(); loadFolders(); setRefreshTick((t) => t + 1); };
+  const refreshAll = () => { loadStats(); loadFolders(); loadAllFolders(); setRefreshTick((t) => t + 1); };
 
   const onLabelFile = async (f, label) => {
     try {
@@ -3631,7 +3672,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           onClose={() => setInternalTarget(null)}/>
       )}
       {showUploadLinkModal && (
-        <UploadLinkModal folders={folders} defaultFolderId={uploadLinkFolder} basePath={basePath}
+        <UploadLinkModal allFolders={allFolders} defaultFolderId={uploadLinkFolder} basePath={basePath}
           onClose={() => setShowUploadLinkModal(false)} onCreated={refreshAll}/>
       )}
       {showUploadProgress && (
@@ -10252,6 +10293,10 @@ function PortalEditModal({ portal, onSaved, onClose }) {
   const [contactId, setContactId] = useState(portal.contact_id ? String(portal.contact_id) : '');
   const [intro, setIntro] = useState(portal.intro || '');
   const [password, setPassword] = useState('');
+  const [uploadPassword, setUploadPassword] = useState('');
+  const [uploadFolderIds, setUploadFolderIds] = useState(() => new Set((portal.upload_folders || []).map((f) => f.id)));
+  const [newSubName, setNewSubName] = useState('');
+  const [newSubParent, setNewSubParent] = useState('');
   const [contacts, setContacts] = useState([]);
   const [folders, setFolders] = useState([]);
   const [sigs, setSigs] = useState([]);
@@ -10261,26 +10306,42 @@ function PortalEditModal({ portal, onSaved, onClose }) {
   const [addUp, setAddUp] = useState('');
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
+  const loadAllFolders = () => API.allFolders().then((d) => setFolders(d.folders || [])).catch(() => {});
   useEffect(() => {
     API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {});
-    API.allFolders().then((d) => setFolders(d.folders || [])).catch(() => {});
+    loadAllFolders();
     API.signatures().then((d) => setSigs(d.requests || [])).catch(() => {});
     API.uploadLinks().then((d) => setUploads(d.upload_links || d.links || [])).catch(() => {});
   }, []);
   const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
   const reload = async () => { if (!idRef.current) return; const d = await API.portal(idRef.current); setP(d.portal); };
-  const body = () => { const b = { name: name.trim() || 'Kundenportal', contact_id: contactId || null, intro: intro.trim() || null }; if (password) b.password = password; return b; };
+  const body = () => {
+    const b = { name: name.trim() || 'Kundenportal', contact_id: contactId || null, intro: intro.trim() || null, upload_folder_ids: [...uploadFolderIds] };
+    if (password) b.password = password;
+    if (uploadPassword) b.upload_password = uploadPassword;
+    return b;
+  };
+  const createSubfolder = async () => {
+    if (!newSubName.trim()) return;
+    try {
+      const d = await API.newFolder({ name: newSubName.trim(), kind: 'normal', tone: 'violet', parent_id: newSubParent ? Number(newSubParent) : null });
+      await loadAllFolders();
+      setUploadFolderIds((s) => new Set(s).add(d.folder.id));
+      setNewSubName(''); setNewSubParent('');
+      toast('Unterordner erstellt und freigegeben', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  };
   // Create exactly once, even across rapid concurrent calls (attach + save).
   const ensureSaved = async () => {
     if (idRef.current) return idRef.current;
     if (!createRef.current) {
-      createRef.current = API.createPortal(body()).then((d) => { idRef.current = d.portal.id; setP(d.portal); setPassword(''); onSaved && onSaved(); return d.portal.id; });
+      createRef.current = API.createPortal(body()).then((d) => { idRef.current = d.portal.id; setP(d.portal); setPassword(''); setUploadPassword(''); onSaved && onSaved(); return d.portal.id; });
     }
     return createRef.current;
   };
   const saveBase = async () => {
     if (!idRef.current) { await ensureSaved(); return; }
-    const d = await API.updatePortal(idRef.current, body()); setP(d.portal); setPassword(''); onSaved && onSaved();
+    const d = await API.updatePortal(idRef.current, body()); setP(d.portal); setPassword(''); setUploadPassword(''); onSaved && onSaved();
   };
   const saveAndClose = async () => { setBusy(true); try { await saveBase(); toast('Gespeichert', 'success'); onClose(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
   const attachFolder = async () => { if (!addFolder) return; try { const id = await ensureSaved(); await API.portalAddItem(id, { folder_id: Number(addFolder) }); setAddFolder(''); await reload(); onSaved && onSaved(); } catch (e) { toast(e.message, 'error'); } };
@@ -10310,6 +10371,25 @@ function PortalEditModal({ portal, onSaved, onClose }) {
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Begrüßungstext (optional)</span><textarea value={intro} onChange={(e) => setIntro(e.target.value)} rows={2} style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/></label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Passwort {p.has_password ? '(leer = unverändert)' : ''}</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={p.has_password ? '••••••••' : 'Zugangspasswort'} style={fld}/></label>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>Upload-Bereich für den Kunden</div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 10 }}>Der Kunde kann in die ausgewählten Ordner hochladen — nichts löschen, keine anderen Ordner sehen.</div>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Upload-Passwort (eigenes, optional) {p.has_upload_password ? '(leer = unverändert)' : ''}</span>
+              <input type="password" value={uploadPassword} onChange={(e) => setUploadPassword(e.target.value)} placeholder={p.has_upload_password ? '••••••••' : 'Ohne = öffentlich hochladbar'} style={fld}/>
+            </label>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', display: 'block', marginBottom: 5 }}>Freigegebene Ordner ({uploadFolderIds.size})</span>
+            <FolderTreePicker allFolders={folders} value={uploadFolderIds} onChange={setUploadFolderIds} multi maxHeight={180}/>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+              <select value={newSubParent} onChange={(e) => setNewSubParent(e.target.value)} style={{ ...fld, flex: '1 1 140px', height: 36 }}>
+                <option value="">Neuer Unterordner in: Hauptebene</option>
+                {folders.map((f) => <option key={f.id} value={f.id}>in „{f.name}"</option>)}
+              </select>
+              <input value={newSubName} onChange={(e) => setNewSubName(e.target.value)} placeholder="z. B. Video Juli 2026" style={{ ...fld, flex: '1 1 140px', height: 36 }}/>
+              <Btn variant="glass" size="sm" disabled={!newSubName.trim()} onClick={createSubfolder} icon={Ic.plus(13)}>Erstellen & freigeben</Btn>
+            </div>
+          </div>
 
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
             <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>Angehängte Ordner & Dateien</div>

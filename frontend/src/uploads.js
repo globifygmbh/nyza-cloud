@@ -85,3 +85,17 @@ export async function uploadClient(token, file, opts, onProgress) {
   }
   return API.clientUpload(token, file, opts, onProgress);
 }
+
+// opts: { folderId, uploadPassword, viewPassword, uploaderName }
+export async function uploadPortal(token, file, opts, onProgress) {
+  if (file.size > CHUNK_THRESHOLD) {
+    return chunked(file, {
+      init: (b) => API.portalChunkInit(token, {
+        ...b, folder_id: opts.folderId, upload_password: opts.uploadPassword, password: opts.viewPassword, uploader_name: opts.uploaderName,
+      }),
+      append: (sid, blob, cb) => API.portalChunkAppend(token, sid, blob, cb),
+      finalize: (sid) => API.portalChunkFinalize(token, sid),
+    }, onProgress);
+  }
+  return API.portalUpload(token, file, opts, onProgress);
+}

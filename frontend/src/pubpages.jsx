@@ -8,7 +8,7 @@ import {
   humanSize, applyAccent,
 } from './system.jsx';
 import { Dropzone, UploadRow, MediaViewer, UploadReview } from './app.jsx';
-import { uploadClient, withUploadLock } from './uploads.js';
+import { uploadClient, uploadPortal, withUploadLock } from './uploads.js';
 import { toast } from './toast.jsx';
 
 // Reveals items in batches as the user scrolls near the bottom, instead of
@@ -543,30 +543,33 @@ export function PublicUploadPage({ token }) {
     setReview(files);
   };
 
+  // Uploads accumulate across multiple drops/batches (rather than being
+  // replaced each time) so the uploader keeps a running overview of what's
+  // already done vs. still in flight, alongside the dropzone — not instead
+  // of it — until they explicitly say they're finished.
+  const uploadIdRef = useRef(0);
   const doUpload = async (files) => {
     setReview(null);
     const items = files.map((f) => ({
-      name: f.name, size: f.size, status: 'queued', pct: 0,
+      id: ++uploadIdRef.current, name: f.name, size: f.size, status: 'queued', pct: 0,
       kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type === 'application/pdf' ? 'pdf' : 'doc',
+      file: f,
     }));
-    setUploads(items);
-    let allOk = true;
+    setUploads((u) => [...u, ...items]);
     await withUploadLock(async () => {
-      for (let i = 0; i < files.length; i++) {
-        setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'uploading' } : x));
+      for (const item of items) {
+        setUploads((u) => u.map((x) => x.id === item.id ? { ...x, status: 'uploading' } : x));
         try {
-          await uploadClient(token, files[i],
+          await uploadClient(token, item.file,
             { password, uploaderName: uploaderName || undefined },
-            (p) => setUploads((u) => u.map((x, j) => j === i ? { ...x, pct: p } : x)));
-          setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'done', pct: 1 } : x));
+            (p) => setUploads((u) => u.map((x) => x.id === item.id ? { ...x, pct: p } : x)));
+          setUploads((u) => u.map((x) => x.id === item.id ? { ...x, status: 'done', pct: 1, file: null } : x));
         } catch (err) {
-          allOk = false;
-          setUploads((u) => u.map((x, j) => j === i ? { ...x, status: 'error' } : x));
+          setUploads((u) => u.map((x) => x.id === item.id ? { ...x, status: 'error', file: null } : x));
           toast(err.message, 'error');
         }
       }
     });
-    if (allOk) setTimeout(() => setDone(true), 600);
   };
 
   const uploadForItem = async (key, files) => {
@@ -655,25 +658,39 @@ export function PublicUploadPage({ token }) {
             })}
             <div style={{ fontSize: 12, color: 'var(--fg-4)', textAlign: 'center', marginTop: 6 }}>Pro Punkt kannst du mehrere Dateien hochladen.</div>
           </div>
-        ) : uploads.length > 0 ? (
-          <div style={{ width: '100%', maxWidth: 720 }}>
-            <Glass style={{ borderRadius: 'var(--r-xl)', padding: 24 }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {uploads.map((f, i) => <UploadRow key={i} file={f}/>)}
-              </div>
-            </Glass>
-          </div>
         ) : (
-          <div style={{ width: '100%', maxWidth: 720 }}>
-            <Dropzone big onFiles={onFiles}
-              label="Zieh deine Dateien hier rein"
-              sub={'oder klicke zum Auswählen' + (link.max_file_size ? ' · max. ' + humanSize(link.max_file_size) + ' pro Datei' : '')}/>
-            {/* Mobile camera capture — opens the camera directly on phones. */}
-            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}>
-              <Btn variant="glass" size="md" icon={Ic.camera(16)} onClick={() => cameraRef.current?.click()}>Foto aufnehmen</Btn>
+          <div style={{ width: '100%', maxWidth: 900, display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <div style={{ flex: '1 1 380px', maxWidth: 460 }}>
+              <Dropzone big onFiles={onFiles}
+                label="Zieh deine Dateien hier rein"
+                sub={'oder klicke zum Auswählen' + (link.max_file_size ? ' · max. ' + humanSize(link.max_file_size) + ' pro Datei' : '')}/>
+              {/* Mobile camera capture — opens the camera directly on phones. */}
+              <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}>
+                <Btn variant="glass" size="md" icon={Ic.camera(16)} onClick={() => cameraRef.current?.click()}>Foto aufnehmen</Btn>
+              </div>
+              <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+                onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) onFiles(fs); e.target.value = ''; }}/>
             </div>
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
-              onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) onFiles(fs); e.target.value = ''; }}/>
+            {uploads.length > 0 && (() => {
+              const doneCount = uploads.filter((u) => u.status === 'done').length;
+              const allSettled = uploads.every((u) => u.status === 'done' || u.status === 'error');
+              return (
+                <div style={{ flex: '1 1 280px', maxWidth: 340, width: '100%' }}>
+                  <Glass style={{ borderRadius: 'var(--r-xl)', padding: 18, textAlign: 'left' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)' }}>Deine Uploads</span>
+                      <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{doneCount} / {uploads.length}</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
+                      {uploads.map((f) => <UploadRow key={f.id} file={f}/>)}
+                    </div>
+                    {allSettled && doneCount > 0 && (
+                      <Btn variant="primary" size="md" full icon={Ic.check(15)} style={{ marginTop: 14 }} onClick={() => setDone(true)}>Fertig</Btn>
+                    )}
+                  </Glass>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -900,6 +917,112 @@ export function PublicFormPage({ token }) {
 }
 
 // ───── Public customer portal (/portal/:token) ──────────────────────────────
+// Embedded upload widget on the portal page itself — separate password from
+// the portal's view password (may be none at all), destination limited to
+// whatever folders the owner picked. Upload-only: no browse/delete here.
+function PortalUploadPanel({ token, viewPassword, requiresUploadPassword }) {
+  const [unlocked, setUnlocked] = useState(false);
+  const [pwInput, setPwInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [folders, setFolders] = useState([]);
+  const [folderId, setFolderId] = useState(null);
+  const [uploaderName, setUploaderName] = useState('');
+  const [uploads, setUploads] = useState([]);
+  const uploadIdRef = useRef(0);
+
+  const doUnlock = async (pw) => {
+    setBusy(true);
+    try {
+      const d = await API.portalUploadUnlock(token, pw, viewPassword);
+      setFolders(d.folders || []);
+      if ((d.folders || []).length === 1) setFolderId(d.folders[0].id);
+      setUnlocked(true);
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  useEffect(() => { if (!requiresUploadPassword) doUnlock(''); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onFiles = (files) => {
+    if (!folderId) { toast('Bitte zuerst einen Ordner wählen', 'error'); return; }
+    const items = files.map((f) => ({
+      id: ++uploadIdRef.current, name: f.name, size: f.size, status: 'queued', pct: 0,
+      kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type === 'application/pdf' ? 'pdf' : 'doc',
+      file: f,
+    }));
+    setUploads((u) => [...u, ...items]);
+    withUploadLock(async () => {
+      for (const item of items) {
+        setUploads((u) => u.map((x) => x.id === item.id ? { ...x, status: 'uploading' } : x));
+        try {
+          await uploadPortal(token, item.file, { folderId, uploadPassword: pwInput || undefined, viewPassword, uploaderName: uploaderName || undefined },
+            (p) => setUploads((u) => u.map((x) => x.id === item.id ? { ...x, pct: p } : x)));
+          setUploads((u) => u.map((x) => x.id === item.id ? { ...x, status: 'done', pct: 1, file: null } : x));
+        } catch (err) {
+          setUploads((u) => u.map((x) => x.id === item.id ? { ...x, status: 'error', file: null } : x));
+          toast(err.message, 'error');
+        }
+      }
+    });
+  };
+
+  if (!unlocked) {
+    return (
+      <Glass style={{ borderRadius: 'var(--r-lg)', padding: 20, maxWidth: 420 }}>
+        <div style={{ fontSize: 13.5, marginBottom: 10, color: 'var(--fg-2)' }}>Bitte Upload-Passwort eingeben.</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input type="password" autoFocus value={pwInput} onChange={(e) => setPwInput(e.target.value)} placeholder="Upload-Passwort"
+            onKeyDown={(e) => e.key === 'Enter' && doUnlock(pwInput)}
+            style={{ flex: 1, height: 40, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13.5, color: 'var(--fg)' }}/>
+          <Btn variant="primary" size="md" disabled={busy || !pwInput} onClick={() => doUnlock(pwInput)}>Öffnen</Btn>
+        </div>
+      </Glass>
+    );
+  }
+
+  const doneCount = uploads.filter((u) => u.status === 'done').length;
+  return (
+    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      <div style={{ flex: '1 1 340px', maxWidth: 420 }}>
+        {folders.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--fg-3)' }}>Aktuell ist kein Ordner für den Upload freigegeben.</div>
+        ) : (
+          <>
+            {folders.length > 1 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 6 }}>Ordner</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {folders.map((f) => (
+                    <button key={f.id} onClick={() => setFolderId(f.id)} style={{
+                      padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 540, cursor: 'pointer', fontFamily: 'inherit',
+                      border: '1.5px solid ' + (folderId === f.id ? 'var(--accent)' : 'var(--border)'),
+                      background: folderId === f.id ? 'var(--accent)' : 'var(--surface-hi)', color: folderId === f.id ? '#fff' : 'var(--fg)',
+                    }}>{f.name}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <input value={uploaderName} onChange={(e) => setUploaderName(e.target.value)} placeholder="Dein Name (optional)"
+              style={{ width: '100%', height: 40, padding: '0 12px', marginBottom: 10, borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}/>
+            <Dropzone onFiles={onFiles} label="Dateien hierher ziehen" sub="oder klicken zum Auswählen"/>
+          </>
+        )}
+      </div>
+      {uploads.length > 0 && (
+        <div style={{ flex: '1 1 260px', maxWidth: 320, width: '100%' }}>
+          <Glass style={{ borderRadius: 'var(--r-xl)', padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)' }}>Deine Uploads</span>
+              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{doneCount} / {uploads.length}</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
+              {uploads.map((f) => <UploadRow key={f.id} file={f}/>)}
+            </div>
+          </Glass>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PublicPortalPage({ token }) {
   const [data, setData] = useState(undefined);
   const [needPw, setNeedPw] = useState(false);
@@ -1016,7 +1139,14 @@ export function PublicPortalPage({ token }) {
           </div>
         )}
 
-        {files.length === 0 && docs.length === 0 && sigs.length === 0 && ups.length === 0 && (
+        {data.upload_enabled && (
+          <div style={{ marginTop: 28 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>Eigene Dateien hochladen</div>
+            <PortalUploadPanel token={token} viewPassword={pw} requiresUploadPassword={data.requires_upload_password}/>
+          </div>
+        )}
+
+        {files.length === 0 && docs.length === 0 && sigs.length === 0 && ups.length === 0 && !data.upload_enabled && (
           <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--fg-3)' }}>Noch keine Inhalte freigegeben.</div>
         )}
       </div>

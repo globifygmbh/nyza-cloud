@@ -466,6 +466,16 @@ export const API = {
   portalThumbUrl: (token, id, pw) => url('/api/portal/' + token + '/file/' + id + '/thumb') + (pw ? '?p=' + encodeURIComponent(pw) : ''),
   portalZipUrl:   (token, pw, ids) => url('/api/portal/' + token + '/zip') + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', (ids && ids.length) ? 'ids=' + ids.join(',') : ''].filter(Boolean).join('&'),
   portalDocUrl:   (token, docId, pw, dl) => url('/api/portal/' + token + '/doc/' + docId) + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', dl ? 'download=1' : ''].filter(Boolean).join('&'),
+  // Embedded portal upload — separate password + folder allow-list from the portal's own view password.
+  portalUploadUnlock: (token, uploadPassword, viewPassword) =>
+    request('/api/portal/' + token + '/upload-unlock', { method: 'POST', body: { upload_password: uploadPassword, password: viewPassword }, skipAuth: true }),
+  portalUpload: (token, file, opts = {}, onProgress) =>
+    upload('/api/portal/' + token + '/upload', file, {
+      folder_id: opts.folderId, upload_password: opts.uploadPassword, password: opts.viewPassword, uploader_name: opts.uploaderName,
+    }, onProgress),
+  portalChunkInit:     (token, body) => pub('/api/portal/' + token + '/upload/chunk/init', body),
+  portalChunkAppend:   (token, sid, blob, onProgress) => pubRaw('/api/portal/' + token + '/upload/chunk/' + sid, blob, onProgress),
+  portalChunkFinalize: (token, sid) => pub('/api/portal/' + token + '/upload/chunk/' + sid + '/finalize', {}),
   // ───── Textbausteine (snippets) ─────
   snippets:       (params = {}) => request('/api/snippets' + (Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '')),
   createSnippet:  (body) => request('/api/snippets', { method: 'POST', body }),

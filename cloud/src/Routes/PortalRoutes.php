@@ -41,6 +41,15 @@ final class PortalRoutes
         $app->get('/api/portal/{token}/file/{id}/thumb', [self::class, 'publicThumb']);
         $app->get('/api/portal/{token}/zip',         [self::class, 'publicZip']);
         $app->get('/api/portal/{token}/doc/{docId}', [self::class, 'publicDoc']);
+
+        // Public (customer side) — upload into owner-chosen folders. Gated by
+        // its own upload_password_hash, separate from the portal's view
+        // password. Upload-only: no delete/browse capability is exposed here.
+        $app->post('/api/portal/{token}/upload-unlock',        [self::class, 'uploadUnlock']);
+        $app->post('/api/portal/{token}/upload',                [self::class, 'upload']);
+        $app->post('/api/portal/{token}/upload/chunk/init',     [self::class, 'chunkInit']);
+        $app->post('/api/portal/{token}/upload/chunk/{sid}',    [self::class, 'chunkAppend']);
+        $app->post('/api/portal/{token}/upload/chunk/{sid}/finalize', [self::class, 'chunkFinalize']);
     }
 
     // ───── owner ────────────────────────────────────────────────────────────
@@ -63,9 +72,12 @@ final class PortalRoutes
         $name = trim((string)($b['name'] ?? '')) ?: 'Kundenportal';
         $token = Auth::randomToken(24);
         $hash = !empty($b['password']) ? password_hash((string)$b['password'], PASSWORD_BCRYPT) : null;
-        Database::pdo()->prepare('INSERT INTO portals (user_id, company_id, name, contact_id, intro, token, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?)')
-            ->execute([$uid, $cid, mb_substr($name, 0, 160), self::cid($b['contact_id'] ?? null), self::str($b['intro'] ?? null, 4000), $token, $hash]);
-        return Json::ok($res, ['portal' => self::detail($uid, (int)Database::pdo()->lastInsertId())], 201);
+        $uploadHash = !empty($b['upload_password']) ? password_hash((string)$b['upload_password'], PASSWORD_BCRYPT) : null;
+        Database::pdo()->prepare('INSERT INTO portals (user_id, company_id, name, contact_id, intro, token, password_hash, upload_password_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+            ->execute([$uid, $cid, mb_substr($name, 0, 160), self::cid($b['contact_id'] ?? null), self::str($b['intro'] ?? null, 4000), $token, $hash, $uploadHash]);
+        $id = (int)Database::pdo()->lastInsertId();
+        self::setUploadFolders($uid, $id, $b['upload_folder_ids'] ?? null);
+        return Json::ok($res, ['portal' => self::detail($uid, $id)], 201);
     }
 
     public static function show(Request $req, Response $res, array $args): Response
@@ -88,8 +100,27 @@ final class PortalRoutes
         if (array_key_exists('contact_id', $b)) { $sets[] = 'contact_id = ?'; $vals[] = self::cid($b['contact_id']); }
         if (!empty($b['clear_password'])) { $sets[] = 'password_hash = ?'; $vals[] = null; }
         elseif (array_key_exists('password', $b) && (string)$b['password'] !== '') { $sets[] = 'password_hash = ?'; $vals[] = password_hash((string)$b['password'], PASSWORD_BCRYPT); }
+        if (!empty($b['clear_upload_password'])) { $sets[] = 'upload_password_hash = ?'; $vals[] = null; }
+        elseif (array_key_exists('upload_password', $b) && (string)$b['upload_password'] !== '') { $sets[] = 'upload_password_hash = ?'; $vals[] = password_hash((string)$b['upload_password'], PASSWORD_BCRYPT); }
         if ($sets) { $vals[] = $id; $vals[] = $uid; Database::pdo()->prepare('UPDATE portals SET ' . implode(', ', $sets) . ' WHERE id = ? AND user_id = ?')->execute($vals); }
+        if (array_key_exists('upload_folder_ids', $b)) self::setUploadFolders($uid, $id, $b['upload_folder_ids']);
         return Json::ok($res, ['portal' => self::detail($uid, $id)]);
+    }
+
+    /** Full replace of a portal's allowed-upload folders (owner-verified each time). */
+    private static function setUploadFolders(int $uid, int $portalId, $ids): void
+    {
+        if (!is_array($ids)) return;
+        $pdo = Database::pdo();
+        $pdo->prepare('DELETE FROM portal_upload_folders WHERE portal_id = ?')->execute([$portalId]);
+        $ins = $pdo->prepare('INSERT IGNORE INTO portal_upload_folders (portal_id, folder_id) VALUES (?, ?)');
+        $check = $pdo->prepare('SELECT 1 FROM folders WHERE id = ? AND user_id = ?');
+        foreach ($ids as $fid) {
+            $fid = (int)$fid;
+            if ($fid <= 0) continue;
+            $check->execute([$fid, $uid]);
+            if ($check->fetch()) $ins->execute([$portalId, $fid]);
+        }
     }
 
     public static function delete(Request $req, Response $res, array $args): Response
@@ -160,6 +191,11 @@ final class PortalRoutes
             'documents' => self::collectDocuments($p),
             'signatures' => self::collectLinks((int)$p['id'], 'signature'),
             'uploads' => self::collectLinks((int)$p['id'], 'upload'),
+            // Embedded upload capability (separate from the legacy attached
+            // Upload-Links above) — folder names are only revealed once
+            // upload-unlock succeeds, not here.
+            'upload_enabled' => !empty(self::uploadFolderIds((int)$p['id'])),
+            'requires_upload_password' => !empty($p['upload_password_hash']),
         ]);
     }
 
@@ -241,6 +277,183 @@ final class PortalRoutes
         return $res->withHeader('Content-Type', 'application/pdf')
             ->withHeader('Content-Disposition', (empty($req->getQueryParams()['download']) ? 'inline' : 'attachment') . '; filename="' . addslashes((string)$doc['number']) . '.pdf"')
             ->withStatus(200);
+    }
+
+    // ───── public (customer) — embedded upload ────────────────────────────────
+    /** View-password + upload-password + folder-whitelist check for every upload call. */
+    private static function uploadGate(array $p, Request $req, ?int $folderId): ?array
+    {
+        if ($p['password_hash'] && !self::pwOk($p, $req)) return ['error' => 'password_required', 'status' => 401];
+        if (!empty($p['upload_password_hash']) && !self::uploadPwOk($p, $req)) return ['error' => 'upload_password_required', 'status' => 401];
+        if ($folderId === null || !isset(self::uploadFolderIds((int)$p['id'])[$folderId])) {
+            return ['error' => 'folder_not_allowed', 'status' => 403];
+        }
+        return null;
+    }
+
+    private static function uploadPwOk(array $p, Request $req): bool
+    {
+        $pw = $req->getQueryParams()['up'] ?? (((array)$req->getParsedBody())['upload_password'] ?? null);
+        return $pw !== null && password_verify((string)$pw, (string)$p['upload_password_hash']);
+    }
+
+    private static function uploadFolderIds(int $portalId): array
+    {
+        $ids = [];
+        $s = Database::pdo()->prepare('SELECT folder_id FROM portal_upload_folders WHERE portal_id = ?');
+        $s->execute([$portalId]);
+        foreach ($s->fetchAll() as $r) $ids[(int)$r['folder_id']] = true;
+        return $ids;
+    }
+
+    public static function uploadUnlock(Request $req, Response $res, array $args): Response
+    {
+        if (!\Nyza\RateLimiter::allowReq($req, 'portal_upload_unlock', 10, 300, $args['token'])) {
+            return Json::err($res, 'Zu viele Versuche — bitte später erneut', 429, 'rate_limited');
+        }
+        $p = self::byToken((string)$args['token']);
+        if (!$p) return Json::err($res, 'Not found', 404);
+        if ($p['password_hash'] && !self::pwOk($p, $req)) return Json::err($res, 'Passwort erforderlich', 401);
+        if (!empty($p['upload_password_hash'])) {
+            $pw = (string)(((array)$req->getParsedBody())['upload_password'] ?? '');
+            if ($pw === '' || !password_verify($pw, (string)$p['upload_password_hash'])) {
+                return Json::err($res, 'Falsches Passwort', 403, 'bad_password');
+            }
+        }
+        $s = Database::pdo()->prepare('SELECT f.id, f.name FROM portal_upload_folders u JOIN folders f ON f.id = u.folder_id WHERE u.portal_id = ? ORDER BY f.name');
+        $s->execute([(int)$p['id']]);
+        return Json::ok($res, ['ok' => true, 'folders' => array_map(static fn($r) => ['id' => (int)$r['id'], 'name' => $r['name']], $s->fetchAll())]);
+    }
+
+    public static function upload(Request $req, Response $res, array $args): Response
+    {
+        $p = self::byToken((string)$args['token']);
+        if (!$p) return Json::err($res, 'Not found', 404);
+        $b = (array)$req->getParsedBody();
+        $folderId = !empty($b['folder_id']) ? (int)$b['folder_id'] : null;
+        $err = self::uploadGate($p, $req, $folderId);
+        if ($err) return Json::err($res, $err['error'], $err['status']);
+
+        $files = $req->getUploadedFiles()['file'] ?? null;
+        if (!$files) return Json::err($res, 'No file', 422);
+        if (is_array($files)) $files = $files[0];
+        if ($files->getError() !== UPLOAD_ERR_OK) return Json::err($res, 'Upload failed', 400);
+
+        $size = (int)$files->getSize();
+        $name = $files->getClientFilename() ?: 'upload.bin';
+        $mime = $files->getClientMediaType() ?: 'application/octet-stream';
+        if (Storage::isDangerous($name)) {
+            return Json::err($res, 'Dieser Dateityp ist aus Sicherheitsgründen nicht erlaubt', 415, 'blocked_type');
+        }
+
+        $rel = Storage::relPath((int)$p['user_id'], $name);
+        $files->moveTo(Storage::abs($rel));
+
+        return self::recordUploadedFile($p, $folderId, $rel, $name, $mime, $size, $b['uploader_name'] ?? null, $res);
+    }
+
+    public static function chunkInit(Request $req, Response $res, array $args): Response
+    {
+        $p = self::byToken((string)$args['token']);
+        if (!$p) return Json::err($res, 'Not found', 404);
+        $b = (array)$req->getParsedBody();
+        $folderId = !empty($b['folder_id']) ? (int)$b['folder_id'] : null;
+        $err = self::uploadGate($p, $req, $folderId);
+        if ($err) return Json::err($res, $err['error'], $err['status']);
+
+        $name = (string)($b['file_name'] ?? '');
+        $size = (int)($b['total_size'] ?? 0);
+        $chunkSize = (int)($b['chunk_size'] ?? (10 * 1024 * 1024));
+        if ($name === '' || $size <= 0) return Json::err($res, 'file_name + total_size required', 422);
+        if (Storage::isDangerous($name)) return Json::err($res, 'Dieser Dateityp ist nicht erlaubt', 415, 'blocked_type');
+
+        $sid = bin2hex(random_bytes(12));
+        $tempPath = Storage::temp() . '/' . $sid . '.part';
+        touch($tempPath);
+        Database::pdo()->prepare(
+            'INSERT INTO upload_sessions (id, portal_id, user_id, folder_id, file_name, total_size, chunk_size, temp_path, uploader_name) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([$sid, (int)$p['id'], (int)$p['user_id'], $folderId, $name, $size, $chunkSize, $tempPath, $b['uploader_name'] ?? null]);
+
+        return Json::ok($res, ['session_id' => $sid, 'received' => 0, 'chunk_size' => $chunkSize], 201);
+    }
+
+    public static function chunkAppend(Request $req, Response $res, array $args): Response
+    {
+        $p = self::byToken((string)$args['token']);
+        if (!$p) return Json::err($res, 'Not found', 404);
+        $sid = $args['sid'];
+        $stmt = Database::pdo()->prepare('SELECT * FROM upload_sessions WHERE id = ? AND portal_id = ?');
+        $stmt->execute([$sid, (int)$p['id']]);
+        $s = $stmt->fetch();
+        if (!$s) return Json::err($res, 'Session not found', 404);
+        if ($s['status'] !== 'open') return Json::err($res, 'Session closed', 409);
+
+        $body = (string) $req->getBody();
+        if ($body === '') {
+            $files = $req->getUploadedFiles()['chunk'] ?? null;
+            if ($files) { if (is_array($files)) $files = $files[0]; $body = (string) $files->getStream(); }
+        }
+        if ($body === '') return Json::err($res, 'Empty chunk', 400);
+
+        $fp = fopen($s['temp_path'], 'ab');
+        fwrite($fp, $body);
+        fclose($fp);
+
+        $received = (int)$s['received'] + strlen($body);
+        Database::pdo()->prepare('UPDATE upload_sessions SET received = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            ->execute([$received, $sid]);
+
+        return Json::ok($res, ['received' => $received, 'total' => (int)$s['total_size']]);
+    }
+
+    public static function chunkFinalize(Request $req, Response $res, array $args): Response
+    {
+        $p = self::byToken((string)$args['token']);
+        if (!$p) return Json::err($res, 'Not found', 404);
+        $sid = $args['sid'];
+        $stmt = Database::pdo()->prepare('SELECT * FROM upload_sessions WHERE id = ? AND portal_id = ?');
+        $stmt->execute([$sid, (int)$p['id']]);
+        $s = $stmt->fetch();
+        if (!$s) return Json::err($res, 'Session not found', 404);
+        if ($s['status'] !== 'open') return Json::err($res, 'Already finalized', 409);
+        if ((int)$s['received'] < (int)$s['total_size']) {
+            return Json::err($res, 'Incomplete: received ' . $s['received'] . ' / ' . $s['total_size'], 400);
+        }
+
+        $rel = Storage::relPath((int)$s['user_id'], $s['file_name']);
+        $abs = Storage::abs($rel);
+        if (!@rename($s['temp_path'], $abs)) {
+            if (!@copy($s['temp_path'], $abs)) return Json::err($res, 'Move failed', 500);
+            @unlink($s['temp_path']);
+        }
+
+        $size = (int)$s['total_size'];
+        $name = $s['file_name'];
+        $mime = mime_content_type($abs) ?: 'application/octet-stream';
+        Database::pdo()->prepare("UPDATE upload_sessions SET status = 'finalized' WHERE id = ?")->execute([$sid]);
+
+        return self::recordUploadedFile($p, (int)$s['folder_id'], $rel, $name, $mime, $size, $s['uploader_name'], $res);
+    }
+
+    private static function recordUploadedFile(array $p, int $folderId, string $rel, string $name, string $mime, int $size, ?string $uploaderName, Response $res): Response
+    {
+        $kind = Storage::kindFromMime($mime);
+        $hue = (crc32($name) % 360);
+        $pdo = Database::pdo();
+        $pdo->prepare(
+            'INSERT INTO files (user_id, folder_id, name, storage_path, mime_type, size, kind, hue, uploader_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([(int)$p['user_id'], $folderId, $name, $rel, $mime, $size, $kind, $hue, $uploaderName]);
+        $id = (int)$pdo->lastInsertId();
+
+        $pdo->prepare('UPDATE users SET storage_used = storage_used + ? WHERE id = ?')->execute([$size, (int)$p['user_id']]);
+        $pdo->prepare("INSERT INTO activity (user_id, kind, payload) VALUES (?, 'portal_upload', ?)")
+            ->execute([(int)$p['user_id'], json_encode([
+                'file_id' => $id, 'name' => $name, 'size' => $size,
+                'portal_id' => (int)$p['id'], 'portal_name' => $p['name'], 'uploader_name' => $uploaderName,
+            ])]);
+
+        return Json::ok($res, ['file' => ['id' => $id, 'name' => $name, 'size' => $size, 'kind' => $kind, 'mime_type' => $mime]], 201);
     }
 
     private static function stream(Request $req, Response $res, array $args, bool $thumb): Response
@@ -328,6 +541,9 @@ final class PortalRoutes
                 'is_folder' => $r['folder_id'] !== null,
             ];
         }, $items->fetchAll());
+        $uf = Database::pdo()->prepare('SELECT f.id, f.name FROM portal_upload_folders u JOIN folders f ON f.id = u.folder_id WHERE u.portal_id = ? ORDER BY f.name');
+        $uf->execute([$id]);
+        $out['upload_folders'] = array_map(static fn($r) => ['id' => (int)$r['id'], 'name' => $r['name']], $uf->fetchAll());
         return $out;
     }
 
@@ -338,6 +554,7 @@ final class PortalRoutes
             'contact_id' => $p['contact_id'] !== null ? (int)$p['contact_id'] : null,
             'contact_name' => $p['contact_name'] ?? null,
             'intro' => $p['intro'], 'has_password' => !empty($p['password_hash']),
+            'has_upload_password' => !empty($p['upload_password_hash']),
             'items' => (int)($p['items'] ?? 0), 'created_at' => $p['created_at'] ?? null,
         ];
     }
