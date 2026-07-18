@@ -476,6 +476,13 @@ export const API = {
   portalChunkInit:     (token, body) => pub('/api/portal/' + token + '/upload/chunk/init', body),
   portalChunkAppend:   (token, sid, blob, onProgress) => pubRaw('/api/portal/' + token + '/upload/chunk/' + sid, blob, onProgress),
   portalChunkFinalize: (token, sid) => pub('/api/portal/' + token + '/upload/chunk/' + sid + '/finalize', {}),
+  // Read-only browsing of an allowed upload folder's existing contents.
+  portalUploadFolderFiles: (token, folderId, uploadPw, viewPw) =>
+    request('/api/portal/' + token + '/upload-folder/' + folderId + '?' + [viewPw ? 'p=' + encodeURIComponent(viewPw) : '', uploadPw ? 'up=' + encodeURIComponent(uploadPw) : ''].filter(Boolean).join('&'), { skipAuth: true }),
+  portalUploadFolderFileUrl: (token, folderId, fileId, viewPw, uploadPw, dl) =>
+    url('/api/portal/' + token + '/upload-folder/' + folderId + '/file/' + fileId) + '?' + [viewPw ? 'p=' + encodeURIComponent(viewPw) : '', uploadPw ? 'up=' + encodeURIComponent(uploadPw) : '', dl ? 'download=1' : ''].filter(Boolean).join('&'),
+  portalUploadFolderThumbUrl: (token, folderId, fileId, viewPw, uploadPw) =>
+    url('/api/portal/' + token + '/upload-folder/' + folderId + '/file/' + fileId + '/thumb') + '?' + [viewPw ? 'p=' + encodeURIComponent(viewPw) : '', uploadPw ? 'up=' + encodeURIComponent(uploadPw) : ''].filter(Boolean).join('&'),
   // ───── Textbausteine (snippets) ─────
   snippets:       (params = {}) => request('/api/snippets' + (Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '')),
   createSnippet:  (body) => request('/api/snippets', { method: 'POST', body }),

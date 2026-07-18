@@ -7,7 +7,7 @@ import {
   Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
   humanSize, applyAccent,
 } from './system.jsx';
-import { Dropzone, UploadRow, MediaViewer, UploadReview } from './app.jsx';
+import { Dropzone, UploadRow, MediaViewer, UploadReview, folderTone } from './app.jsx';
 import { uploadClient, uploadPortal, withUploadLock } from './uploads.js';
 import { toast } from './toast.jsx';
 
@@ -917,32 +917,81 @@ export function PublicFormPage({ token }) {
 }
 
 // ───── Public customer portal (/portal/:token) ──────────────────────────────
-// Embedded upload widget on the portal page itself — separate password from
-// the portal's view password (may be none at all), destination limited to
-// whatever folders the owner picked. Upload-only: no browse/delete here.
-function PortalUploadPanel({ token, viewPassword, requiresUploadPassword }) {
+// Folder tile matching the owner's own FolderCard look (gradient header in
+// the folder's own tone, name + item count + size) — read-only, no kebab menu.
+function PortalFolderTile({ folder, onClick }) {
+  const t = folderTone(folder.tone);
+  const tones = t.h, cc = t.c;
+  return (
+    <div onClick={onClick} style={{
+      borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)',
+      overflow: 'hidden', cursor: 'pointer', transition: 'transform .2s',
+      boxShadow: '0 1px 0 var(--inner-hi) inset, 0 8px 24px -12px rgba(0,0,0,0.25)',
+    }}
+    onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
+    onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}>
+      <div style={{
+        height: 100, position: 'relative',
+        background: `linear-gradient(135deg, oklch(0.4 ${0.12 * cc} ${tones[0]} / 0.5), oklch(0.3 ${0.08 * cc} ${tones[1]} / 0.7))`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <div style={{
+          width: 52, height: 52, borderRadius: 'var(--r-md)',
+          background: `linear-gradient(135deg, oklch(0.7 ${0.18 * cc} ${tones[0]}), oklch(0.55 ${0.2 * cc} ${tones[1]}))`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff',
+          boxShadow: '0 1px 0 rgba(255,255,255,0.3) inset, 0 8px 24px -8px oklch(0.65 ' + (0.2 * cc) + ' ' + tones[0] + ' / 0.6)',
+        }}>{Ic.folder(24)}</div>
+      </div>
+      <div style={{ padding: '12px 14px' }}>
+        <div style={{ fontSize: 14, fontWeight: 540, marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{folder.name}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: 'var(--fg-3)' }}>
+          <span>{folder.item_count || 0} Dateien</span>
+          <span style={{ width: 2, height: 2, borderRadius: 1, background: 'var(--fg-4)' }}/>
+          <span>{humanSize(folder.total_size || 0)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Embedded upload area on the portal page itself — separate password from
+// the portal's view password (may be none at all). Looks/behaves like the
+// owner's own folder browsing: folder tiles → click in → breadcrumb, file
+// grid, drag-and-drop or an Hochladen button. Upload-only: no delete.
+function PortalUploadPanel({ token, portalName, viewPassword, requiresUploadPassword }) {
   const [unlocked, setUnlocked] = useState(false);
   const [pwInput, setPwInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [folders, setFolders] = useState([]);
-  const [folderId, setFolderId] = useState(null);
-  const [uploaderName, setUploaderName] = useState('');
+  const [openFolder, setOpenFolder] = useState(null);
+  const [openFiles, setOpenFiles] = useState([]);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [uploads, setUploads] = useState([]);
   const uploadIdRef = useRef(0);
+  const fileInputRef = useRef(null);
 
   const doUnlock = async (pw) => {
     setBusy(true);
     try {
       const d = await API.portalUploadUnlock(token, pw, viewPassword);
       setFolders(d.folders || []);
-      if ((d.folders || []).length === 1) setFolderId(d.folders[0].id);
       setUnlocked(true);
     } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
   };
   useEffect(() => { if (!requiresUploadPassword) doUnlock(''); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const loadFiles = (folder) => {
+    setFilesLoading(true);
+    API.portalUploadFolderFiles(token, folder.id, pwInput, viewPassword)
+      .then((d) => setOpenFiles(d.files || []))
+      .catch((e) => toast(e.message, 'error'))
+      .finally(() => setFilesLoading(false));
+  };
+  const openFolderView = (folder) => { setOpenFolder(folder); loadFiles(folder); };
+
   const onFiles = (files) => {
-    if (!folderId) { toast('Bitte zuerst einen Ordner wählen', 'error'); return; }
+    if (!openFolder) return;
     const items = files.map((f) => ({
       id: ++uploadIdRef.current, name: f.name, size: f.size, status: 'queued', pct: 0,
       kind: f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type === 'application/pdf' ? 'pdf' : 'doc',
@@ -953,9 +1002,10 @@ function PortalUploadPanel({ token, viewPassword, requiresUploadPassword }) {
       for (const item of items) {
         setUploads((u) => u.map((x) => x.id === item.id ? { ...x, status: 'uploading' } : x));
         try {
-          await uploadPortal(token, item.file, { folderId, uploadPassword: pwInput || undefined, viewPassword, uploaderName: uploaderName || undefined },
+          await uploadPortal(token, item.file, { folderId: openFolder.id, uploadPassword: pwInput || undefined, viewPassword },
             (p) => setUploads((u) => u.map((x) => x.id === item.id ? { ...x, pct: p } : x)));
           setUploads((u) => u.map((x) => x.id === item.id ? { ...x, status: 'done', pct: 1, file: null } : x));
+          setOpenFiles((of) => [{ id: 'up' + item.id, name: item.name, kind: item.kind, size: item.size, hue: 280 }, ...of]);
         } catch (err) {
           setUploads((u) => u.map((x) => x.id === item.id ? { ...x, status: 'error', file: null } : x));
           toast(err.message, 'error');
@@ -978,47 +1028,75 @@ function PortalUploadPanel({ token, viewPassword, requiresUploadPassword }) {
     );
   }
 
+  if (folders.length === 0) {
+    return <div style={{ fontSize: 13, color: 'var(--fg-3)' }}>Aktuell ist kein Ordner für den Upload freigegeben.</div>;
+  }
+
+  // ── Home: folder tiles ─────────────────────────────────────────────────
+  if (!openFolder) {
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 14 }}>
+        {folders.map((f) => <PortalFolderTile key={f.id} folder={f} onClick={() => openFolderView(f)}/>)}
+      </div>
+    );
+  }
+
+  // ── Inside a folder: breadcrumb, drop zone, file grid, upload button ────
   const doneCount = uploads.filter((u) => u.status === 'done').length;
+  const activeUploads = uploads.filter((u) => u.status !== 'done' && u.status !== 'error');
   return (
-    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-      <div style={{ flex: '1 1 340px', maxWidth: 420 }}>
-        {folders.length === 0 ? (
-          <div style={{ fontSize: 13, color: 'var(--fg-3)' }}>Aktuell ist kein Ordner für den Upload freigegeben.</div>
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--fg-3)', flex: 1, minWidth: 0 }}>
+          <span style={{ cursor: 'pointer', color: 'var(--accent)', fontWeight: 540 }} onClick={() => setOpenFolder(null)}>{portalName || 'Alle Ordner'}</span>
+          <span>/</span>
+          <span style={{ color: 'var(--fg)', fontWeight: 540, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{openFolder.name}</span>
+        </div>
+        <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }}
+          onChange={(e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; if (fs.length) onFiles(fs); }}/>
+        <Btn variant="primary" size="md" icon={Ic.upload(15)} onClick={() => fileInputRef.current?.click()}>Hochladen</Btn>
+      </div>
+
+      {activeUploads.length > 0 && (
+        <Glass style={{ borderRadius: 'var(--r-lg)', padding: 14, marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)', marginBottom: 8 }}>Wird hochgeladen · {doneCount} / {uploads.length}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto' }}>
+            {activeUploads.map((f) => <UploadRow key={f.id} file={f}/>)}
+          </div>
+        </Glass>
+      )}
+
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); const fs = Array.from(e.dataTransfer.files || []); if (fs.length) onFiles(fs); }}
+        style={{ borderRadius: 'var(--r-lg)', outline: dragOver ? '2px dashed var(--accent)' : 'none', outlineOffset: -8, minHeight: 200, transition: 'outline .15s' }}>
+        {filesLoading ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--fg-3)' }}>Lädt…</div>
+        ) : openFiles.length === 0 ? (
+          <div onClick={() => fileInputRef.current?.click()} style={{
+            padding: '56px 24px', textAlign: 'center', cursor: 'pointer', borderRadius: 'var(--r-lg)',
+            border: '2px dashed var(--border-hi)', background: 'var(--surface)',
+          }}>
+            <div style={{ color: 'var(--accent)', marginBottom: 10 }}>{Ic.upload(32)}</div>
+            <div style={{ fontSize: 14.5, fontWeight: 540 }}>Datei hierher ziehen</div>
+            <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 4 }}>oder klicken zum Auswählen</div>
+          </div>
         ) : (
-          <>
-            {folders.length > 1 && (
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', marginBottom: 6 }}>Ordner</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {folders.map((f) => (
-                    <button key={f.id} onClick={() => setFolderId(f.id)} style={{
-                      padding: '7px 12px', borderRadius: 999, fontSize: 12.5, fontWeight: 540, cursor: 'pointer', fontFamily: 'inherit',
-                      border: '1.5px solid ' + (folderId === f.id ? 'var(--accent)' : 'var(--border)'),
-                      background: folderId === f.id ? 'var(--accent)' : 'var(--surface-hi)', color: folderId === f.id ? '#fff' : 'var(--fg)',
-                    }}>{f.name}</button>
-                  ))}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
+            {openFiles.map((f) => (
+              <div key={f.id} style={{ borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                <div style={{ aspectRatio: '1/1', background: 'var(--surface-hi)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {f.kind === 'image' && typeof f.id === 'number'
+                    ? <img src={API.portalUploadFolderThumbUrl(token, openFolder.id, f.id, viewPassword, pwInput)} alt={f.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+                    : <FileIcon kind={f.kind} size={30} tint={f.hue}/>}
                 </div>
+                <div style={{ padding: '8px 10px', fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
               </div>
-            )}
-            <input value={uploaderName} onChange={(e) => setUploaderName(e.target.value)} placeholder="Dein Name (optional)"
-              style={{ width: '100%', height: 40, padding: '0 12px', marginBottom: 10, borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}/>
-            <Dropzone onFiles={onFiles} label="Dateien hierher ziehen" sub="oder klicken zum Auswählen"/>
-          </>
+            ))}
+          </div>
         )}
       </div>
-      {uploads.length > 0 && (
-        <div style={{ flex: '1 1 260px', maxWidth: 320, width: '100%' }}>
-          <Glass style={{ borderRadius: 'var(--r-xl)', padding: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)' }}>Deine Uploads</span>
-              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{doneCount} / {uploads.length}</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
-              {uploads.map((f) => <UploadRow key={f.id} file={f}/>)}
-            </div>
-          </Glass>
-        </div>
-      )}
     </div>
   );
 }
@@ -1142,7 +1220,7 @@ export function PublicPortalPage({ token }) {
         {data.upload_enabled && (
           <div style={{ marginTop: 28 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>Eigene Dateien hochladen</div>
-            <PortalUploadPanel token={token} viewPassword={pw} requiresUploadPassword={data.requires_upload_password}/>
+            <PortalUploadPanel token={token} portalName={data.name} viewPassword={pw} requiresUploadPassword={data.requires_upload_password}/>
           </div>
         )}
 

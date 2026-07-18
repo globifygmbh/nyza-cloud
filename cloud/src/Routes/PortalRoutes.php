@@ -50,6 +50,12 @@ final class PortalRoutes
         $app->post('/api/portal/{token}/upload/chunk/init',     [self::class, 'chunkInit']);
         $app->post('/api/portal/{token}/upload/chunk/{sid}',    [self::class, 'chunkAppend']);
         $app->post('/api/portal/{token}/upload/chunk/{sid}/finalize', [self::class, 'chunkFinalize']);
+
+        // Read-only browsing of an allowed upload folder's existing contents
+        // (so the customer sees what's already there, not just an upload box).
+        $app->get('/api/portal/{token}/upload-folder/{fid}',                 [self::class, 'uploadFolderShow']);
+        $app->get('/api/portal/{token}/upload-folder/{fid}/file/{id}',       [self::class, 'uploadFolderFile']);
+        $app->get('/api/portal/{token}/upload-folder/{fid}/file/{id}/thumb', [self::class, 'uploadFolderThumb']);
     }
 
     // ───── owner ────────────────────────────────────────────────────────────
@@ -320,9 +326,82 @@ final class PortalRoutes
                 return Json::err($res, 'Falsches Passwort', 403, 'bad_password');
             }
         }
-        $s = Database::pdo()->prepare('SELECT f.id, f.name FROM portal_upload_folders u JOIN folders f ON f.id = u.folder_id WHERE u.portal_id = ? ORDER BY f.name');
-        $s->execute([(int)$p['id']]);
-        return Json::ok($res, ['ok' => true, 'folders' => array_map(static fn($r) => ['id' => (int)$r['id'], 'name' => $r['name']], $s->fetchAll())]);
+        return Json::ok($res, ['ok' => true, 'folders' => self::uploadFoldersDetailed((int)$p['id'])]);
+    }
+
+    /** Allowed upload folders with the same at-a-glance metadata the owner
+     *  sees in their own folder tiles (tone, item count, size). */
+    private static function uploadFoldersDetailed(int $portalId): array
+    {
+        $s = Database::pdo()->prepare(
+            'SELECT f.id, f.name, f.tone, f.kind, '
+            . '(SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
+            . '(SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
+            . 'FROM portal_upload_folders u JOIN folders f ON f.id = u.folder_id WHERE u.portal_id = ? ORDER BY f.name'
+        );
+        $s->execute([$portalId]);
+        return array_map(static fn($r) => [
+            'id' => (int)$r['id'], 'name' => $r['name'], 'tone' => $r['tone'], 'kind' => $r['kind'],
+            'item_count' => (int)$r['item_count'], 'total_size' => (int)$r['total_size'],
+        ], $s->fetchAll());
+    }
+
+    public static function uploadFolderShow(Request $req, Response $res, array $args): Response
+    {
+        $p = self::byToken((string)$args['token']);
+        if (!$p) return Json::err($res, 'Not found', 404);
+        $folderId = (int)$args['fid'];
+        $err = self::uploadGate($p, $req, $folderId);
+        if ($err) return Json::err($res, $err['error'], $err['status']);
+        $s = Database::pdo()->prepare('SELECT * FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY pinned DESC, created_at DESC');
+        $s->execute([$folderId]);
+        return Json::ok($res, ['files' => array_map(static fn($f) => [
+            'id' => (int)$f['id'], 'name' => $f['name'], 'kind' => $f['kind'], 'size' => (int)$f['size'],
+            'hue' => (int)$f['hue'], 'created_at' => $f['created_at'] ?? null,
+        ], $s->fetchAll())]);
+    }
+
+    public static function uploadFolderFile(Request $req, Response $res, array $args): Response
+    {
+        return self::streamUploadFolderFile($req, $res, $args);
+    }
+
+    public static function uploadFolderThumb(Request $req, Response $res, array $args): Response
+    {
+        $p = self::byToken((string)$args['token']);
+        if (!$p) return Json::err($res, 'Not found', 404);
+        $folderId = (int)$args['fid'];
+        $err = self::uploadGate($p, $req, $folderId);
+        if ($err) return Json::err($res, $err['error'], $err['status']);
+        $f = Database::pdo()->prepare('SELECT * FROM files WHERE id = ? AND folder_id = ? AND deleted_at IS NULL');
+        $f->execute([(int)$args['id'], $folderId]);
+        $row = $f->fetch();
+        if (!$row) return Json::err($res, 'Not found', 404);
+        return FileRoutes::serveThumb($res, $row);
+    }
+
+    private static function streamUploadFolderFile(Request $req, Response $res, array $args): Response
+    {
+        $p = self::byToken((string)$args['token']);
+        if (!$p) return Json::err($res, 'Not found', 404);
+        $folderId = (int)$args['fid'];
+        $err = self::uploadGate($p, $req, $folderId);
+        if ($err) return Json::err($res, $err['error'], $err['status']);
+        $f = Database::pdo()->prepare('SELECT * FROM files WHERE id = ? AND folder_id = ? AND deleted_at IS NULL');
+        $f->execute([(int)$args['id'], $folderId]);
+        $row = $f->fetch();
+        if (!$row) return Json::err($res, 'Not found', 404);
+        $abs = Storage::abs($row['storage_path']);
+        if (!is_file($abs)) return Json::err($res, 'Not found', 404);
+        $download = !empty($req->getQueryParams()['download']);
+        $mime = $row['mime_type'] ?: 'application/octet-stream';
+        if (Storage::mustDownload($mime)) $mime = 'application/octet-stream';
+        return $res
+            ->withHeader('Content-Type', $mime)
+            ->withHeader('Content-Disposition', ($download ? 'attachment' : 'inline') . '; filename="' . addslashes((string)$row['name']) . '"')
+            ->withHeader('X-Content-Type-Options', 'nosniff')
+            ->withBody(new Stream(fopen($abs, 'rb')))
+            ->withStatus(200);
     }
 
     public static function upload(Request $req, Response $res, array $args): Response

@@ -1412,7 +1412,7 @@ const FOLDER_TONES = {
 };
 // Order shown in the colour picker.
 const FOLDER_COLOR_KEYS = ['violet', 'blue', 'teal', 'green', 'yellow', 'orange', 'red', 'pink', 'gray'];
-function folderTone(key) { return FOLDER_TONES[key] || FOLDER_TONES.violet; }
+export function folderTone(key) { return FOLDER_TONES[key] || FOLDER_TONES.violet; }
 function folderDot(key) { const t = folderTone(key); return `oklch(0.68 ${0.2 * t.c} ${t.h[0]})`; }
 const FOLDER_SWATCHES = FOLDER_COLOR_KEYS.map((k) => ({ key: k, label: FOLDER_TONES[k].label, dot: folderDot(k) }));
 
