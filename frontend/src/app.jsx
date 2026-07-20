@@ -5459,7 +5459,7 @@ function ContactsApp({ onBack }) {
             desc={search ? 'Keine Kontakte zu deiner Suche.' : 'Lege Kontakte an und markiere sie bei Bedarf als Kunde.'}
             actions={!search && <Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({ kind: 'person' })}>Neuer Kontakt</Btn>}/>
         ) : (
-          <div style={{ display: 'grid', gap: 8, maxWidth: 860 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 860 }}>
             {contacts.map((c) => (
               <div key={c.id} className="nyza-listrow" onClick={() => setEditing(c)}
                 style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
@@ -7562,7 +7562,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
             <EmptyHint icon={Ic.archive(40)} title="Keine Ausgaben" desc="Erfasse Kosten mit USt/Vorsteuer und hänge optional einen Beleg an."
               actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setExpEditing({ category: 'Sonstiges', tax_rate: 20, deductible: 1 })}>Neue Ausgabe</Btn>}/>
           ) : (
-            <div style={{ display: 'grid', gap: 8, maxWidth: 860 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 860 }}>
               {exps.map((x) => (
                 <div key={x.id} className="nyza-listrow" onClick={() => setExpEditing(x)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
                   <div style={{ fontSize: 12, color: 'var(--fg-3)', fontVariantNumeric: 'tabular-nums', width: 78, flexShrink: 0 }}>{fmtDateShort(x.exp_date)}</div>
@@ -7596,7 +7596,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
             <EmptyHint icon={Ic.copy(40)} title="Keine Abos" desc="Lege wiederkehrende Leistungen an — das System erzeugt automatisch fällige Perioden."
               actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setSubEditing({ interval_unit: 'monthly', tax_rate: 20, active: 1 })}>Neues Abo</Btn>}/>
           ) : (
-            <div style={{ display: 'grid', gap: 8, maxWidth: 860 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 860 }}>
               {subs.map((s) => {
                 const iv = SUB_INTERVALS[s.interval_unit] || s.interval_unit;
                 const cp = s.current_period;
@@ -7634,7 +7634,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
           <EmptyHint icon={Ic.fileGen(40)} title={tab === 'offer' ? 'Keine Angebote' : 'Keine Rechnungen'} desc="Erstelle dein erstes Dokument. Tipp: Firmenprofil in den Einstellungen ausfüllen."
             actions={<><Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({ type: tab })}>{tab === 'offer' ? 'Neues Angebot' : 'Neue Rechnung'}</Btn><Btn variant="glass" size="md" icon={Ic.cog(14)} onClick={onOpenSettings}>Firmenprofil</Btn></>}/>
         ) : (
-          <div style={{ display: 'grid', gap: 8, maxWidth: 860 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 860 }}>
             {docs.map((d) => {
               const st = DOC_STATUS[d.payment_status] || DOC_STATUS.open;
               const docKebabItems = () => [
