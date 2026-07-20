@@ -7436,6 +7436,7 @@ function fmtEUR(n) { return (Number(n) || 0).toLocaleString('de-AT', { minimumFr
 function fmtDateShort(s) { return s ? new Date(s + 'T00:00:00').toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'; }
 
 function BuchhaltungApp({ onBack, onOpenSettings }) {
+  const isMobile = useIsMobile();
   const [tab, setTab] = useState('invoice');
   const [docs, setDocs] = useState(null);
   const [subs, setSubs] = useState(null);
@@ -7636,6 +7637,56 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
           <div style={{ display: 'grid', gap: 8, maxWidth: 860 }}>
             {docs.map((d) => {
               const st = DOC_STATUS[d.payment_status] || DOC_STATUS.open;
+              const docKebabItems = () => [
+                { label: 'PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.docPdfUrl(d.id, false), '_blank') },
+                { label: 'PDF herunterladen', icon: Ic.download(15), onClick: () => { window.location.href = API.docPdfUrl(d.id, true); } },
+                { label: 'Per E-Mail senden', icon: Ic.inbox(15), onClick: () => setEmailDoc(d) },
+                { label: d.archived_file_id ? 'Erneut im DMS archivieren' : 'Im DMS archivieren', icon: Ic.archive(15), onClick: () => archiveDoc(d) },
+                { label: 'Tags…', icon: Ic.bolt(15), onClick: () => setTagTarget({ type: 'document', id: d.id, name: d.number }) },
+                { separator: true },
+                { label: 'Zur Unterschrift senden', icon: Ic.check(15), onClick: () => setSignDoc(d) },
+                { label: 'Signiertes PDF hochladen', icon: Ic.upload(15), onClick: () => uploadSignedFor(d) },
+                ...(d.signed_file_id ? [{ label: 'Signiertes PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.fileRawUrl(d.signed_file_id) + '?token=' + (getToken() || ''), '_blank') }] : []),
+                d.signed_at
+                  ? { label: 'Signatur zurücksetzen', icon: Ic.rotate(15), onClick: () => unmarkSigned(d) }
+                  : { label: 'Als unterschrieben markieren', icon: Ic.check(15), onClick: () => markSigned(d) },
+                { separator: true },
+                { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => openDoc(d.id) },
+                ...(d.type === 'invoice' ? [{ label: d.paid_at ? 'Als offen markieren' : 'Als bezahlt markieren', icon: Ic.check(15), onClick: () => togglePaid(d) }] : []),
+                ...(d.type === 'invoice' && !d.paid_at && (d.reminder_stage || 0) < 3 ? [{ label: (d.reminder_stage || 0) + 1 + '. Mahnung erstellen', icon: Ic.clock(15), onClick: () => createReminder(d) }] : []),
+                ...(d.type === 'invoice' && (d.reminder_stage || 0) > 0 ? [{ label: 'Letzte Mahnung (PDF)', icon: Ic.eye(15), onClick: () => lastReminderPdf(d) }, { label: 'Mahnung zurücksetzen', icon: Ic.rotate(15), onClick: () => removeLastReminder(d) }] : []),
+                ...(d.type === 'offer' ? [{ label: 'In Rechnung umwandeln', icon: Ic.copy(15), onClick: () => convert(d) }] : []),
+                { separator: true },
+                { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => delDoc(d) },
+              ];
+              const kebab = (
+                <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, docKebabItems()); }}
+                  style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
+              );
+              const badges = (
+                <>
+                  <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + st.color + ' 18%, transparent)', color: st.color, textTransform: 'uppercase', flexShrink: 0 }}>{st.label}</span>
+                  {d.signed_at && <span title="Unterschrieben" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, #7c3aed 20%, transparent)', color: '#7c3aed', textTransform: 'uppercase', flexShrink: 0 }}>✓ Signiert</span>}
+                  {d.reminder_stage > 0 && <span title="Mahnstufe" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, #ef4444 18%, transparent)', color: '#ef4444', flexShrink: 0 }}>{d.reminder_stage}. MAHN.</span>}
+                  {d.archived_file_id ? <span title="Im DMS archiviert" style={{ color: '#22c55e', display: 'inline-flex', flexShrink: 0 }}>{Ic.archive(14)}</span> : null}
+                </>
+              );
+              if (isMobile) {
+                return (
+                  <div key={d.id} className="nyza-listrow" onClick={() => openDoc(d.id)} style={{ padding: '12px 14px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.contact_name || d.client_snapshot?.name || 'Ohne Kunde'}</div>
+                        <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{d.number} · {fmtDateShort(d.doc_date)}</div>
+                      </div>
+                      <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtEUR(d.gross)}</div>
+                      {kebab}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>{badges}</div>
+                    {docTags.idsFor(d.id).length > 0 && <div style={{ marginTop: 6 }}><TagChips ids={docTags.idsFor(d.id)} tags={docTags.tags} small/></div>}
+                  </div>
+                );
+              }
               return (
                 <div key={d.id} className="nyza-listrow" onClick={() => openDoc(d.id)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
                   <div style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums', width: 92, flexShrink: 0 }}>{d.number}</div>
@@ -7644,36 +7695,11 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                     <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{fmtDateShort(d.doc_date)}</div>
                     {docTags.idsFor(d.id).length > 0 && <div style={{ marginTop: 5 }}><TagChips ids={docTags.idsFor(d.id)} tags={docTags.tags} small/></div>}
                   </div>
-                  <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + st.color + ' 18%, transparent)', color: st.color, textTransform: 'uppercase', flexShrink: 0 }}>{st.label}</span>
-                  {d.signed_at && <span title="Unterschrieben" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, #7c3aed 20%, transparent)', color: '#7c3aed', textTransform: 'uppercase', flexShrink: 0 }}>✓ Signiert</span>}
-                  {d.reminder_stage > 0 && <span title="Mahnstufe" style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, #ef4444 18%, transparent)', color: '#ef4444', flexShrink: 0 }}>{d.reminder_stage}. MAHN.</span>}
+                  {badges}
                   <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', width: 110, textAlign: 'right', flexShrink: 0 }}>{fmtEUR(d.gross)}</div>
-                  {d.archived_file_id ? <span title="Im DMS archiviert" style={{ color: '#22c55e', display: 'inline-flex', flexShrink: 0 }}>{Ic.archive(15)}</span> : null}
                   <span title="PDF öffnen" onClick={(e) => { e.stopPropagation(); window.open(API.docPdfUrl(d.id, false), '_blank'); }} style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.eye(16)}</span>
                   <span title="PDF herunterladen" onClick={(e) => { e.stopPropagation(); window.location.href = API.docPdfUrl(d.id, true); }} style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.download(16)}</span>
-                  <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
-                    { label: 'PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.docPdfUrl(d.id, false), '_blank') },
-                    { label: 'PDF herunterladen', icon: Ic.download(15), onClick: () => { window.location.href = API.docPdfUrl(d.id, true); } },
-                    { label: 'Per E-Mail senden', icon: Ic.inbox(15), onClick: () => setEmailDoc(d) },
-                    { label: d.archived_file_id ? 'Erneut im DMS archivieren' : 'Im DMS archivieren', icon: Ic.archive(15), onClick: () => archiveDoc(d) },
-                    { label: 'Tags…', icon: Ic.bolt(15), onClick: () => setTagTarget({ type: 'document', id: d.id, name: d.number }) },
-                    { separator: true },
-                    { label: 'Zur Unterschrift senden', icon: Ic.check(15), onClick: () => setSignDoc(d) },
-                    { label: 'Signiertes PDF hochladen', icon: Ic.upload(15), onClick: () => uploadSignedFor(d) },
-                    ...(d.signed_file_id ? [{ label: 'Signiertes PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.fileRawUrl(d.signed_file_id) + '?token=' + (getToken() || ''), '_blank') }] : []),
-                    d.signed_at
-                      ? { label: 'Signatur zurücksetzen', icon: Ic.rotate(15), onClick: () => unmarkSigned(d) }
-                      : { label: 'Als unterschrieben markieren', icon: Ic.check(15), onClick: () => markSigned(d) },
-                    { separator: true },
-                    { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => openDoc(d.id) },
-                    ...(d.type === 'invoice' ? [{ label: d.paid_at ? 'Als offen markieren' : 'Als bezahlt markieren', icon: Ic.check(15), onClick: () => togglePaid(d) }] : []),
-                    ...(d.type === 'invoice' && !d.paid_at && (d.reminder_stage || 0) < 3 ? [{ label: (d.reminder_stage || 0) + 1 + '. Mahnung erstellen', icon: Ic.clock(15), onClick: () => createReminder(d) }] : []),
-                    ...(d.type === 'invoice' && (d.reminder_stage || 0) > 0 ? [{ label: 'Letzte Mahnung (PDF)', icon: Ic.eye(15), onClick: () => lastReminderPdf(d) }, { label: 'Mahnung zurücksetzen', icon: Ic.rotate(15), onClick: () => removeLastReminder(d) }] : []),
-                    ...(d.type === 'offer' ? [{ label: 'In Rechnung umwandeln', icon: Ic.copy(15), onClick: () => convert(d) }] : []),
-                    { separator: true },
-                    { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => delDoc(d) },
-                  ]); }}
-                    style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.more(16)}</span>
+                  {kebab}
                 </div>
               );
             })}
