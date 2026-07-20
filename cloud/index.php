@@ -120,7 +120,15 @@ $serveSpa = function ($res, $extraHead = '') use ($assetsRoot, $basePath) {
     $hint = '<script>window.NYZA_BASE=' . json_encode($basePath ?: '') . ';</script>' . $extraHead;
     $html = preg_replace('/<head([^>]*)>/i', '<head$1>' . $hint, $html, 1);
     $res->getBody()->write($html);
-    return $res->withHeader('Content-Type', 'text/html; charset=utf-8');
+    // The shell references hashed asset filenames (app-<hash>.js etc.) that
+    // change on every build, so it must NEVER be cached — otherwise a phone
+    // keeps loading an old JS bundle forever no matter how often the server
+    // is redeployed (iOS Safari in particular caches HTML surprisingly
+    // aggressively with no explicit header at all).
+    return $res
+        ->withHeader('Content-Type', 'text/html; charset=utf-8')
+        ->withHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+        ->withHeader('Pragma', 'no-cache');
 };
 
 $app->get('/', function ($req, $res) use ($assetsRoot, $serveSpa) {
