@@ -45,6 +45,7 @@ final class PortalRoutes
         // Public (customer side) — upload into owner-chosen folders. Gated by
         // its own upload_password_hash, separate from the portal's view
         // password. Upload-only: no delete/browse capability is exposed here.
+        $app->get('/api/portal/{token}/upload-folders',         [self::class, 'uploadFoldersIndex']);
         $app->post('/api/portal/{token}/upload-unlock',        [self::class, 'uploadUnlock']);
         $app->post('/api/portal/{token}/upload',                [self::class, 'upload']);
         $app->post('/api/portal/{token}/upload/chunk/init',     [self::class, 'chunkInit']);
@@ -64,7 +65,9 @@ final class PortalRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $s = Database::pdo()->prepare(
-            'SELECT p.*, c.name AS contact_name, (SELECT COUNT(*) FROM portal_items i WHERE i.portal_id = p.id) AS items '
+            'SELECT p.*, c.name AS contact_name, '
+            . '(SELECT COUNT(*) FROM portal_items i WHERE i.portal_id = p.id) AS items, '
+            . '(SELECT COUNT(*) FROM portal_upload_folders u WHERE u.portal_id = p.id) AS upload_folders '
             . 'FROM portals p LEFT JOIN contacts c ON c.id = p.contact_id WHERE p.user_id = ? ORDER BY p.created_at DESC'
         );
         $s->execute([$uid]);
@@ -246,13 +249,15 @@ final class PortalRoutes
     {
         if (empty($p['contact_id'])) return [];
         $s = Database::pdo()->prepare(
-            "SELECT id, type, number, doc_date, gross, paid_at, signed_at FROM documents WHERE company_id = ? AND contact_id = ? ORDER BY doc_date DESC, id DESC LIMIT 200"
+            "SELECT id, type, number, doc_date, gross, paid_at, accepted_at, signed_at FROM documents WHERE company_id = ? AND contact_id = ? ORDER BY doc_date DESC, id DESC LIMIT 200"
         );
         $s->execute([(int)$p['company_id'], (int)$p['contact_id']]);
+        $termDays = CompanyContext::paymentTermDays((int)$p['company_id']);
         return array_map(static fn($d) => [
             'id' => (int)$d['id'], 'type' => $d['type'], 'number' => $d['number'],
             'doc_date' => $d['doc_date'], 'gross' => (float)$d['gross'],
             'paid' => !empty($d['paid_at']), 'signed' => !empty($d['signed_at']),
+            'payment_status' => DocumentRoutes::paymentStatus($d, $termDays),
         ], $s->fetchAll());
     }
 
@@ -287,7 +292,20 @@ final class PortalRoutes
     }
 
     // ───── public (customer) — embedded upload ────────────────────────────────
-    /** View-password + upload-password + folder-whitelist check for every upload call. */
+    /** Browsing (list/view/download what's already there) only needs the
+     *  portal's own view password — the separate upload password only gates
+     *  actually adding something (see uploadGate below). */
+    private static function browseGate(array $p, Request $req, ?int $folderId): ?array
+    {
+        if ($p['password_hash'] && !self::pwOk($p, $req)) return ['error' => 'password_required', 'status' => 401];
+        if ($folderId === null || !self::uploadFolderAllowed((int)$p['id'], (int)$p['user_id'], $folderId)) {
+            return ['error' => 'folder_not_allowed', 'status' => 403];
+        }
+        return null;
+    }
+
+    /** View-password + upload-password + folder-whitelist check for every
+     *  action that ADDS something (upload a file, create a subfolder). */
     private static function uploadGate(array $p, Request $req, ?int $folderId): ?array
     {
         if ($p['password_hash'] && !self::pwOk($p, $req)) return ['error' => 'password_required', 'status' => 401];
@@ -336,6 +354,8 @@ final class PortalRoutes
         return false;
     }
 
+    /** Purely verifies the (separate) upload password before the customer
+     *  tries an add-action — browsing never calls this, see browseGate(). */
     public static function uploadUnlock(Request $req, Response $res, array $args): Response
     {
         if (!\Nyza\RateLimiter::allowReq($req, 'portal_upload_unlock', 10, 300, $args['token'])) {
@@ -350,7 +370,16 @@ final class PortalRoutes
                 return Json::err($res, 'Falsches Passwort', 403, 'bad_password');
             }
         }
-        return Json::ok($res, ['ok' => true, 'folders' => self::uploadFoldersDetailed((int)$p['id'])]);
+        return Json::ok($res, ['ok' => true]);
+    }
+
+    /** Root granted folders — browsable immediately, no upload password needed. */
+    public static function uploadFoldersIndex(Request $req, Response $res, array $args): Response
+    {
+        $p = self::byToken((string)$args['token']);
+        if (!$p) return Json::err($res, 'Not found', 404);
+        if ($p['password_hash'] && !self::pwOk($p, $req)) return Json::err($res, 'Passwort erforderlich', 401);
+        return Json::ok($res, ['folders' => self::uploadFoldersDetailed((int)$p['id'])]);
     }
 
     /** Allowed upload folders with the same at-a-glance metadata the owner
@@ -375,7 +404,7 @@ final class PortalRoutes
         $p = self::byToken((string)$args['token']);
         if (!$p) return Json::err($res, 'Not found', 404);
         $folderId = (int)$args['fid'];
-        $err = self::uploadGate($p, $req, $folderId);
+        $err = self::browseGate($p, $req, $folderId);
         if ($err) return Json::err($res, $err['error'], $err['status']);
         $sub = Database::pdo()->prepare(
             'SELECT f.id, f.name, f.tone, '
@@ -426,7 +455,7 @@ final class PortalRoutes
         $p = self::byToken((string)$args['token']);
         if (!$p) return Json::err($res, 'Not found', 404);
         $folderId = (int)$args['fid'];
-        $err = self::uploadGate($p, $req, $folderId);
+        $err = self::browseGate($p, $req, $folderId);
         if ($err) return Json::err($res, $err['error'], $err['status']);
         $f = Database::pdo()->prepare('SELECT * FROM files WHERE id = ? AND folder_id = ? AND deleted_at IS NULL');
         $f->execute([(int)$args['id'], $folderId]);
@@ -440,7 +469,7 @@ final class PortalRoutes
         $p = self::byToken((string)$args['token']);
         if (!$p) return Json::err($res, 'Not found', 404);
         $folderId = (int)$args['fid'];
-        $err = self::uploadGate($p, $req, $folderId);
+        $err = self::browseGate($p, $req, $folderId);
         if ($err) return Json::err($res, $err['error'], $err['status']);
         $f = Database::pdo()->prepare('SELECT * FROM files WHERE id = ? AND folder_id = ? AND deleted_at IS NULL');
         $f->execute([(int)$args['id'], $folderId]);
@@ -689,7 +718,7 @@ final class PortalRoutes
             'contact_name' => $p['contact_name'] ?? null,
             'intro' => $p['intro'], 'has_password' => !empty($p['password_hash']),
             'has_upload_password' => !empty($p['upload_password_hash']),
-            'items' => (int)($p['items'] ?? 0), 'created_at' => $p['created_at'] ?? null,
+            'items' => (int)($p['items'] ?? 0), 'upload_folders' => (int)($p['upload_folders'] ?? 0), 'created_at' => $p['created_at'] ?? null,
         ];
     }
 

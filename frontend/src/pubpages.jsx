@@ -7,7 +7,7 @@ import {
   Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
   humanSize, applyAccent,
 } from './system.jsx';
-import { Dropzone, UploadRow, MediaViewer, UploadReview, folderTone } from './app.jsx';
+import { Dropzone, UploadRow, MediaViewer, UploadReview, folderTone, DOC_STATUS } from './app.jsx';
 import { uploadClient, uploadPortal, withUploadLock } from './uploads.js';
 import { toast } from './toast.jsx';
 
@@ -959,10 +959,7 @@ function PortalFolderTile({ folder, onClick }) {
 // owner's own folder browsing: folder tiles → click in → breadcrumb, file
 // grid, drag-and-drop or an Hochladen button. Upload-only: no delete.
 function PortalUploadPanel({ token, portalName, viewPassword, requiresUploadPassword }) {
-  const [unlocked, setUnlocked] = useState(false);
-  const [pwInput, setPwInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [roots, setRoots] = useState([]);
+  const [roots, setRoots] = useState(null); // null = loading
   const [stack, setStack] = useState([]); // navigation path, [] = home grid
   const [subfolders, setSubfolders] = useState([]);
   const [openFiles, setOpenFiles] = useState([]);
@@ -976,19 +973,34 @@ function PortalUploadPanel({ token, portalName, viewPassword, requiresUploadPass
   const fileInputRef = useRef(null);
   const current = stack.length ? stack[stack.length - 1] : null;
 
-  const doUnlock = async (pw) => {
-    setBusy(true);
+  // Folders are browsable right away with just the portal's normal view
+  // password (or none). The separate upload password is only asked for
+  // right before an add-action (Hochladen / Neuer Ordner) — not upfront.
+  const [uploadPw, setUploadPw] = useState('');
+  const [pwVerified, setPwVerified] = useState(!requiresUploadPassword);
+  const [pwPrompt, setPwPrompt] = useState(null); // { action: fn } | null
+  const [pwInput, setPwInput] = useState('');
+  const [pwBusy, setPwBusy] = useState(false);
+
+  useEffect(() => {
+    API.portalUploadFolders(token, viewPassword).then((d) => setRoots(d.folders || [])).catch((e) => { toast(e.message, 'error'); setRoots([]); });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const withUploadPassword = (action) => { if (pwVerified) action(); else setPwPrompt({ action }); };
+  const submitPwPrompt = async () => {
+    setPwBusy(true);
     try {
-      const d = await API.portalUploadUnlock(token, pw, viewPassword);
-      setRoots(d.folders || []);
-      setUnlocked(true);
-    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+      await API.portalUploadUnlock(token, pwInput, viewPassword);
+      setUploadPw(pwInput); setPwVerified(true);
+      const action = pwPrompt?.action;
+      setPwPrompt(null); setPwInput('');
+      action && action();
+    } catch (e) { toast(e.message, 'error'); } finally { setPwBusy(false); }
   };
-  useEffect(() => { if (!requiresUploadPassword) doUnlock(''); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadFolder = (folder) => {
     setFilesLoading(true);
-    API.portalUploadFolderFiles(token, folder.id, pwInput, viewPassword)
+    API.portalUploadFolderFiles(token, folder.id, uploadPw, viewPassword)
       .then((d) => { setSubfolders(d.subfolders || []); setOpenFiles(d.files || []); })
       .catch((e) => toast(e.message, 'error'))
       .finally(() => setFilesLoading(false));
@@ -1001,17 +1013,19 @@ function PortalUploadPanel({ token, portalName, viewPassword, requiresUploadPass
     loadFolder(target);
   };
 
-  const createFolder = async () => {
+  const doCreateFolder = async () => {
     if (!newFolderName.trim() || !current) return;
     setCreatingBusy(true);
     try {
-      const d = await API.portalUploadFolderCreate(token, current.id, newFolderName.trim(), pwInput, viewPassword);
+      const d = await API.portalUploadFolderCreate(token, current.id, newFolderName.trim(), uploadPw, viewPassword);
       setSubfolders((s) => [...s, d.folder].sort((a, b) => a.name.localeCompare(b.name)));
       setNewFolderName(''); setCreatingFolder(false);
     } catch (e) { toast(e.message, 'error'); } finally { setCreatingBusy(false); }
   };
+  const openCreateFolder = () => withUploadPassword(() => setCreatingFolder(true));
+  const openFilePicker = () => withUploadPassword(() => fileInputRef.current?.click());
 
-  const onFiles = (files) => {
+  const doUploadFiles = (files) => {
     if (!current) return;
     const items = files.map((f) => ({
       id: ++uploadIdRef.current, name: f.name, size: f.size, status: 'queued', pct: 0,
@@ -1023,7 +1037,7 @@ function PortalUploadPanel({ token, portalName, viewPassword, requiresUploadPass
       for (const item of items) {
         setUploads((u) => u.map((x) => x.id === item.id ? { ...x, status: 'uploading' } : x));
         try {
-          await uploadPortal(token, item.file, { folderId: current.id, uploadPassword: pwInput || undefined, viewPassword },
+          await uploadPortal(token, item.file, { folderId: current.id, uploadPassword: uploadPw || undefined, viewPassword },
             (p) => setUploads((u) => u.map((x) => x.id === item.id ? { ...x, pct: p } : x)));
           setUploads((u) => u.map((x) => x.id === item.id ? { ...x, status: 'done', pct: 1, file: null } : x));
           setOpenFiles((of) => [{ id: 'up' + item.id, name: item.name, kind: item.kind, size: item.size, hue: 280 }, ...of]);
@@ -1034,21 +1048,26 @@ function PortalUploadPanel({ token, portalName, viewPassword, requiresUploadPass
       }
     });
   };
+  const onFiles = (files) => withUploadPassword(() => doUploadFiles(files));
 
-  if (!unlocked) {
-    return (
-      <Glass style={{ borderRadius: 'var(--r-lg)', padding: 20, maxWidth: 420 }}>
-        <div style={{ fontSize: 13.5, marginBottom: 10, color: 'var(--fg-2)' }}>Bitte Upload-Passwort eingeben.</div>
+  const pwPromptModal = pwPrompt && (
+    <div className="nyza-modal-backdrop" onClick={() => setPwPrompt(null)}>
+      <Glass style={{ width: '100%', maxWidth: 380, borderRadius: 'var(--r-xl)', padding: 24 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ fontSize: 14.5, fontWeight: 600, marginBottom: 6 }}>Upload-Passwort erforderlich</div>
+        <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginBottom: 14 }}>Zum Hochladen bzw. Ordner erstellen brauchst du das Upload-Passwort.</div>
         <div style={{ display: 'flex', gap: 8 }}>
           <input type="password" autoFocus value={pwInput} onChange={(e) => setPwInput(e.target.value)} placeholder="Upload-Passwort"
-            onKeyDown={(e) => e.key === 'Enter' && doUnlock(pwInput)}
+            onKeyDown={(e) => e.key === 'Enter' && submitPwPrompt()}
             style={{ flex: 1, height: 40, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13.5, color: 'var(--fg)' }}/>
-          <Btn variant="primary" size="md" disabled={busy || !pwInput} onClick={() => doUnlock(pwInput)}>Öffnen</Btn>
+          <Btn variant="primary" size="md" disabled={pwBusy || !pwInput} onClick={submitPwPrompt}>Weiter</Btn>
         </div>
       </Glass>
-    );
-  }
+    </div>
+  );
 
+  if (roots === null) {
+    return <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>;
+  }
   if (roots.length === 0) {
     return <div style={{ fontSize: 13, color: 'var(--fg-3)' }}>Aktuell ist kein Ordner für den Upload freigegeben.</div>;
   }
@@ -1079,18 +1098,18 @@ function PortalUploadPanel({ token, portalName, viewPassword, requiresUploadPass
             </React.Fragment>
           ))}
         </div>
-        <Btn variant="glass" size="md" icon={Ic.plus(14)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn>
+        <Btn variant="glass" size="md" icon={Ic.plus(14)} onClick={openCreateFolder}>Neuer Ordner</Btn>
         <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }}
-          onChange={(e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; if (fs.length) onFiles(fs); }}/>
-        <Btn variant="primary" size="md" icon={Ic.upload(15)} onClick={() => fileInputRef.current?.click()}>Hochladen</Btn>
+          onChange={(e) => { const fs = Array.from(e.target.files || []); e.target.value = ''; if (fs.length) doUploadFiles(fs); }}/>
+        <Btn variant="primary" size="md" icon={Ic.upload(15)} onClick={openFilePicker}>Hochladen</Btn>
       </div>
 
       {creatingFolder && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
           <input autoFocus value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="Ordnername"
-            onKeyDown={(e) => e.key === 'Enter' && createFolder()}
+            onKeyDown={(e) => e.key === 'Enter' && doCreateFolder()}
             style={{ flex: 1, maxWidth: 280, height: 38, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 13, color: 'var(--fg)' }}/>
-          <Btn variant="primary" size="sm" disabled={creatingBusy || !newFolderName.trim()} onClick={createFolder}>Erstellen</Btn>
+          <Btn variant="primary" size="sm" disabled={creatingBusy || !newFolderName.trim()} onClick={doCreateFolder}>Erstellen</Btn>
           <Btn variant="ghost" size="sm" onClick={() => { setCreatingFolder(false); setNewFolderName(''); }}>Abbrechen</Btn>
         </div>
       )}
@@ -1132,7 +1151,7 @@ function PortalUploadPanel({ token, portalName, viewPassword, requiresUploadPass
               <div key={f.id} style={{ borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface)' }}>
                 <div style={{ aspectRatio: '1/1', background: 'var(--surface-hi)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {f.kind === 'image' && typeof f.id === 'number'
-                    ? <img src={API.portalUploadFolderThumbUrl(token, current.id, f.id, viewPassword, pwInput)} alt={f.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+                    ? <img src={API.portalUploadFolderThumbUrl(token, current.id, f.id, viewPassword, uploadPw)} alt={f.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
                     : <FileIcon kind={f.kind} size={30} tint={f.hue}/>}
                 </div>
                 <div style={{ padding: '8px 10px', fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
@@ -1141,6 +1160,7 @@ function PortalUploadPanel({ token, portalName, viewPassword, requiresUploadPass
           </div>
         ) : null}
       </div>
+      {pwPromptModal}
     </div>
   );
 }
@@ -1194,18 +1214,22 @@ export function PublicPortalPage({ token }) {
         {docs.length > 0 && (
           <div style={{ marginTop: 28 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>Rechnungen & Angebote</div>
-            <div style={{ display: 'grid', gap: 8 }}>
-              {docs.map((d) => (
-                <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
-                  <span style={{ color: 'var(--accent)' }}>{Ic.filePdf(16)}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 540 }}>{d.type === 'offer' ? 'Angebot ' : 'Rechnung '}{d.number}</div>
-                    <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{new Date(String(d.doc_date)).toLocaleDateString('de-DE')} · {Number(d.gross).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}{d.paid ? ' · bezahlt' : ''}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
+              {docs.map((d) => {
+                const st = DOC_STATUS[d.payment_status] || DOC_STATUS.open;
+                return (
+                  <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', flexWrap: 'wrap' }}>
+                    <span style={{ color: 'var(--accent)' }}>{Ic.filePdf(16)}</span>
+                    <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 540 }}>{d.type === 'offer' ? 'Angebot ' : 'Rechnung '}{d.number}</div>
+                      <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{new Date(String(d.doc_date)).toLocaleDateString('de-DE')} · {Number(d.gross).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}</div>
+                    </div>
+                    <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + st.color + ' 18%, transparent)', color: st.color, textTransform: 'uppercase', flexShrink: 0 }}>{st.label}</span>
+                    <Btn variant="glass" size="sm" icon={Ic.eye(13)} onClick={() => window.open(API.portalDocUrl(token, d.id, pw, false), '_blank')}>Ansehen</Btn>
+                    <Btn variant="glass" size="sm" icon={Ic.download(13)} onClick={() => { location.href = API.portalDocUrl(token, d.id, pw, true); }}>PDF</Btn>
                   </div>
-                  <Btn variant="glass" size="sm" icon={Ic.eye(13)} onClick={() => window.open(API.portalDocUrl(token, d.id, pw, false), '_blank')}>Ansehen</Btn>
-                  <Btn variant="glass" size="sm" icon={Ic.download(13)} onClick={() => { location.href = API.portalDocUrl(token, d.id, pw, true); }}>PDF</Btn>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

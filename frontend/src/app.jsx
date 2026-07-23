@@ -7424,7 +7424,7 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
 }
 
 // ───── Buchhaltung app (Phase 1: Angebote/Rechnungen + Produkte) ─────────────
-const DOC_STATUS = {
+export const DOC_STATUS = {
   paid:     { label: 'Bezahlt',     color: '#22c55e' },
   overdue:  { label: 'Überfällig',  color: '#ef4444' },
   due_soon: { label: 'Bald fällig', color: '#eab308' },
@@ -10296,7 +10296,7 @@ function KundenportalApp({ onBack }) {
                   <div style={{ width: 34, height: 34, borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Ic.users(15)}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
-                    <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{p.contact_name ? p.contact_name + ' · ' : ''}{p.items} Ordner/Dateien{p.has_password ? ' · 🔒' : ''}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>{p.contact_name ? p.contact_name + ' · ' : ''}{p.items} Ordner/Dateien{p.upload_folders ? ' · ' + p.upload_folders + ' Upload-Ordner' : ''}{p.has_password ? ' · 🔒' : ''}</div>
                   </div>
                   <IconBtn size={30} title="Link kopieren" onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(portalLink(p.token)); toast('Link kopiert', 'success'); }}>{Ic.copy(15)}</IconBtn>
                   <IconBtn size={30} title="Löschen" onClick={(e) => { e.stopPropagation(); del(p); }}>{Ic.trash(14)}</IconBtn>

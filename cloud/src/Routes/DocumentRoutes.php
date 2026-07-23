@@ -782,7 +782,7 @@ final class DocumentRoutes
      *    due-today<=7 → 'due_soon'; else 'open'
      *  - offer: 'accepted' if accepted_at else 'open'
      */
-    private static function paymentStatus(array $r, int $termDays): string
+    public static function paymentStatus(array $r, int $termDays): string
     {
         if ($r['type'] === 'offer') {
             return !empty($r['accepted_at']) ? 'accepted' : 'open';

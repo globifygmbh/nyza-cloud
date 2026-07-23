@@ -467,6 +467,10 @@ export const API = {
   portalZipUrl:   (token, pw, ids) => url('/api/portal/' + token + '/zip') + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', (ids && ids.length) ? 'ids=' + ids.join(',') : ''].filter(Boolean).join('&'),
   portalDocUrl:   (token, docId, pw, dl) => url('/api/portal/' + token + '/doc/' + docId) + '?' + [pw ? 'p=' + encodeURIComponent(pw) : '', dl ? 'download=1' : ''].filter(Boolean).join('&'),
   // Embedded portal upload — separate password + folder allow-list from the portal's own view password.
+  // Browsing granted folders only needs the portal's view password (if any);
+  // the upload password only gates add-actions (upload / neuer Ordner).
+  portalUploadFolders: (token, viewPw) =>
+    request('/api/portal/' + token + '/upload-folders' + (viewPw ? '?p=' + encodeURIComponent(viewPw) : ''), { skipAuth: true }),
   portalUploadUnlock: (token, uploadPassword, viewPassword) =>
     request('/api/portal/' + token + '/upload-unlock', { method: 'POST', body: { upload_password: uploadPassword, password: viewPassword }, skipAuth: true }),
   portalUpload: (token, file, opts = {}, onProgress) =>
