@@ -10321,6 +10321,8 @@ function PortalEditModal({ portal, onSaved, onClose }) {
   const [password, setPassword] = useState('');
   const [uploadPassword, setUploadPassword] = useState('');
   const [uploadFolderIds, setUploadFolderIds] = useState(() => new Set((portal.upload_folders || []).map((f) => f.id)));
+  const [homeFolderId, setHomeFolderId] = useState(portal.home_folder_id ? String(portal.home_folder_id) : '');
+  useEffect(() => { if (homeFolderId && !uploadFolderIds.has(Number(homeFolderId))) setHomeFolderId(''); }, [uploadFolderIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [newSubName, setNewSubName] = useState('');
   const [newSubParent, setNewSubParent] = useState('');
   const [contacts, setContacts] = useState([]);
@@ -10342,7 +10344,7 @@ function PortalEditModal({ portal, onSaved, onClose }) {
   const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
   const reload = async () => { if (!idRef.current) return; const d = await API.portal(idRef.current); setP(d.portal); };
   const body = () => {
-    const b = { name: name.trim() || 'Kundenportal', contact_id: contactId || null, intro: intro.trim() || null, upload_folder_ids: [...uploadFolderIds] };
+    const b = { name: name.trim() || 'Kundenportal', contact_id: contactId || null, intro: intro.trim() || null, upload_folder_ids: [...uploadFolderIds], home_folder_id: homeFolderId || null };
     if (password) b.password = password;
     if (uploadPassword) b.upload_password = uploadPassword;
     return b;
@@ -10407,6 +10409,16 @@ function PortalEditModal({ portal, onSaved, onClose }) {
             </label>
             <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)', display: 'block', marginBottom: 5 }}>Freigegebene Ordner ({uploadFolderIds.size})</span>
             <FolderTreePicker allFolders={folders} value={uploadFolderIds} onChange={setUploadFolderIds} multi maxHeight={180}/>
+            {uploadFolderIds.size > 0 && (
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Hauptordner (Kundenordner)</span>
+                <select value={homeFolderId} onChange={(e) => setHomeFolderId(e.target.value)} style={{ ...fld, height: 36, cursor: 'pointer' }}>
+                  <option value="">— keiner, Kunde sieht Ordner-Kacheln —</option>
+                  {folders.filter((f) => uploadFolderIds.has(f.id)).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+                <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>Wird dem Kunden direkt geöffnet angezeigt, nicht als anklickbare Kachel.</span>
+              </label>
+            )}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
               <select value={newSubParent} onChange={(e) => setNewSubParent(e.target.value)} style={{ ...fld, flex: '1 1 140px', height: 36 }}>
                 <option value="">Neuer Unterordner in: Hauptebene</option>

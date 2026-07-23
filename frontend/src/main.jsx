@@ -79,7 +79,7 @@ function Root() {
     return <><NyzaAmbient/><PublicFormPage token={route.token}/><ToastHost/></>;
   }
   if (route.kind === 'public-portal') {
-    return <><NyzaAmbient/><PublicPortalPage token={route.token}/><ToastHost/></>;
+    return <><NyzaAmbient/><PublicPortalPage token={route.token}/><ToastHost/><ContextMenuHost/></>;
   }
 
   if (!user) {

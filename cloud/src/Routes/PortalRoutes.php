@@ -83,8 +83,9 @@ final class PortalRoutes
         $token = Auth::randomToken(24);
         $hash = !empty($b['password']) ? password_hash((string)$b['password'], PASSWORD_BCRYPT) : null;
         $uploadHash = !empty($b['upload_password']) ? password_hash((string)$b['upload_password'], PASSWORD_BCRYPT) : null;
-        Database::pdo()->prepare('INSERT INTO portals (user_id, company_id, name, contact_id, intro, token, password_hash, upload_password_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-            ->execute([$uid, $cid, mb_substr($name, 0, 160), self::cid($b['contact_id'] ?? null), self::str($b['intro'] ?? null, 4000), $token, $hash, $uploadHash]);
+        $homeFolderId = self::validFolderId($uid, $b['home_folder_id'] ?? null);
+        Database::pdo()->prepare('INSERT INTO portals (user_id, company_id, name, contact_id, intro, token, password_hash, upload_password_hash, home_folder_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+            ->execute([$uid, $cid, mb_substr($name, 0, 160), self::cid($b['contact_id'] ?? null), self::str($b['intro'] ?? null, 4000), $token, $hash, $uploadHash, $homeFolderId]);
         $id = (int)Database::pdo()->lastInsertId();
         self::setUploadFolders($uid, $id, $b['upload_folder_ids'] ?? null);
         return Json::ok($res, ['portal' => self::detail($uid, $id)], 201);
@@ -112,6 +113,7 @@ final class PortalRoutes
         elseif (array_key_exists('password', $b) && (string)$b['password'] !== '') { $sets[] = 'password_hash = ?'; $vals[] = password_hash((string)$b['password'], PASSWORD_BCRYPT); }
         if (!empty($b['clear_upload_password'])) { $sets[] = 'upload_password_hash = ?'; $vals[] = null; }
         elseif (array_key_exists('upload_password', $b) && (string)$b['upload_password'] !== '') { $sets[] = 'upload_password_hash = ?'; $vals[] = password_hash((string)$b['upload_password'], PASSWORD_BCRYPT); }
+        if (array_key_exists('home_folder_id', $b)) { $sets[] = 'home_folder_id = ?'; $vals[] = self::validFolderId($uid, $b['home_folder_id']); }
         if ($sets) { $vals[] = $id; $vals[] = $uid; Database::pdo()->prepare('UPDATE portals SET ' . implode(', ', $sets) . ' WHERE id = ? AND user_id = ?')->execute($vals); }
         if (array_key_exists('upload_folder_ids', $b)) self::setUploadFolders($uid, $id, $b['upload_folder_ids']);
         return Json::ok($res, ['portal' => self::detail($uid, $id)]);
@@ -206,6 +208,7 @@ final class PortalRoutes
             // upload-unlock succeeds, not here.
             'upload_enabled' => !empty(self::uploadFolderIds((int)$p['id'])),
             'requires_upload_password' => !empty($p['upload_password_hash']),
+            'home_folder_id' => $p['home_folder_id'] !== null ? (int)$p['home_folder_id'] : null,
         ]);
     }
 
@@ -718,6 +721,7 @@ final class PortalRoutes
             'contact_name' => $p['contact_name'] ?? null,
             'intro' => $p['intro'], 'has_password' => !empty($p['password_hash']),
             'has_upload_password' => !empty($p['upload_password_hash']),
+            'home_folder_id' => $p['home_folder_id'] !== null ? (int)$p['home_folder_id'] : null,
             'items' => (int)($p['items'] ?? 0), 'upload_folders' => (int)($p['upload_folders'] ?? 0), 'created_at' => $p['created_at'] ?? null,
         ];
     }
@@ -743,5 +747,14 @@ final class PortalRoutes
     }
 
     private static function cid($v): ?int { return ($v !== null && (int)$v > 0) ? (int)$v : null; }
+    /** Like cid() but verifies the folder actually belongs to this owner. */
+    private static function validFolderId(int $uid, $v): ?int
+    {
+        $fid = ($v !== null && (int)$v > 0) ? (int)$v : null;
+        if ($fid === null) return null;
+        $c = Database::pdo()->prepare('SELECT 1 FROM folders WHERE id = ? AND user_id = ?');
+        $c->execute([$fid, $uid]);
+        return $c->fetch() ? $fid : null;
+    }
     private static function str($v, int $max): ?string { if ($v === null) return null; $v = trim((string)$v); return $v === '' ? null : mb_substr($v, 0, $max); }
 }
