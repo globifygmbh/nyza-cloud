@@ -953,7 +953,9 @@ final class DocumentRoutes
         ]);
         $isCorp = preg_match('/\b(gmbh|ag)\b/i', $legalName) === 1;
         $taxCol = self::footerLines([
-            $cv('vat_id') !== '' ? 'UID: ' . $cv('vat_id') : '',
+            // Settings saves this under 'uid' (not 'vat_id' — that key is only
+            // used for contacts' own VAT id in the recipient block below).
+            $cv('uid') !== '' ? 'UID: ' . $cv('uid') : '',
             $cv('tax_number') !== '' ? 'Steuernr.: ' . $cv('tax_number') : '',
             ($isCorp && $cv('firmenbuch_nr') !== '') ? 'Firmenbuchnr.: ' . $cv('firmenbuch_nr') : '',
             $cv('owner') !== '' ? 'Inhaber: ' . $cv('owner') : '',

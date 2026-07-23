@@ -9127,6 +9127,7 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
     : [{ description: '', note: '', quantity: 1, unit: 'Stk', unit_price_net: 0, tax_rate: 20 }]);
   const [busy, setBusy] = useState(false);
   const [profile, setProfile] = useState(null);
+  const [reverseCharge, setReverseCharge] = useState(false);
   const type = doc.type || 'invoice';
 
   useEffect(() => {
@@ -9155,9 +9156,24 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
   };
 
   const setItem = (i, k, v) => setItems((arr) => arr.map((it, j) => j === i ? { ...it, [k]: v } : it));
-  const addRow = () => setItems((arr) => [...arr, { description: '', note: '', quantity: 1, unit: 'Stk', unit_price_net: 0, tax_rate: 20 }]);
+  const addRow = () => setItems((arr) => [...arr, { description: '', note: '', quantity: 1, unit: 'Stk', unit_price_net: 0, tax_rate: reverseCharge ? 0 : 20 }]);
   const rmRow = (i) => setItems((arr) => arr.length > 1 ? arr.filter((_, j) => j !== i) : arr);
-  const addProduct = (pid) => { const p = products.find((x) => String(x.id) === String(pid)); if (!p) return; setItems((arr) => [...arr, { description: p.name, note: '', quantity: 1, unit: p.unit, unit_price_net: p.unit_price_net, tax_rate: p.tax_rate }]); };
+  const addProduct = (pid) => { const p = products.find((x) => String(x.id) === String(pid)); if (!p) return; setItems((arr) => [...arr, { description: p.name, note: '', quantity: 1, unit: p.unit, unit_price_net: p.unit_price_net, tax_rate: reverseCharge ? 0 : p.tax_rate }]); };
+
+  // Innergemeinschaftliche Leistung / Reverse-Charge: EU B2B — tax liability
+  // shifts to the recipient, so USt is 0% and the invoice must carry this
+  // notice (§ 19 Abs. 1 UStG / Art. 44 MwStSystRL).
+  const REVERSE_CHARGE_NOTE = 'Steuerschuldnerschaft des Leistungsempfängers gem. § 19 Abs. 1 UStG (Reverse-Charge-Verfahren, innergemeinschaftliche Leistung gem. Art. 44 MwStSystRL).';
+  const toggleReverseCharge = () => {
+    const next = !reverseCharge;
+    setReverseCharge(next);
+    if (next) {
+      setItems((arr) => arr.map((it) => ({ ...it, tax_rate: 0 })));
+      setFooter((f) => f.includes(REVERSE_CHARGE_NOTE) ? f : (f.trim() ? f.trim() + '\n\n' + REVERSE_CHARGE_NOTE : REVERSE_CHARGE_NOTE));
+    } else {
+      setFooter((f) => f.replace(REVERSE_CHARGE_NOTE, '').replace(/\n{3,}/g, '\n\n').trim());
+    }
+  };
 
   const lineNet = (it) => Math.round((Number(it.quantity) || 0) * (Number(it.unit_price_net) || 0) * 100) / 100;
   const net = items.reduce((a, it) => a + lineNet(it), 0);
@@ -9212,6 +9228,14 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>z. Hd. (optional)</span>
             <input value={attnName} onChange={(e) => setAttnName(e.target.value)} placeholder="Name der Ansprechperson beim Kunden" style={fld}/>
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', padding: '10px 12px', borderRadius: 'var(--r-sm)', background: reverseCharge ? 'color-mix(in oklab, var(--accent) 10%, transparent)' : 'var(--surface-hi)', border: '1px solid ' + (reverseCharge ? 'var(--accent)' : 'var(--border)') }}>
+            <input type="checkbox" checked={reverseCharge} onChange={toggleReverseCharge} style={{ width: 17, height: 17, accentColor: 'var(--accent)', marginTop: 1, flexShrink: 0 }}/>
+            <span>
+              <span style={{ fontSize: 13, fontWeight: 540 }}>Innergemeinschaftliche Leistung (Reverse-Charge)</span>
+              <br/><span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>EU-B2B-Kunde ohne österr. USt — setzt alle Positionen auf 0% und fügt den Hinweistext im Fußtext ein.</span>
+            </span>
           </label>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
