@@ -43,11 +43,18 @@ final class CompanyContext
         $row = $s->fetch();
         if ($row) return (int)$row['company_id'];
 
-        // No membership — fall back to the lowest existing company id.
-        $min = $pdo->query('SELECT MIN(id) AS id FROM companies')->fetch();
-        if ($min && $min['id'] !== null) return (int)$min['id'];
+        // No membership. Admins already have implicit access to every company
+        // (see isMember() below), so defaulting them to the lowest/primary one
+        // is just a convenience. A NON-admin with zero memberships must never
+        // silently land on someone else's company — that would hand a brand
+        // new restricted account the owner's whole Buchhaltung by default.
+        if (self::isAdmin($uid)) {
+            $min = $pdo->query('SELECT MIN(id) AS id FROM companies')->fetch();
+            if ($min && $min['id'] !== null) return (int)$min['id'];
+        }
 
-        // Truly nothing exists — bootstrap one and join the user.
+        // Bootstrap an isolated company (and join only this user to it) —
+        // either nothing exists yet, or this is a non-admin with no grants.
         $pdo->prepare('INSERT INTO companies (name, profile) VALUES (?, NULL)')
             ->execute(['Mein Unternehmen']);
         $cid = (int)$pdo->lastInsertId();

@@ -3607,7 +3607,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             afterChange={refreshAll}/>
         )}
         {nav.name === 'apps' && (
-          <AppsView onOpenApp={(id) => setNav({ name: 'app-' + id })}/>
+          <AppsView user={user} onOpenApp={(id) => setNav({ name: 'app-' + id })}/>
         )}
         {nav.name === 'app-tasks' && (
           <TasksApp onBack={() => setNav({ name: 'apps' })}/>
@@ -4549,7 +4549,17 @@ function LinksHub({ refreshTick, basePath, onCreate, afterChange, initialTab = '
 }
 
 // ───── Apps launcher — Handy-Style Kacheln ──────────────────────────────────
-function AppsView({ onOpenApp }) {
+function AppsView({ user, onOpenApp }) {
+  const isAdmin = user?.role === 'admin';
+  // Non-admins only see Buchhaltung/Kontakte once the owner has granted them
+  // membership in at least one company (see CompanyContext/company_members) —
+  // otherwise those tiles would just open to an empty, confusing view.
+  const [hasCompany, setHasCompany] = useState(isAdmin);
+  useEffect(() => {
+    if (isAdmin) return;
+    API.companies().then((d) => setHasCompany((d.companies || []).length > 0)).catch(() => setHasCompany(false));
+  }, [isAdmin]);
+  const gatedIds = new Set(['accounting', 'contacts']);
   const live = [
     { id: 'tasks',    label: 'Tasks',    desc: 'Aufgaben & To-dos', icon: Ic.checkSquare(26), grad: 'linear-gradient(135deg, oklch(0.72 0.18 282), oklch(0.64 0.17 248))' },
     { id: 'contacts', label: 'Kontakte', desc: 'Kunden & Adressen',  icon: Ic.users(26),      grad: 'linear-gradient(135deg, oklch(0.7 0.16 240), oklch(0.66 0.16 210))' },
@@ -4566,7 +4576,7 @@ function AppsView({ onOpenApp }) {
     { id: 'pdf',        label: 'PDF',          desc: 'Format ändern',           icon: Ic.filePdf(26), grad: 'linear-gradient(135deg, oklch(0.66 0.2 20), oklch(0.58 0.19 8))' },
     { id: 'snippets',   label: 'Textbausteine', desc: 'Vorlagen für Mails',     icon: Ic.fileGen(26), grad: 'linear-gradient(135deg, oklch(0.7 0.14 235), oklch(0.6 0.13 260))' },
     { id: 'content',    label: 'Content',      desc: 'TikTok & Reels planen',   icon: Ic.camera(26),  grad: 'linear-gradient(135deg, oklch(0.68 0.2 350), oklch(0.6 0.2 300))' },
-  ];
+  ].filter((a) => !gatedIds.has(a.id) || isAdmin || hasCompany);
   const soon = [];
   const Tile = ({ a, disabled }) => (
     <button disabled={disabled} onClick={disabled ? undefined : () => onOpenApp(a.id)} style={{
@@ -7213,9 +7223,10 @@ function UserAdminSection({ currentUser }) {
                 <div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.name || u.email}{u.id === currentUser?.id ? ' (du)' : ''}</div>
                 <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{u.email}</div>
               </div>
+              {u.is_primary && <span title="Kann nicht gelöscht oder herabgestuft werden" style={{ fontSize: 9.5, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'color-mix(in oklab, #eab308 20%, transparent)', color: '#eab308' }}>HAUPTADMIN</span>}
               {u.role === 'admin' && <span style={{ fontSize: 9.5, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'color-mix(in oklab, var(--accent) 18%, transparent)', color: 'var(--accent)' }}>ADMIN</span>}
               {!u.active && <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--fg-4)' }}>GESPERRT</span>}
-              {u.id !== currentUser?.id && <span className="task-kebab" title="Löschen" onClick={(e) => { e.stopPropagation(); del(u); }} style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex' }}>{Ic.trash(15)}</span>}
+              {u.id !== currentUser?.id && !u.is_primary && <span className="task-kebab" title="Löschen" onClick={(e) => { e.stopPropagation(); del(u); }} style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex' }}>{Ic.trash(15)}</span>}
             </div>
           ))}
         </div>
@@ -7244,6 +7255,7 @@ function UserModal({ u, self, onSave, onClose }) {
     setBusy(false);
   };
   const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  const locked = self || u.is_primary;
   return (
     <div className="nyza-modal-backdrop" onClick={onClose}>
       <Glass style={{ width: '100%', maxWidth: 420, borderRadius: 'var(--r-xl)', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
@@ -7257,13 +7269,14 @@ function UserModal({ u, self, onSave, onClose }) {
           <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>{u.id ? 'Neues Passwort (optional)' : 'Passwort'}</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={u.id ? 'leer = unverändert' : 'min. 8 Zeichen'} style={fld}/></label>
           <div style={{ display: 'flex', gap: 12 }}>
             <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Rolle</span>
-              <select value={role} onChange={(e) => setRole(e.target.value)} disabled={self} style={{ ...fld, cursor: self ? 'not-allowed' : 'pointer', opacity: self ? 0.6 : 1 }}><option value="user">Benutzer</option><option value="admin">Admin</option></select>
+              <select value={role} onChange={(e) => setRole(e.target.value)} disabled={locked} style={{ ...fld, cursor: locked ? 'not-allowed' : 'pointer', opacity: locked ? 0.6 : 1 }}><option value="user">Benutzer</option><option value="admin">Admin</option></select>
             </label>
-            <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, marginTop: 22, cursor: self ? 'not-allowed' : 'pointer', fontSize: 13.5, opacity: self ? 0.6 : 1 }}>
-              <input type="checkbox" checked={active} disabled={self} onChange={(e) => setActive(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)' }}/> Aktiv
+            <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, marginTop: 22, cursor: locked ? 'not-allowed' : 'pointer', fontSize: 13.5, opacity: locked ? 0.6 : 1 }}>
+              <input type="checkbox" checked={active} disabled={locked} onChange={(e) => setActive(e.target.checked)} style={{ width: 17, height: 17, accentColor: 'var(--accent)' }}/> Aktiv
             </label>
           </div>
           {self && <div style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>Eigene Rolle/Sperre kann nicht geändert werden.</div>}
+          {!self && u.is_primary && <div style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>Rolle/Sperre des Hauptadmins kann nicht geändert werden.</div>}
         </div>
         <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Btn variant="ghost" onClick={onClose}>Abbrechen</Btn>

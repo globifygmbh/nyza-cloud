@@ -45,7 +45,7 @@ final class AdminRoutes
     private static function requireAdmin(Request $req): ?array
     {
         $uid = (int)$req->getAttribute('uid');
-        $stmt = Database::pdo()->prepare('SELECT id, email, name, role, active FROM users WHERE id = ?');
+        $stmt = Database::pdo()->prepare('SELECT id, email, name, role, active, is_primary FROM users WHERE id = ?');
         $stmt->execute([$uid]);
         $u = $stmt->fetch();
         if (!$u || ($u['role'] ?? 'user') !== 'admin') return null;
@@ -75,6 +75,7 @@ final class AdminRoutes
             'name' => $u['name'],
             'role' => $u['role'] ?? 'user',
             'active' => isset($u['active']) ? (int)$u['active'] : 1,
+            'is_primary' => !empty($u['is_primary']),
             'created_at' => $u['created_at'] ?? null,
         ];
         if (array_key_exists('storage_used', $u)) {
@@ -85,7 +86,7 @@ final class AdminRoutes
 
     private static function fetchOne(int $id): ?array
     {
-        $cols = 'id, email, name, role, active, created_at';
+        $cols = 'id, email, name, role, active, is_primary, created_at';
         if (self::hasStorageUsed()) $cols .= ', storage_used';
         $stmt = Database::pdo()->prepare("SELECT $cols FROM users WHERE id = ?");
         $stmt->execute([$id]);
@@ -96,7 +97,7 @@ final class AdminRoutes
     public static function list(Request $req, Response $res): Response
     {
         if (!self::requireAdmin($req)) return Json::err($res, 'Nur Admin', 403, 'forbidden');
-        $cols = 'id, email, name, role, active, created_at';
+        $cols = 'id, email, name, role, active, is_primary, created_at';
         if (self::hasStorageUsed()) $cols .= ', storage_used';
         $rows = Database::pdo()->query("SELECT $cols FROM users ORDER BY id")->fetchAll();
         return Json::ok($res, ['users' => array_map([self::class, 'shape'], $rows)]);
@@ -153,6 +154,9 @@ final class AdminRoutes
             if ($isSelf && $role !== 'admin') {
                 return Json::err($res, 'Du kannst dich nicht selbst sperren/herabstufen', 422, 'self_lockout');
             }
+            if (!empty($target['is_primary']) && $role !== 'admin') {
+                return Json::err($res, 'Der Hauptadmin kann nicht herabgestuft werden', 422, 'primary_admin');
+            }
             $sets[] = 'role = ?';
             $params[] = $role;
         }
@@ -161,6 +165,9 @@ final class AdminRoutes
             $active = (int)((bool)$b['active']);
             if ($isSelf && $active === 0) {
                 return Json::err($res, 'Du kannst dich nicht selbst sperren/herabstufen', 422, 'self_lockout');
+            }
+            if (!empty($target['is_primary']) && $active === 0) {
+                return Json::err($res, 'Der Hauptadmin kann nicht deaktiviert werden', 422, 'primary_admin');
             }
             $sets[] = 'active = ?';
             $params[] = $active;
@@ -194,6 +201,9 @@ final class AdminRoutes
         }
         $target = self::fetchOne($id);
         if (!$target) return Json::err($res, 'Not found', 404);
+        if (!empty($target['is_primary'])) {
+            return Json::err($res, 'Der Hauptadmin kann nicht gelöscht werden', 422, 'primary_admin');
+        }
 
         Database::pdo()->prepare('DELETE FROM users WHERE id = ?')->execute([$id]);
         return Json::ok($res, ['ok' => true]);

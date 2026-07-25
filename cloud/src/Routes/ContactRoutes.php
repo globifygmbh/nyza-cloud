@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Nyza\Routes;
 
+use Nyza\CompanyContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -15,6 +16,12 @@ use Slim\Routing\RouteCollectorProxy;
  * Contacts / CRM. A single contact entity that can be flagged as a customer
  * (is_customer) — no separate customer record. Time tracking and accounting
  * reference these rows as their "Kunde".
+ *
+ * Scoped by company (same company_members model as the rest of Buchhaltung —
+ * see CompanyContext) so a team member only sees contacts for a company
+ * they've actually been granted access to. Legacy rows with no company_id
+ * (from before this scoping existed) stay visible to everyone as a safety
+ * net rather than silently disappearing.
  */
 final class ContactRoutes
 {
@@ -34,12 +41,12 @@ final class ContactRoutes
     public static function list(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $qp = $req->getQueryParams();
         $pdo = Database::pdo();
 
-        // Shared workspace: all members see all contacts.
-        $where = '1=1';
-        $params = [];
+        $where = '(c.company_id = ? OR c.company_id IS NULL)';
+        $params = [$cid];
         if (isset($qp['customers'])) { $where .= ' AND c.is_customer = 1'; }
         if (!empty($qp['q'])) {
             $like = '%' . str_replace(['%', '_'], ['\%', '\_'], (string)$qp['q']) . '%';
@@ -54,7 +61,8 @@ final class ContactRoutes
     public static function show(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
-        $c = self::fetchOne($uid, (int)$args['id']);
+        $cid = CompanyContext::active($req, $uid);
+        $c = self::fetchOne($cid, (int)$args['id']);
         if (!$c) return Json::err($res, 'Not found', 404);
         return Json::ok($res, ['contact' => self::shape($c)]);
     }
@@ -62,6 +70,7 @@ final class ContactRoutes
     public static function create(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $b = (array) $req->getParsedBody();
         $name = trim((string)($b['name'] ?? ''));
         if ($name === '') return Json::err($res, 'Name erforderlich', 422);
@@ -70,37 +79,39 @@ final class ContactRoutes
         $cols = array_keys($f);
         $place = implode(', ', array_fill(0, count($cols), '?'));
         $stmt = Database::pdo()->prepare(
-            'INSERT INTO contacts (user_id, ' . implode(', ', $cols) . ') VALUES (?, ' . $place . ')'
+            'INSERT INTO contacts (user_id, company_id, ' . implode(', ', $cols) . ') VALUES (?, ?, ' . $place . ')'
         );
-        $stmt->execute(array_merge([$uid], array_values($f)));
+        $stmt->execute(array_merge([$uid, $cid], array_values($f)));
         $id = (int)Database::pdo()->lastInsertId();
-        return Json::ok($res, ['contact' => self::shape(self::fetchOne($uid, $id))], 201);
+        return Json::ok($res, ['contact' => self::shape(self::fetchOne($cid, $id))], 201);
     }
 
     public static function update(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
 
         $b = (array) $req->getParsedBody();
         if (array_key_exists('name', $b) && trim((string)$b['name']) === '') {
             return Json::err($res, 'Name erforderlich', 422);
         }
         $f = self::fields($b, false);
-        if (!$f) return Json::ok($res, ['contact' => self::shape(self::fetchOne($uid, $id))]);
+        if (!$f) return Json::ok($res, ['contact' => self::shape(self::fetchOne($cid, $id))]);
 
         $sets = implode(', ', array_map(static fn($c) => "$c = ?", array_keys($f)));
         $params = array_merge(array_values($f), [$id]);
         Database::pdo()->prepare("UPDATE contacts SET $sets WHERE id = ?")->execute($params);
-        return Json::ok($res, ['contact' => self::shape(self::fetchOne($uid, $id))]);
+        return Json::ok($res, ['contact' => self::shape(self::fetchOne($cid, $id))]);
     }
 
     public static function delete(Request $req, Response $res, array $args): Response
     {
         $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
         $id = (int)$args['id'];
-        if (!self::fetchOne($uid, $id)) return Json::err($res, 'Not found', 404);
+        if (!self::fetchOne($cid, $id)) return Json::err($res, 'Not found', 404);
         Database::pdo()->prepare('DELETE FROM contacts WHERE id = ?')->execute([$id]);
         return Json::ok($res, ['ok' => true]);
     }
@@ -137,10 +148,13 @@ final class ContactRoutes
         return $out;
     }
 
-    private static function fetchOne(int $uid, int $id): ?array
+    private static function fetchOne(int $cid, int $id): ?array
     {
-        $stmt = Database::pdo()->prepare('SELECT c.*, u.name AS created_by_name FROM contacts c LEFT JOIN users u ON u.id = c.user_id WHERE c.id = ?');
-        $stmt->execute([$id]);
+        $stmt = Database::pdo()->prepare(
+            'SELECT c.*, u.name AS created_by_name FROM contacts c LEFT JOIN users u ON u.id = c.user_id '
+            . 'WHERE c.id = ? AND (c.company_id = ? OR c.company_id IS NULL)'
+        );
+        $stmt->execute([$id, $cid]);
         $c = $stmt->fetch();
         return $c ?: null;
     }
