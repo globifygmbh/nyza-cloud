@@ -6,8 +6,9 @@ namespace Nyza;
 /**
  * In-app updater. Pulls the latest build from GitHub and copies it over the
  * running install, preserving config.php + storage/, then runs any new DB
- * migrations. Triggered via /cloud/?update=1 and gated behind a valid admin
- * token (same model as the locked SetupWizard) so a random visitor can't
+ * migrations. Triggered via /cloud/?update=1 and gated behind the
+ * Hauptadmin's token (same auth model as the locked SetupWizard) — nobody
+ * else, not a random visitor and not even a regular admin account, can
  * overwrite the install.
  *
  * It never deletes files — it only overwrites/adds from the downloaded build —
@@ -55,6 +56,14 @@ final class Updater
         return is_string($t) && $t !== '' ? $t : null;
     }
 
+    /**
+     * Only the Hauptadmin (the very first, non-deletable account — see
+     * users.is_primary) may run the self-updater. It overwrites the entire
+     * running install from GitHub, so it's a step above what an ordinary
+     * admin account should be able to trigger on its own — this previously
+     * only checked that the token belonged to SOME existing user (not even
+     * role='admin'), which was a real gap.
+     */
     private function isAuthedAdmin(): bool
     {
         $tok = $this->bearer();
@@ -62,9 +71,10 @@ final class Updater
         $p = Auth::decode($tok);
         if (!$p || empty($p['sub'])) return false;
         try {
-            $s = Database::pdo()->prepare('SELECT 1 FROM users WHERE id = ?');
+            $s = Database::pdo()->prepare('SELECT is_primary FROM users WHERE id = ?');
             $s->execute([(int)$p['sub']]);
-            return (bool) $s->fetch();
+            $row = $s->fetch();
+            return (bool) $row && !empty($row['is_primary']);
         } catch (\Throwable $e) {
             return false;
         }
@@ -282,8 +292,8 @@ final class Updater
         http_response_code(403);
         $this->page('Gesperrt', function () {
             echo '<h1>Update gesperrt</h1>';
-            echo '<p class="lede">Der Updater ist aus Sicherheitsgründen nur als angemeldeter Admin erreichbar.</p>';
-            echo '<div class="actions" style="margin-top:20px"><a id="unlock" class="btn btn-primary" href="#">Als Admin entsperren</a> <a class="btn" href="./">Zur App</a></div>';
+            echo '<p class="lede">Der Updater ist aus Sicherheitsgründen nur für den Hauptadmin erreichbar — er überschreibt die gesamte Installation.</p>';
+            echo '<div class="actions" style="margin-top:20px"><a id="unlock" class="btn btn-primary" href="#">Erneut versuchen</a> <a class="btn" href="./">Zur App</a></div>';
             echo "<script>(function(){var t=null;try{t=localStorage.getItem('nyza.token');}catch(e){}"
                . "var u=document.getElementById('unlock');var base=location.pathname.replace(/index\\.php$/,'');"
                . "if(t){u.href=base+'?update=1&token='+encodeURIComponent(t);}else{u.textContent='Bitte zuerst in der App einloggen';u.href='./';}})();</script>";

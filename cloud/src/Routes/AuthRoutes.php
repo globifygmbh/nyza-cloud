@@ -68,6 +68,7 @@ final class AuthRoutes
             'has_logo' => !empty($u['logo_path']),
             'role' => $u['role'] ?? 'user',
             'active' => isset($u['active']) ? (int)$u['active'] : 1,
+            'is_primary' => !empty($u['is_primary']),
         ];
     }
 
@@ -82,7 +83,7 @@ final class AuthRoutes
         $password = (string)($b['password'] ?? '');
 
         $pdo = Database::pdo();
-        $stmt = $pdo->prepare('SELECT id, email, password_hash, name, accent, logo_path, totp_enabled, role, active FROM users WHERE email = ?');
+        $stmt = $pdo->prepare('SELECT id, email, password_hash, name, accent, logo_path, totp_enabled, role, active, is_primary FROM users WHERE email = ?');
         $stmt->execute([$email]);
         $u = $stmt->fetch();
         if (!$u || !password_verify($password, $u['password_hash'])) {
@@ -113,7 +114,7 @@ final class AuthRoutes
         if (!$uid) return Json::err($res, 'Challenge abgelaufen — bitte erneut anmelden', 401, 'challenge_expired');
 
         $pdo = Database::pdo();
-        $stmt = $pdo->prepare('SELECT id, email, name, accent, logo_path, totp_secret, totp_enabled, twofa_recovery, role, active FROM users WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT id, email, name, accent, logo_path, totp_secret, totp_enabled, twofa_recovery, role, active, is_primary FROM users WHERE id = ?');
         $stmt->execute([$uid]);
         $u = $stmt->fetch();
         $code = (string)($b['code'] ?? '');
@@ -267,7 +268,7 @@ final class AuthRoutes
     {
         $uid = Auth::userId($req);
         if (!$uid) return Json::err($res, 'Unauthorized', 401);
-        $stmt = Database::pdo()->prepare('SELECT id, email, name, storage_quota, storage_used, accent, logo_path, totp_enabled, role, active, created_at FROM users WHERE id = ?');
+        $stmt = Database::pdo()->prepare('SELECT id, email, name, storage_quota, storage_used, accent, logo_path, totp_enabled, role, active, is_primary, created_at FROM users WHERE id = ?');
         $stmt->execute([$uid]);
         $u = $stmt->fetch();
         if (!$u) return Json::err($res, 'Not found', 404);
@@ -312,7 +313,7 @@ final class AuthRoutes
                 $quota,
                 $uid,
             ]);
-        $stmt = $pdo->prepare('SELECT id, email, name, accent, logo_path, totp_enabled, role, active, storage_quota, storage_used FROM users WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT id, email, name, accent, logo_path, totp_enabled, role, active, is_primary, storage_quota, storage_used FROM users WHERE id = ?');
         $stmt->execute([$uid]);
         $row = $stmt->fetch();
         return Json::ok($res, ['user' => self::publicUser($row) + ['storage_quota' => (int)$row['storage_quota'], 'storage_used' => (int)$row['storage_used']]]);

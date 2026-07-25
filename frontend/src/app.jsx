@@ -827,16 +827,20 @@ export function SecurityModal({ user, onClose, onChanged, onChangePassword }) {
             </div>
           </div>
 
-          {/* Updates */}
-          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>Updates</div>
-              <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Neueste Version aus GitHub installieren</div>
+          {/* Updates — overwrites the whole install, so only the Hauptadmin
+              gets this (server-side enforced too, this is just not showing
+              a button that would 403 anyway). */}
+          {user?.is_primary && (
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Updates</div>
+                <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>Neueste Version aus GitHub installieren</div>
+              </div>
+              <a href={(BASE || '') + '/?update=1&token=' + (getToken() || '')} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+                <Btn variant="glass" size="sm" icon={Ic.rotate(13)}>Nach Updates suchen</Btn>
+              </a>
             </div>
-            <a href={(BASE || '') + '/?update=1&token=' + (getToken() || '')} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
-              <Btn variant="glass" size="sm" icon={Ic.rotate(13)}>Nach Updates suchen</Btn>
-            </a>
-          </div>
+          )}
         </div>
       </Glass>
     </div>

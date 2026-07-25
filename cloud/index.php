@@ -65,8 +65,8 @@ if (isset($_GET['setup'])) {
 
 Config::load(__DIR__ . '/config.php');
 
-// `?update=1` → in-app updater (pulls latest from GitHub). Admin-token gated
-// inside Updater. Runs after Config::load so the DB is available for the check.
+// `?update=1` → in-app updater (pulls latest from GitHub). Hauptadmin-only,
+// gated inside Updater. Runs after Config::load so the DB is available.
 if (isset($_GET['update'])) {
     (new \Nyza\Updater(__DIR__))->handle();
     exit;
