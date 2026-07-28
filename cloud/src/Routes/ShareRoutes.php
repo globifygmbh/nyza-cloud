@@ -30,6 +30,7 @@ final class ShareRoutes
         // Public (no auth) endpoints
         $app->post('/api/s/{token}/unlock',  [self::class, 'unlock']);
         $app->get('/api/s/{token}',          [self::class, 'show']);
+        $app->get('/api/s/{token}/folder/{fid}', [self::class, 'browseFolder']);
         $app->get('/api/s/{token}/zip',      [self::class, 'downloadZip']);
         $app->get('/api/s/{token}/file/{id}',[self::class, 'downloadFile']);
         $app->get('/api/s/{token}/file/{id}/thumb', [self::class, 'fileThumb']);
@@ -399,13 +400,35 @@ final class ShareRoutes
             $f = $pdo->prepare('SELECT id, name, kind FROM folders WHERE id = ?');
             $f->execute([(int)$share['folder_id']]);
             $folder = $f->fetch();
+
+            // Direct children only for the top level — subfolders are
+            // browsed separately (GET .../folder/{fid}) instead of every
+            // nested file being dumped into one flat list with no structure.
+            $files = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
+            $files->execute([(int)$share['folder_id']]);
+            $sub = $pdo->prepare(
+                'SELECT f.id, f.name, f.tone, '
+                . '(SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
+                . '(SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
+                . 'FROM folders f WHERE parent_id = ? AND deleted_at IS NULL ORDER BY name'
+            );
+            $sub->execute([(int)$share['folder_id']]);
+
+            // Whole-tree totals for the header summary (recursive).
             $ids = self::folderTreeIds((int)$share['user_id'], (int)$share['folder_id']);
             $place = implode(',', array_fill(0, count($ids), '?'));
-            $files = $pdo->prepare("SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at FROM files WHERE folder_id IN ($place) AND deleted_at IS NULL ORDER BY created_at DESC");
-            $files->execute($ids);
+            $totalStmt = $pdo->prepare("SELECT COUNT(*) AS c, COALESCE(SUM(size),0) AS s FROM files WHERE folder_id IN ($place) AND deleted_at IS NULL");
+            $totalStmt->execute($ids);
+            $totals = $totalStmt->fetch();
+
             $payload['folder'] = $folder ?: null;
             $payload['files'] = $files->fetchAll();
-            $payload['total_size'] = array_sum(array_map(fn($r) => (int)$r['size'], $payload['files']));
+            $payload['subfolders'] = array_map(static fn($r) => [
+                'id' => (int)$r['id'], 'name' => $r['name'], 'tone' => $r['tone'],
+                'item_count' => (int)$r['item_count'], 'total_size' => (int)$r['total_size'],
+            ], $sub->fetchAll());
+            $payload['total_files'] = (int)($totals['c'] ?? 0);
+            $payload['total_size'] = (int)($totals['s'] ?? 0);
         } elseif ($share['file_id']) {
             $f = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at FROM files WHERE id = ?');
             $f->execute([(int)$share['file_id']]);
@@ -415,6 +438,46 @@ final class ShareRoutes
         $pdo->prepare('UPDATE share_links SET view_count = view_count + 1 WHERE id = ?')->execute([(int)$share['id']]);
         self::logEvent((int)$share['id'], 'view', null, null, $req);
         return Json::ok($res, $payload);
+    }
+
+    /** Browse one level into a subfolder of a folder share (Drive-style
+     *  navigation instead of dumping the whole subtree into one flat list). */
+    public static function browseFolder(Request $req, Response $res, array $args): Response
+    {
+        $share = self::loadByToken($args['token']);
+        if (!$share) return Json::err($res, 'Not found', 404);
+        if (!$share['folder_id']) return Json::err($res, 'Not a folder share', 400);
+        $err = self::gate($share, $req);
+        if ($err) return Json::err($res, $err['error'], $err['status']);
+
+        $fid = (int)$args['fid'];
+        $ids = self::folderTreeIds((int)$share['user_id'], (int)$share['folder_id']);
+        if (!in_array($fid, $ids, true)) return Json::err($res, 'Forbidden', 403);
+
+        $pdo = Database::pdo();
+        $f = $pdo->prepare('SELECT id, name, kind FROM folders WHERE id = ?');
+        $f->execute([$fid]);
+        $folder = $f->fetch();
+
+        $sub = $pdo->prepare(
+            'SELECT f.id, f.name, f.tone, '
+            . '(SELECT COUNT(*) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS item_count, '
+            . '(SELECT COALESCE(SUM(size),0) FROM files WHERE folder_id = f.id AND deleted_at IS NULL) AS total_size '
+            . 'FROM folders f WHERE parent_id = ? AND deleted_at IS NULL ORDER BY name'
+        );
+        $sub->execute([$fid]);
+
+        $files = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
+        $files->execute([$fid]);
+
+        return Json::ok($res, [
+            'folder' => $folder ?: null,
+            'subfolders' => array_map(static fn($r) => [
+                'id' => (int)$r['id'], 'name' => $r['name'], 'tone' => $r['tone'],
+                'item_count' => (int)$r['item_count'], 'total_size' => (int)$r['total_size'],
+            ], $sub->fetchAll()),
+            'files' => $files->fetchAll(),
+        ]);
     }
 
     public static function downloadZip(Request $req, Response $res, array $args): Response

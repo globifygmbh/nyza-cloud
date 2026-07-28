@@ -113,8 +113,16 @@ export function PublicSharePage({ token }) {
     return () => window.removeEventListener('resize', h);
   }, []);
 
+  // Drive-style navigation within the shared folder's own subtree — [] = the
+  // shared folder itself; `level` holds {folder, subfolders, files} for
+  // wherever the stack currently points (fetched on demand), null at root.
+  const [stack, setStack] = useState([]);
+  const [level, setLevel] = useState(null);
+  const [levelLoading, setLevelLoading] = useState(false);
+
   const load = (pw) => {
     setState({ status: 'loading' });
+    setStack([]); setLevel(null);
     API.publicShare(token, pw)
       .then((data) => setState({ status: 'ok', data }))
       .catch((err) => {
@@ -132,9 +140,11 @@ export function PublicSharePage({ token }) {
   // every render — required by the Rules of Hooks.
   const data = state.data || {};
   const isFolder = !!data.folder;
-  const items = isFolder ? (data.files || []) : (data.file ? [data.file] : []);
-  const name = isFolder ? data.folder.name : (data.file?.name || 'Geteilte Datei');
-  const totalSize = isFolder ? data.total_size : (data.file?.size || 0);
+  const atRoot = stack.length === 0;
+  const currentSubfolders = isFolder ? (atRoot ? (data.subfolders || []) : (level?.subfolders || [])) : [];
+  const items = isFolder ? (atRoot ? (data.files || []) : (level?.files || [])) : (data.file ? [data.file] : []);
+  const name = isFolder ? (atRoot ? data.folder.name : (stack[stack.length - 1]?.name || '')) : (data.file?.name || 'Geteilte Datei');
+  const totalSize = isFolder ? items.reduce((s, f) => s + (f.size || 0), 0) : (data.file?.size || 0);
   const galleryMode = isFolder && data.gallery;
   const images = items.filter((f) => f.kind === 'image');
   // Sort media newest-first by capture time (EXIF taken_at) → upload date.
@@ -143,6 +153,22 @@ export function PublicSharePage({ token }) {
   const media = mediaAll.filter((f) => !labelFilter || f.label === labelFilter);
   const labelCount = {};
   mediaAll.forEach((f) => { if (f.label) labelCount[f.label] = (labelCount[f.label] || 0) + 1; });
+  const enterFolder = (folder) => {
+    setLevelLoading(true);
+    API.shareBrowseFolder(token, folder.id, password)
+      .then((d) => { setLevel(d); setStack((s) => [...s, folder]); })
+      .catch((e) => toast(e.message, 'error'))
+      .finally(() => setLevelLoading(false));
+  };
+  const goToDepth = (depth) => { // -1 = the shared folder itself
+    if (depth < 0) { setStack([]); setLevel(null); return; }
+    const target = stack[depth];
+    setLevelLoading(true);
+    API.shareBrowseFolder(token, target.id, password)
+      .then((d) => { setLevel(d); setStack((s) => s.slice(0, depth + 1)); })
+      .catch((e) => toast(e.message, 'error'))
+      .finally(() => setLevelLoading(false));
+  };
   // Reveal media thumbnails in batches as the user scrolls — mounting
   // hundreds of <img> nodes at once on a big gallery folder is what makes
   // it feel slow, not the actual network transfer (lazy-loading + server
@@ -233,6 +259,29 @@ export function PublicSharePage({ token }) {
             </div>
           )}
 
+          {(!atRoot || currentSubfolders.length > 0) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--fg-3)', flexWrap: 'wrap', marginBottom: 18 }}>
+              <span style={{ cursor: 'pointer', color: 'var(--accent)', fontWeight: 540 }} onClick={() => goToDepth(-1)}>{data.folder?.name}</span>
+              {stack.map((f, i) => (
+                <React.Fragment key={f.id}>
+                  <span>/</span>
+                  {i === stack.length - 1
+                    ? <span style={{ color: 'var(--fg)', fontWeight: 540, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                    : <span style={{ cursor: 'pointer', color: 'var(--accent)', fontWeight: 540 }} onClick={() => goToDepth(i)}>{f.name}</span>}
+                </React.Fragment>
+              ))}
+            </div>
+          )}
+
+          {currentSubfolders.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 14, marginBottom: 26 }}>
+              {currentSubfolders.map((f) => <PortalFolderTile key={f.id} folder={f} onClick={() => enterFolder(f)}/>)}
+            </div>
+          )}
+
+          {levelLoading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--fg-3)' }}>{Ic.loader(22)}</div>
+          ) : (<>
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
             {Array.from({ length: cols }, (_, ci) => media.slice(0, visibleCount).filter((_, i) => i % cols === ci)).map((col, ci) => (
               <div key={ci} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -293,6 +342,8 @@ export function PublicSharePage({ token }) {
               ))}
             </div>
           )}
+          </>
+          )}
         </div>
 
         {viewing && (() => {
@@ -334,7 +385,7 @@ export function PublicSharePage({ token }) {
           </div>
           <h1 className="nyza-share-title" style={{ fontFamily: 'var(--font-display)', fontSize: 56, fontWeight: 600, letterSpacing: -2, margin: 0, lineHeight: 1.0, wordBreak: 'break-word' }}>{name}</h1>
           <p style={{ fontSize: 16, color: 'var(--fg-2)', marginTop: 18, lineHeight: 1.55, maxWidth: 480 }}>
-            {items.length} {items.length === 1 ? 'Datei' : 'Dateien'} · {humanSize(totalSize)}
+            {(() => { const n = isFolder ? (data.total_files ?? items.length) : items.length; return <>{n} {n === 1 ? 'Datei' : 'Dateien'} · {humanSize(isFolder ? (data.total_size ?? totalSize) : totalSize)}</>; })()}
             {data.expires_at && <> · läuft ab am {new Date(data.expires_at).toLocaleDateString('de-DE')}</>}
           </p>
           {data.allow_download && (
@@ -374,8 +425,28 @@ export function PublicSharePage({ token }) {
         </div>
       </div>
 
-      {isFolder && items.length > 0 && (
+      {isFolder && (items.length > 0 || currentSubfolders.length > 0) && (
         <div className="nyza-share-content" style={{ padding: '0 40px 80px' }}>
+          {(!atRoot || currentSubfolders.length > 0) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--fg-3)', flexWrap: 'wrap', marginBottom: 18 }}>
+              <span style={{ cursor: 'pointer', color: 'var(--accent)', fontWeight: 540 }} onClick={() => goToDepth(-1)}>{data.folder?.name}</span>
+              {stack.map((f, i) => (
+                <React.Fragment key={f.id}>
+                  <span>/</span>
+                  {i === stack.length - 1
+                    ? <span style={{ color: 'var(--fg)', fontWeight: 540, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+                    : <span style={{ cursor: 'pointer', color: 'var(--accent)', fontWeight: 540 }} onClick={() => goToDepth(i)}>{f.name}</span>}
+                </React.Fragment>
+              ))}
+            </div>
+          )}
+
+          {currentSubfolders.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 14, marginBottom: 26 }}>
+              {currentSubfolders.map((f) => <PortalFolderTile key={f.id} folder={f} onClick={() => enterFolder(f)}/>)}
+            </div>
+          )}
+
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, gap: 12 }}>
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 600, margin: 0, letterSpacing: -0.3 }}>Inhalt</h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -387,7 +458,9 @@ export function PublicSharePage({ token }) {
             </div>
           </div>
 
-          {viewMode === 'grid' ? (
+          {levelLoading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--fg-3)' }}>{Ic.loader(22)}</div>
+          ) : items.length === 0 ? null : viewMode === 'grid' ? (
             <div className="nyza-share-grid">
               {items.map((f) => {
                 const previewable = ['image', 'video', 'pdf', 'audio'].includes(f.kind) || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(f.name);

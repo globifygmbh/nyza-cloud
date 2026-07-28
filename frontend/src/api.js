@@ -229,6 +229,8 @@ export const API = {
   shareEvents: (id) => request('/api/shares/' + id + '/events'),
   publicShare: (token, password) =>
     request('/api/s/' + token + (password ? '?p=' + encodeURIComponent(password) : ''), { skipAuth: true }),
+  shareBrowseFolder: (token, fid, password) =>
+    request('/api/s/' + token + '/folder/' + fid + (password ? '?p=' + encodeURIComponent(password) : ''), { skipAuth: true }),
   // download=true forces an attachment (the explicit Download buttons);
   // omit it for inline preview in the MediaViewer.
   shareFileUrl: (token, fileId, password, download = false) => {
