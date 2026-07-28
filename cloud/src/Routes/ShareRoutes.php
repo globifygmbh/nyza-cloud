@@ -46,11 +46,35 @@ final class ShareRoutes
         if (self::gate($share, $req)) return null;
         if ($share['file_id'] && (int)$share['file_id'] === $fileId) return $share;
         if ($share['folder_id']) {
-            $chk = Database::pdo()->prepare('SELECT 1 FROM files WHERE id = ? AND folder_id = ? AND deleted_at IS NULL');
-            $chk->execute([$fileId, (int)$share['folder_id']]);
+            $ids = self::folderTreeIds((int)$share['user_id'], (int)$share['folder_id']);
+            $place = implode(',', array_fill(0, count($ids), '?'));
+            $chk = Database::pdo()->prepare("SELECT 1 FROM files WHERE id = ? AND folder_id IN ($place) AND deleted_at IS NULL");
+            $chk->execute(array_merge([$fileId], $ids));
             if ($chk->fetch()) return $share;
         }
         return null;
+    }
+
+    /** All live folder ids in $rootId's subtree, including itself. A share
+     *  only ever points at one folder, but that folder's own subfolders
+     *  should still count — otherwise sharing a folder that's just an index
+     *  of subfolders (no files directly inside it) looks completely empty. */
+    private static function folderTreeIds(int $ownerUid, int $rootId): array
+    {
+        $pdo = Database::pdo();
+        $stmt = $pdo->prepare('SELECT id FROM folders WHERE parent_id = ? AND user_id = ? AND deleted_at IS NULL');
+        $ids = [$rootId];
+        $frontier = [$rootId];
+        $guard = 0;
+        while ($frontier && $guard++ < 10000) {
+            $next = [];
+            foreach ($frontier as $fid) {
+                $stmt->execute([$fid, $ownerUid]);
+                foreach ($stmt->fetchAll() as $r) { $ids[] = (int)$r['id']; $next[] = (int)$r['id']; }
+            }
+            $frontier = $next;
+        }
+        return $ids;
     }
 
     public static function fileThumb(Request $req, Response $res, array $args): Response
@@ -375,8 +399,10 @@ final class ShareRoutes
             $f = $pdo->prepare('SELECT id, name, kind FROM folders WHERE id = ?');
             $f->execute([(int)$share['folder_id']]);
             $folder = $f->fetch();
-            $files = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
-            $files->execute([(int)$share['folder_id']]);
+            $ids = self::folderTreeIds((int)$share['user_id'], (int)$share['folder_id']);
+            $place = implode(',', array_fill(0, count($ids), '?'));
+            $files = $pdo->prepare("SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at FROM files WHERE folder_id IN ($place) AND deleted_at IS NULL ORDER BY created_at DESC");
+            $files->execute($ids);
             $payload['folder'] = $folder ?: null;
             $payload['files'] = $files->fetchAll();
             $payload['total_size'] = array_sum(array_map(fn($r) => (int)$r['size'], $payload['files']));
@@ -400,8 +426,10 @@ final class ShareRoutes
         if ($err) return Json::err($res, $err['error'], $err['status']);
         if (!$share['folder_id']) return Json::err($res, 'Single file — use file endpoint', 400);
 
-        $files = Database::pdo()->prepare('SELECT * FROM files WHERE folder_id = ? AND deleted_at IS NULL');
-        $files->execute([(int)$share['folder_id']]);
+        $ids = self::folderTreeIds((int)$share['user_id'], (int)$share['folder_id']);
+        $place = implode(',', array_fill(0, count($ids), '?'));
+        $files = Database::pdo()->prepare("SELECT * FROM files WHERE folder_id IN ($place) AND deleted_at IS NULL");
+        $files->execute($ids);
         $rows = $files->fetchAll();
         if (!$rows) return Json::err($res, 'No files', 404);
 
@@ -437,8 +465,10 @@ final class ShareRoutes
             return Json::err($res, 'Forbidden', 403);
         }
         if ($share['folder_id']) {
-            $check = $pdo->prepare('SELECT 1 FROM files WHERE id = ? AND folder_id = ?');
-            $check->execute([$fileId, (int)$share['folder_id']]);
+            $ids = self::folderTreeIds((int)$share['user_id'], (int)$share['folder_id']);
+            $place = implode(',', array_fill(0, count($ids), '?'));
+            $check = $pdo->prepare("SELECT 1 FROM files WHERE id = ? AND folder_id IN ($place)");
+            $check->execute(array_merge([$fileId], $ids));
             if (!$check->fetch()) return Json::err($res, 'Forbidden', 403);
         }
 
