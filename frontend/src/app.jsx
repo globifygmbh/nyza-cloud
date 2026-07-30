@@ -9302,19 +9302,22 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {items.map((it, i) => (
                 <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <input value={it.description} onChange={(e) => setItem(i, 'description', e.target.value)} placeholder="Beschreibung" style={{ ...fld, flex: 1, minWidth: 0 }}/>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                    <textarea value={it.description} onChange={(e) => setItem(i, 'description', e.target.value)} placeholder="Beschreibung"
+                      rows={Math.min(6, String(it.description || '').split('\n').length)}
+                      style={{ ...fld, flex: 1, minWidth: 0, height: 'auto', minHeight: 40, padding: '9px 10px', resize: 'vertical', lineHeight: 1.45 }}/>
                     <input type="number" step="0.01" value={it.quantity} onChange={(e) => setItem(i, 'quantity', e.target.value)} title="Menge" style={{ ...numIn, width: 64 }}/>
                     <input value={it.unit} onChange={(e) => setItem(i, 'unit', e.target.value)} title="Einheit" style={{ ...fld, width: 56 }}/>
                     <input type="number" step="0.01" value={it.unit_price_net} onChange={(e) => setItem(i, 'unit_price_net', e.target.value)} title="Einzelpreis netto" style={{ ...numIn, width: 90 }}/>
                     <select value={it.tax_rate} onChange={(e) => setItem(i, 'tax_rate', e.target.value)} title="USt-Satz" style={{ ...fld, width: 64, cursor: 'pointer' }}>
                       <option value={20}>20%</option><option value={13}>13%</option><option value={10}>10%</option><option value={0}>0%</option>
                     </select>
-                    <div style={{ width: 84, textAlign: 'right', fontSize: 13, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{fmtEUR(lineNet(it))}</div>
-                    <span onClick={() => rmRow(i)} title="Entfernen" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex', flexShrink: 0 }}>{Ic.close(14)}</span>
+                    <div style={{ width: 84, textAlign: 'right', fontSize: 13, fontVariantNumeric: 'tabular-nums', flexShrink: 0, lineHeight: '40px' }}>{fmtEUR(lineNet(it))}</div>
+                    <span onClick={() => rmRow(i)} title="Entfernen" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex', flexShrink: 0, marginTop: 13 }}>{Ic.close(14)}</span>
                   </div>
-                  <input value={it.note} onChange={(e) => setItem(i, 'note', e.target.value)} placeholder="Zusatzinfo (optional, erscheint klein unter der Position)"
-                    style={{ ...fld, height: 30, fontSize: 12, color: 'var(--fg-3)' }}/>
+                  <textarea value={it.note} onChange={(e) => setItem(i, 'note', e.target.value)} placeholder="Zusatzinfo (optional, erscheint klein unter der Position)"
+                    rows={Math.min(6, String(it.note || '').split('\n').length)}
+                    style={{ ...fld, height: 'auto', minHeight: 30, padding: '6px 10px', fontSize: 12, color: 'var(--fg-3)', resize: 'vertical', lineHeight: 1.45 }}/>
                 </div>
               ))}
             </div>
