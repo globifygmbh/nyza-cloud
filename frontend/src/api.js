@@ -384,12 +384,13 @@ export const API = {
   markDocPaid:    (id, paid_date) => request('/api/documents/' + id + '/mark-paid', { method: 'POST', body: { paid_date } }),
   unmarkDocPaid:  (id) => request('/api/documents/' + id + '/unmark-paid', { method: 'POST', body: {} }),
   convertDoc:     (id) => request('/api/documents/' + id + '/convert', { method: 'POST', body: {} }),
-  docPdfUrl:      (id, download) => url('/api/documents/' + id + '/pdf') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
+  partialInvoice: (id, body) => request('/api/documents/' + id + '/partial-invoice', { method: 'POST', body: body || {} }),
+  docPdfUrl:      (id, download) => url('/api/documents/' + id + '/pdf') + '?token=' + (getToken() || '') + (getCompany() ? '&company_id=' + getCompany() : '') + (download ? '&download=1' : ''),
   archiveDocument: (id) => request('/api/documents/' + id + '/archive', { method: 'POST', body: {} }),
   documentReminders: (id) => request('/api/documents/' + id + '/reminders'),
   createReminder: (id) => request('/api/documents/' + id + '/reminders', { method: 'POST', body: {} }),
   deleteReminder: (id) => request('/api/reminders/' + id, { method: 'DELETE' }),
-  reminderPdfUrl: (id, download) => url('/api/reminders/' + id + '/pdf') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
+  reminderPdfUrl: (id, download) => url('/api/reminders/' + id + '/pdf') + '?token=' + (getToken() || '') + (getCompany() ? '&company_id=' + getCompany() : '') + (download ? '&download=1' : ''),
   products:       () => request('/api/products'),
   newProduct:     (body) => request('/api/products', { method: 'POST', body }),
   updateProduct:  (id, body) => request('/api/products/' + id, { method: 'PATCH', body }),
@@ -529,7 +530,7 @@ export const API = {
     xhr.onerror = () => reject(new Error('Netzwerkfehler'));
     xhr.send(fd);
   }),
-  expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (download ? '&download=1' : ''),
+  expenseReceiptUrl: (id, download) => url('/api/expenses/' + id + '/receipt') + '?token=' + (getToken() || '') + (getCompany() ? '&company_id=' + getCompany() : '') + (download ? '&download=1' : ''),
 
   // Buchhaltung · Auswertung
   report:    (year, opts = {}) => request('/api/reports?year=' + year + (opts.month ? '&month=' + opts.month : '') + (opts.quarter ? '&quarter=' + opts.quarter : '')),

@@ -7294,7 +7294,7 @@ function UserModal({ u, self, onSave, onClose }) {
 const TEXT_SUGGESTIONS = {
   offer_intro: 'Sehr geehrte Damen und Herren,\n\nvielen Dank für Ihre Anfrage. Gerne unterbreiten wir Ihnen folgendes Angebot:',
   invoice_intro: 'Sehr geehrte Damen und Herren,\n\nfür die von uns erbrachten Leistungen erlauben wir uns, wie folgt zu berechnen:',
-  offer_footer: 'Dieses Angebot ist freibleibend und bis 30 Tage ab Angebotsdatum gültig. Änderungen und Irrtümer vorbehalten.',
+  offer_footer: 'Dieses Angebot ist freibleibend und bis 30 Tage ab Angebotsdatum gültig. Änderungen und Irrtümer vorbehalten.\n\nMit Annahme dieses Angebots ist eine Anzahlung in Höhe von 50 % der Angebotssumme fällig. Der Restbetrag ist nach Fertigstellung bzw. Lieferung zu begleichen.',
   invoice_footer: 'Bitte überweisen Sie den Rechnungsbetrag unter Angabe der Rechnungsnummer innerhalb der angegebenen Zahlungsfrist auf das oben genannte Konto. Bei Fragen stehen wir Ihnen gerne zur Verfügung.',
 };
 
@@ -7424,7 +7424,7 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
                   Der Gewinn (EÜR) bleibt immer nach Zahlungseingang.
                 </div>
                 {row(field('Firmenname (rechtlich)', 'legal_name', { ph: 'Globify GmbH' }), field('Markenname', 'brand_name', { ph: 'Nyza' }))}
-                {row(field('Inhaber / Geschäftsführer', 'owner', { ph: 'Vor- und Nachname' }))}
+                {row(field('Inhaber / Geschäftsführer', 'owner', { ph: 'Vor- und Nachname' }), field('Firmenbuchgericht', 'commercial_court', { ph: 'Handelsgericht Wien' }))}
                 {row(field('UID / USt-IdNr.', 'uid', { ph: 'ATU…' }), field('Steuernummer', 'tax_number', {}), field('Firmenbuchnr.', 'firmenbuch_nr', { ph: 'FN …' }))}
               </>)}
 
@@ -7525,6 +7525,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const delDoc = async (doc) => { if (!await confirmDialog({ title: 'Löschen?', message: `${doc.number} wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteDocument(doc.id); load(); } catch (e) { toast(e.message, 'error'); } };
   const togglePaid = async (doc) => { try { if (doc.paid_at) await API.unmarkDocPaid(doc.id); else await API.markDocPaid(doc.id); load(); } catch (e) { toast(e.message, 'error'); } };
   const convert = async (doc) => { try { const d = await API.convertDoc(doc.id); toast('Rechnung ' + (d.document?.number || '') + ' erstellt', 'success'); setTab('invoice'); } catch (e) { toast(e.message, 'error'); } };
+  const partialInv = async (doc, body) => { try { const d = await API.partialInvoice(doc.id, body); toast('Rechnung ' + (d.document?.number || '') + ' erstellt', 'success'); setTab('invoice'); } catch (e) { toast(e.message, 'error'); } };
   const createReminder = async (doc) => { try { const r = await API.createReminder(doc.id); toast(r.stage + '. Mahnung erstellt', 'success'); load(); if (r.reminder && r.reminder.id) window.open(API.reminderPdfUrl(r.reminder.id, false), '_blank'); } catch (e) { toast(e.message, 'error'); } };
   const lastReminderPdf = async (doc) => { try { const d = await API.documentReminders(doc.id); const last = (d.reminders || []).slice(-1)[0]; if (last) window.open(API.reminderPdfUrl(last.id, false), '_blank'); } catch (e) { toast(e.message, 'error'); } };
   const removeLastReminder = async (doc) => { try { const d = await API.documentReminders(doc.id); const last = (d.reminders || []).slice(-1)[0]; if (last) { await API.deleteReminder(last.id); toast('Mahnung entfernt', 'success'); load(); } } catch (e) { toast(e.message, 'error'); } };
@@ -7693,7 +7694,11 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                 ...(d.type === 'invoice' ? [{ label: d.paid_at ? 'Als offen markieren' : 'Als bezahlt markieren', icon: Ic.check(15), onClick: () => togglePaid(d) }] : []),
                 ...(d.type === 'invoice' && !d.paid_at && (d.reminder_stage || 0) < 3 ? [{ label: (d.reminder_stage || 0) + 1 + '. Mahnung erstellen', icon: Ic.clock(15), onClick: () => createReminder(d) }] : []),
                 ...(d.type === 'invoice' && (d.reminder_stage || 0) > 0 ? [{ label: 'Letzte Mahnung (PDF)', icon: Ic.eye(15), onClick: () => lastReminderPdf(d) }, { label: 'Mahnung zurücksetzen', icon: Ic.rotate(15), onClick: () => removeLastReminder(d) }] : []),
-                ...(d.type === 'offer' ? [{ label: 'In Rechnung umwandeln', icon: Ic.copy(15), onClick: () => convert(d) }] : []),
+                ...(d.type === 'offer' ? [
+                  { label: 'In Rechnung umwandeln', icon: Ic.copy(15), onClick: () => convert(d) },
+                  { label: 'Anzahlungsrechnung (50 %)', icon: Ic.fileGen(15), onClick: () => partialInv(d, { percent: 50 }) },
+                  { label: 'Schlussrechnung (Restbetrag)', icon: Ic.fileGen(15), onClick: () => partialInv(d, { final: true }) },
+                ] : []),
                 { separator: true },
                 { label: 'Löschen', icon: Ic.trash(15), danger: true, onClick: () => delDoc(d) },
               ];

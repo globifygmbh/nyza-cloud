@@ -38,6 +38,7 @@ final class DocumentRoutes
             $g->post('/{id}/mark-paid',  [self::class, 'markPaid']);
             $g->post('/{id}/unmark-paid',[self::class, 'unmarkPaid']);
             $g->post('/{id}/convert',    [self::class, 'convert']);
+            $g->post('/{id}/partial-invoice', [self::class, 'partialInvoice']);
             $g->get('/{id}/pdf',         [self::class, 'pdf']);
             $g->post('/{id}/archive',    [self::class, 'archive']);
             $g->post('/{id}/sign-upload',  [self::class, 'signUpload']);
@@ -283,6 +284,123 @@ final class DocumentRoutes
             self::insertItems($newId, $copy);
             $pdo->prepare('UPDATE documents SET converted_invoice_id = ?, accepted_at = ? WHERE id = ? AND company_id = ?')
                 ->execute([$newId, date('Y-m-d H:i:s'), $id, $cid]);
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+
+        return Json::ok($res, ['document' => self::shapeFull($uid, $cid, self::fetchOne($cid, $newId))], 201);
+    }
+
+    // ───── Anzahlungs-/Schlussrechnung aus Angebot ───────────────────────────
+    /**
+     * Deposit (Anzahlung) or final (Schlussrechnung) invoice from an offer.
+     * Deposit: one flat line per tax rate over X% (default 50) of the offer sum.
+     * Final: full offer items minus every invoice already issued for this offer
+     * (found via converted_from_offer_id), as negative deduction lines.
+     */
+    public static function partialInvoice(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $cid = CompanyContext::active($req, $uid);
+        $id = (int)$args['id'];
+        $offer = self::fetchOne($cid, $id);
+        if (!$offer) return Json::err($res, 'Not found', 404);
+        if ($offer['type'] !== 'offer') return Json::err($res, 'Nur aus Angeboten möglich', 422);
+
+        $b = (array)$req->getParsedBody();
+        $final = !empty($b['final']);
+        $percent = (float)($b['percent'] ?? 50);
+        if (!$final && ($percent <= 0 || $percent >= 100)) {
+            return Json::err($res, 'Prozentsatz muss zwischen 1 und 99 liegen', 422);
+        }
+
+        $pdo = Database::pdo();
+        $offerItems = self::loadItems($id);
+
+        // Offer net per tax rate, with the same line-level rounding as totals.
+        $netByRate = [];
+        foreach ($offerItems as $it) {
+            $line = round(((float)$it['quantity']) * ((float)$it['unit_price_net']) * 100) / 100;
+            $rate = (string)(float)$it['tax_rate'];
+            $netByRate[$rate] = ($netByRate[$rate] ?? 0.0) + $line;
+        }
+
+        if (!$final) {
+            $pctLabel = rtrim(rtrim(number_format($percent, 2, ',', ''), '0'), ',');
+            $items = [];
+            foreach ($netByRate as $rate => $netForRate) {
+                $items[] = [
+                    'description'    => 'Anzahlung ' . $pctLabel . ' % laut Angebot ' . $offer['number'],
+                    'note'           => null,
+                    'quantity'       => 1,
+                    'unit'           => 'Psch.',
+                    'unit_price_net' => round($netForRate * $percent / 100, 2),
+                    'tax_rate'       => (float)$rate,
+                ];
+            }
+            $intro = 'Vielen Dank für die Beauftragung. Vereinbarungsgemäß stellen wir Ihnen zu unserem Angebot '
+                . $offer['number'] . ' folgende Anzahlung in Rechnung:';
+        } else {
+            $items = array_map(static fn(array $it) => [
+                'description'    => $it['description'],
+                'note'           => $it['note'] ?? null,
+                'quantity'       => $it['quantity'],
+                'unit'           => $it['unit'],
+                'unit_price_net' => $it['unit_price_net'],
+                'tax_rate'       => $it['tax_rate'],
+            ], $offerItems);
+            $s = $pdo->prepare(
+                "SELECT id, number FROM documents WHERE company_id = ? AND type = 'invoice' AND converted_from_offer_id = ? ORDER BY id"
+            );
+            $s->execute([$cid, $id]);
+            foreach ($s->fetchAll() as $inv) {
+                foreach (self::loadItems((int)$inv['id']) as $it) {
+                    $line = round(((float)$it['quantity']) * ((float)$it['unit_price_net']) * 100) / 100;
+                    if ($line === 0.0) continue;
+                    $items[] = [
+                        'description'    => 'abzüglich Anzahlung laut Rechnung ' . $inv['number'],
+                        'note'           => null,
+                        'quantity'       => 1,
+                        'unit'           => 'Psch.',
+                        'unit_price_net' => -$line,
+                        'tax_rate'       => $it['tax_rate'],
+                    ];
+                }
+            }
+            $intro = 'Vereinbarungsgemäß stellen wir Ihnen die Leistungen aus unserem Angebot '
+                . $offer['number'] . ' als Schlussrechnung in Rechnung:';
+        }
+        $totals = self::computeTotals($items);
+
+        $profile = CompanyContext::profile($cid);
+        $footer = isset($profile['invoice_footer']) && trim((string)$profile['invoice_footer']) !== ''
+            ? (string)$profile['invoice_footer'] : null;
+
+        $pdo->beginTransaction();
+        try {
+            $number = self::nextNumber($cid, 'invoice', 'RE-');
+            $pdo->prepare(
+                'INSERT INTO documents (user_id, company_id, type, number, contact_id, attn_name, client_snapshot, doc_date, delivery_date, '
+                . 'intro_text, footer_text, notes, net, tax, gross, converted_from_offer_id) '
+                . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $uid, $cid, 'invoice', $number, $offer['contact_id'], $offer['attn_name'] ?? null, $offer['client_snapshot'],
+                date('Y-m-d'), $final ? $offer['delivery_date'] : null, $intro, $footer, null,
+                $totals['net'], $totals['tax'], $totals['gross'], $id,
+            ]);
+            $newId = (int)$pdo->lastInsertId();
+            self::insertItems($newId, $items);
+            // Anzahlung implies the offer was accepted; the final invoice also
+            // marks the offer as converted (like a full convert).
+            if ($final) {
+                $pdo->prepare('UPDATE documents SET converted_invoice_id = ?, accepted_at = COALESCE(accepted_at, ?) WHERE id = ? AND company_id = ?')
+                    ->execute([$newId, date('Y-m-d H:i:s'), $id, $cid]);
+            } else {
+                $pdo->prepare('UPDATE documents SET accepted_at = COALESCE(accepted_at, ?) WHERE id = ? AND company_id = ?')
+                    ->execute([date('Y-m-d H:i:s'), $id, $cid]);
+            }
             $pdo->commit();
         } catch (\Throwable $e) {
             $pdo->rollBack();
@@ -953,12 +1071,13 @@ final class DocumentRoutes
         ]);
         $isCorp = preg_match('/\b(gmbh|ag)\b/i', $legalName) === 1;
         $taxCol = self::footerLines([
+            ($isCorp && $cv('commercial_court') !== '') ? 'Firmenbuchgericht: ' . $cv('commercial_court') : '',
+            ($isCorp && $cv('firmenbuch_nr') !== '') ? 'FN: ' . $cv('firmenbuch_nr') : '',
             // Settings saves this under 'uid' (not 'vat_id' — that key is only
             // used for contacts' own VAT id in the recipient block below).
             $cv('uid') !== '' ? 'UID: ' . $cv('uid') : '',
             $cv('tax_number') !== '' ? 'Steuernr.: ' . $cv('tax_number') : '',
-            ($isCorp && $cv('firmenbuch_nr') !== '') ? 'Firmenbuchnr.: ' . $cv('firmenbuch_nr') : '',
-            $cv('owner') !== '' ? 'Inhaber: ' . $cv('owner') : '',
+            $cv('owner') !== '' ? ($isCorp ? 'Geschäftsführung: ' : 'Inhaber: ') . $cv('owner') : '',
         ]);
         $bankCol = self::footerLines([
             $cv('bank_name') !== '' ? 'Bank: ' . $cv('bank_name') : '',
