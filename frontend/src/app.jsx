@@ -6700,7 +6700,7 @@ function TimeInvoiceModal({ contacts, onClose, onDone }) {
     try {
       const r = await API.invoiceFromTime({ contact_id: Number(contactId), entry_ids: [...sel], hourly_rate: Number(rate) || 0, tax_rate: Number(taxRate) || 0 });
       toast('Rechnung ' + (r.number || '') + ' erstellt', 'success');
-      if (r.invoice_id) window.open(API.docPdfUrl(r.invoice_id, false), '_blank');
+      if (r.invoice_id) window.open(API.docPdfUrl(r.invoice_id, false), '_blank', 'noopener');
       onDone();
     } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
   };
@@ -7526,8 +7526,8 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const togglePaid = async (doc) => { try { if (doc.paid_at) await API.unmarkDocPaid(doc.id); else await API.markDocPaid(doc.id); load(); } catch (e) { toast(e.message, 'error'); } };
   const convert = async (doc) => { try { const d = await API.convertDoc(doc.id); toast('Rechnung ' + (d.document?.number || '') + ' erstellt', 'success'); setTab('invoice'); } catch (e) { toast(e.message, 'error'); } };
   const partialInv = async (doc, body) => { try { const d = await API.partialInvoice(doc.id, body); toast('Rechnung ' + (d.document?.number || '') + ' erstellt', 'success'); setTab('invoice'); } catch (e) { toast(e.message, 'error'); } };
-  const createReminder = async (doc) => { try { const r = await API.createReminder(doc.id); toast(r.stage + '. Mahnung erstellt', 'success'); load(); if (r.reminder && r.reminder.id) window.open(API.reminderPdfUrl(r.reminder.id, false), '_blank'); } catch (e) { toast(e.message, 'error'); } };
-  const lastReminderPdf = async (doc) => { try { const d = await API.documentReminders(doc.id); const last = (d.reminders || []).slice(-1)[0]; if (last) window.open(API.reminderPdfUrl(last.id, false), '_blank'); } catch (e) { toast(e.message, 'error'); } };
+  const createReminder = async (doc) => { try { const r = await API.createReminder(doc.id); toast(r.stage + '. Mahnung erstellt', 'success'); load(); if (r.reminder && r.reminder.id) window.open(API.reminderPdfUrl(r.reminder.id, false), '_blank', 'noopener'); } catch (e) { toast(e.message, 'error'); } };
+  const lastReminderPdf = async (doc) => { try { const d = await API.documentReminders(doc.id); const last = (d.reminders || []).slice(-1)[0]; if (last) window.open(API.reminderPdfUrl(last.id, false), '_blank', 'noopener'); } catch (e) { toast(e.message, 'error'); } };
   const removeLastReminder = async (doc) => { try { const d = await API.documentReminders(doc.id); const last = (d.reminders || []).slice(-1)[0]; if (last) { await API.deleteReminder(last.id); toast('Mahnung entfernt', 'success'); load(); } } catch (e) { toast(e.message, 'error'); } };
   const archiveDoc = async (doc) => { try { await API.archiveDocument(doc.id); toast('PDF im DMS archiviert', 'success'); load(); } catch (e) { toast(e.message, 'error'); } };
   const markSigned = async (doc) => { try { await API.markDocSigned(doc.id); toast('Als unterschrieben markiert', 'success'); load(); } catch (e) { toast(e.message, 'error'); } };
@@ -7540,7 +7540,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   const delSub = async (s) => { if (!await confirmDialog({ title: 'Abo löschen?', message: `„${s.name}" inkl. Perioden wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteSubscription(s.id); load(); } catch (e) { toast(e.message, 'error'); } };
   const toggleActive = async (s) => { try { await API.updateSubscription(s.id, { active: s.active ? 0 : 1 }); load(); } catch (e) { toast(e.message, 'error'); } };
   const payPeriod = async (s) => { if (!s.current_period) return; try { await API.periodMarkPaid(s.current_period.id); toast('Periode bezahlt', 'success'); load(); } catch (e) { toast(e.message, 'error'); } };
-  const invoicePeriod = async (s) => { if (!s.current_period) return; try { const r = await API.periodInvoice(s.current_period.id); toast('Rechnung erstellt', 'success'); load(); if (r.invoice_id) window.open(API.docPdfUrl(r.invoice_id, false), '_blank'); } catch (e) { toast(e.message, 'error'); } };
+  const invoicePeriod = async (s) => { if (!s.current_period) return; try { const r = await API.periodInvoice(s.current_period.id); toast('Rechnung erstellt', 'success'); load(); if (r.invoice_id) window.open(API.docPdfUrl(r.invoice_id, false), '_blank', 'noopener'); } catch (e) { toast(e.message, 'error'); } };
   const saveExp = async (data) => { try { const r = data.id ? await API.updateExpense(data.id, data) : await API.newExpense(data); load(); return r; } catch (e) { toast(e.message, 'error'); throw e; } };
   const delExp = async (x) => { if (!await confirmDialog({ title: 'Ausgabe löschen?', message: `${x.vendor || x.category} wird gelöscht.`, confirmLabel: 'Löschen', danger: true })) return; try { await API.deleteExpense(x.id); load(); } catch (e) { toast(e.message, 'error'); } };
   const toggleExpPaid = async (x) => { try { if (x.paid_at) await API.expenseUnmarkPaid(x.id); else await API.expenseMarkPaid(x.id); load(); } catch (e) { toast(e.message, 'error'); } };
@@ -7616,7 +7616,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                   <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: x.paid_at ? 'color-mix(in oklab, #22c55e 18%, transparent)' : 'var(--surface-hi)', color: x.paid_at ? '#22c55e' : 'var(--fg-3)', textTransform: 'uppercase', flexShrink: 0 }}>{x.paid_at ? 'Bezahlt' : 'Offen'}</span>
                   <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', width: 110, textAlign: 'right', flexShrink: 0 }}>{fmtEUR(x.gross)}</div>
                   <span className="task-kebab" title="Mehr" onClick={(e) => { e.stopPropagation(); const b = e.currentTarget.getBoundingClientRect(); openContextMenu(b.right, b.bottom, [
-                    ...(x.has_receipt ? [{ label: 'Beleg ansehen', icon: Ic.eye(15), onClick: () => window.open(API.expenseReceiptUrl(x.id, false), '_blank') }] : []),
+                    ...(x.has_receipt ? [{ label: 'Beleg ansehen', icon: Ic.eye(15), onClick: () => window.open(API.expenseReceiptUrl(x.id, false), '_blank', 'noopener') }] : []),
                     { label: x.paid_at ? 'Als offen markieren' : 'Als bezahlt markieren', icon: Ic.check(15), onClick: () => toggleExpPaid(x) },
                     { label: 'Tags…', icon: Ic.bolt(15), onClick: () => setTagTarget({ type: 'expense', id: x.id, name: x.vendor || x.category }) },
                     { label: 'Bearbeiten', icon: Ic.fileGen(15), onClick: () => setExpEditing(x) },
@@ -7677,7 +7677,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
             {docs.map((d) => {
               const st = DOC_STATUS[d.payment_status] || DOC_STATUS.open;
               const docKebabItems = () => [
-                { label: 'PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.docPdfUrl(d.id, false), '_blank') },
+                { label: 'PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.docPdfUrl(d.id, false), '_blank', 'noopener') },
                 { label: 'PDF herunterladen', icon: Ic.download(15), onClick: () => { window.location.href = API.docPdfUrl(d.id, true); } },
                 { label: 'Per E-Mail senden', icon: Ic.inbox(15), onClick: () => setEmailDoc(d) },
                 { label: d.archived_file_id ? 'Erneut im DMS archivieren' : 'Im DMS archivieren', icon: Ic.archive(15), onClick: () => archiveDoc(d) },
@@ -7685,7 +7685,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                 { separator: true },
                 { label: 'Zur Unterschrift senden', icon: Ic.check(15), onClick: () => setSignDoc(d) },
                 { label: 'Signiertes PDF hochladen', icon: Ic.upload(15), onClick: () => uploadSignedFor(d) },
-                ...(d.signed_file_id ? [{ label: 'Signiertes PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.fileRawUrl(d.signed_file_id) + '?token=' + (getToken() || ''), '_blank') }] : []),
+                ...(d.signed_file_id ? [{ label: 'Signiertes PDF öffnen', icon: Ic.eye(15), onClick: () => window.open(API.fileRawUrl(d.signed_file_id) + '?token=' + (getToken() || ''), '_blank', 'noopener') }] : []),
                 d.signed_at
                   ? { label: 'Signatur zurücksetzen', icon: Ic.rotate(15), onClick: () => unmarkSigned(d) }
                   : { label: 'Als unterschrieben markieren', icon: Ic.check(15), onClick: () => markSigned(d) },
@@ -7740,7 +7740,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
                   </div>
                   {badges}
                   <div style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', width: 110, textAlign: 'right', flexShrink: 0 }}>{fmtEUR(d.gross)}</div>
-                  <span title="PDF öffnen" onClick={(e) => { e.stopPropagation(); window.open(API.docPdfUrl(d.id, false), '_blank'); }} style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.eye(16)}</span>
+                  <span title="PDF öffnen" onClick={(e) => { e.stopPropagation(); window.open(API.docPdfUrl(d.id, false), '_blank', 'noopener'); }} style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.eye(16)}</span>
                   <span title="PDF herunterladen" onClick={(e) => { e.stopPropagation(); window.location.href = API.docPdfUrl(d.id, true); }} style={{ color: 'var(--fg-3)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>{Ic.download(16)}</span>
                   {kebab}
                 </div>
@@ -7750,7 +7750,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
         )}
       </div>
       {editing && <DocumentEditor doc={editing} contacts={contacts} products={products} activeCompany={activeCompany} onSave={saveDoc} onClose={() => setEditing(null)}
-        onOpenPdf={(id) => window.open(API.docPdfUrl(id, false), '_blank')}/>}
+        onOpenPdf={(id) => window.open(API.docPdfUrl(id, false), '_blank', 'noopener')}/>}
       {prodEditing && <ProductModal product={prodEditing} onSave={saveProduct} onClose={() => setProdEditing(null)}/>}
       {subEditing && <SubscriptionModal sub={subEditing} contacts={contacts} onSave={saveSub} onClose={() => setSubEditing(null)}/>}
       {expEditing && <ExpenseModal exp={expEditing} contacts={contacts} onSave={saveExp} onClose={() => setExpEditing(null)} onChanged={load}/>}
@@ -9077,7 +9077,7 @@ function ExpenseModal({ exp, contacts, onSave, onClose, onChanged }) {
               </div>
             ) : hasReceipt ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <Btn variant="glass" size="sm" icon={Ic.eye(13)} onClick={() => window.open(API.expenseReceiptUrl(exp.id, false), '_blank')}>Beleg ansehen</Btn>
+                <Btn variant="glass" size="sm" icon={Ic.eye(13)} onClick={() => window.open(API.expenseReceiptUrl(exp.id, false), '_blank', 'noopener')}>Beleg ansehen</Btn>
                 <Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={pickReceipt}>Ersetzen</Btn>
                 <Btn variant="glass" size="sm" icon={Ic.folder(13)} onClick={() => setPicking('link')}>Aus DMS</Btn>
                 <Btn variant="ghost" size="sm" icon={Ic.trash(13)} onClick={removeReceipt}>Entfernen</Btn>
@@ -9809,7 +9809,7 @@ function SignaturesApp({ onBack }) {
                     </div>
                     <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + st.color + ' 18%, transparent)', color: st.color, textTransform: 'uppercase', flexShrink: 0 }}>{st.label}</span>
                     {s.status === 'pending' && <IconBtn size={30} title="Link kopieren" onClick={() => { navigator.clipboard?.writeText(signLink(s.token)); toast('Link kopiert', 'success'); }}>{Ic.copy(15)}</IconBtn>}
-                    {s.signed_file_id && <IconBtn size={30} title="Signiertes Zertifikat" onClick={() => window.open(fileDownload(s.signed_file_id), '_blank')}>{Ic.download(15)}</IconBtn>}
+                    {s.signed_file_id && <IconBtn size={30} title="Signiertes Zertifikat" onClick={() => window.open(fileDownload(s.signed_file_id), '_blank', 'noopener')}>{Ic.download(15)}</IconBtn>}
                     <IconBtn size={30} title="Löschen" onClick={() => del(s)}>{Ic.trash(14)}</IconBtn>
                   </div>
                 );

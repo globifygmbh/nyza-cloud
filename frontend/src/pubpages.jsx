@@ -1329,7 +1329,7 @@ export function PublicPortalPage({ token }) {
                       <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{new Date(String(d.doc_date)).toLocaleDateString('de-DE')} · {Number(d.gross).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}</div>
                     </div>
                     <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, padding: '3px 8px', borderRadius: 999, background: 'color-mix(in oklab, ' + st.color + ' 18%, transparent)', color: st.color, textTransform: 'uppercase', flexShrink: 0 }}>{st.label}</span>
-                    <Btn variant="glass" size="sm" icon={Ic.eye(13)} onClick={() => window.open(API.portalDocUrl(token, d.id, pw, false), '_blank')}>Ansehen</Btn>
+                    <Btn variant="glass" size="sm" icon={Ic.eye(13)} onClick={() => window.open(API.portalDocUrl(token, d.id, pw, false), '_blank', 'noopener')}>Ansehen</Btn>
                     <Btn variant="glass" size="sm" icon={Ic.download(13)} onClick={() => { location.href = API.portalDocUrl(token, d.id, pw, true); }}>PDF</Btn>
                   </div>
                 );
