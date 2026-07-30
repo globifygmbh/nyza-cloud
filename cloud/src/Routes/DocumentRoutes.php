@@ -985,7 +985,8 @@ final class DocumentRoutes
         $metaRows = '<tr><td class="ml">' . self::e($numLabel) . '</td><td class="mv">' . self::e($d['number']) . '</td></tr>';
         $metaRows .= '<tr><td class="ml">' . self::e($dateLabel) . '</td><td class="mv">' . self::e(self::deDate($d['doc_date'])) . '</td></tr>';
         if (!empty($d['delivery_date'])) {
-            $metaRows .= '<tr><td class="ml">Leistungsdatum</td><td class="mv">' . self::e(self::deDate($d['delivery_date'])) . '</td></tr>';
+            $deliveryLabel = $isOffer ? 'Gültig bis' : 'Leistungsdatum';
+            $metaRows .= '<tr><td class="ml">' . self::e($deliveryLabel) . '</td><td class="mv">' . self::e(self::deDate($d['delivery_date'])) . '</td></tr>';
         }
         if ($rcptVat !== '') {
             $metaRows .= '<tr><td class="ml">UID</td><td class="mv">' . self::e($rcptVat) . '</td></tr>';

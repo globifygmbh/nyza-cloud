@@ -7291,6 +7291,13 @@ function UserModal({ u, self, onSave, onClose }) {
   );
 }
 
+const TEXT_SUGGESTIONS = {
+  offer_intro: 'Sehr geehrte Damen und Herren,\n\nvielen Dank für Ihre Anfrage. Gerne unterbreiten wir Ihnen folgendes Angebot:',
+  invoice_intro: 'Sehr geehrte Damen und Herren,\n\nfür die von uns erbrachten Leistungen erlauben wir uns, wie folgt zu berechnen:',
+  offer_footer: 'Dieses Angebot ist freibleibend und bis 30 Tage ab Angebotsdatum gültig. Änderungen und Irrtümer vorbehalten.',
+  invoice_footer: 'Bitte überweisen Sie den Rechnungsbetrag unter Angabe der Rechnungsnummer innerhalb der angegebenen Zahlungsfrist auf das oben genannte Konto. Bei Fragen stehen wir Ihnen gerne zur Verfügung.',
+};
+
 function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   const [c, setC] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -7304,7 +7311,13 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   useEffect(() => {
     if (!profileCompany) { setC({}); return; }
     setC(null);
-    API.companyProfile(profileCompany).then((d) => setC(d.profile || {})).catch(() => setC({}));
+    API.companyProfile(profileCompany).then((d) => {
+      const p = d.profile || {};
+      // Seed sensible default texts for any of these fields that were never filled in,
+      // so the field shows a ready-to-use draft instead of an empty box. Not saved
+      // until the user hits "Speichern".
+      setC({ ...p, ...Object.fromEntries(Object.entries(TEXT_SUGGESTIONS).filter(([k]) => !p[k]).map(([k, v]) => [k, v])) });
+    }).catch(() => setC({}));
   }, [profileCompany]);
   const set = (k, v) => setC((s) => ({ ...s, [k]: v }));
   const accountingMode = (c?.legal_form === 'GmbH' || c?.legal_form === 'AG') ? 'double_entry' : 'single_entry';
@@ -7320,7 +7333,15 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   // Plain render helpers (NOT components) so inputs keep focus across keystrokes.
   const field = (label, k, opts = {}) => (
     <label key={k} style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
-      <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>{label}</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>{label}</span>
+        {TEXT_SUGGESTIONS[k] && (
+          <button type="button" onClick={() => set(k, TEXT_SUGGESTIONS[k])} title="Vorschlagstext einfügen"
+            style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, color: 'var(--accent)', padding: 0, flexShrink: 0 }}>
+            {Ic.bolt(10)} Vorschlag
+          </button>
+        )}
+      </div>
       {opts.area
         ? <textarea value={c[k] || ''} onChange={(e) => set(k, e.target.value)} placeholder={opts.ph} rows={2} style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical' }}/>
         : <input type={opts.type || 'text'} value={c[k] || ''} onChange={(e) => set(k, e.target.value)} placeholder={opts.ph} style={fld}/>}
@@ -9238,7 +9259,7 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
               <input type="date" value={docDate} onChange={(e) => setDocDate(e.target.value)} style={fld}/>
             </label>
             <label style={{ flex: '1 1 130px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Leistungsdatum</span>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>{type === 'offer' ? 'Gültig bis' : 'Leistungsdatum'}</span>
               <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} style={fld}/>
             </label>
           </div>
