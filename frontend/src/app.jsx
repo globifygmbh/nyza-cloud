@@ -9175,8 +9175,8 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
       setProfile(p);
       // New document only — never clobber an existing (possibly already-edited) one.
       if (!doc.id) {
-        const pIntro = type === 'offer' ? p.offer_intro : p.invoice_intro;
-        const pFooter = type === 'offer' ? p.offer_footer : p.invoice_footer;
+        const pIntro = (type === 'offer' ? p.offer_intro : p.invoice_intro) || TEXT_SUGGESTIONS[type === 'offer' ? 'offer_intro' : 'invoice_intro'];
+        const pFooter = (type === 'offer' ? p.offer_footer : p.invoice_footer) || TEXT_SUGGESTIONS[type === 'offer' ? 'offer_footer' : 'invoice_footer'];
         if (pIntro && !intro) setIntro(pIntro);
         if (pFooter && !footer) setFooter(pFooter);
       }
@@ -9185,12 +9185,13 @@ function DocumentEditor({ doc, contacts, products, activeCompany, onSave, onClos
   }, [activeCompany]);
 
   const applyTemplate = () => {
-    if (!profile) { toast('Firmenprofil lädt noch…', 'error'); return; }
-    const pIntro = type === 'offer' ? profile.offer_intro : profile.invoice_intro;
-    const pFooter = type === 'offer' ? profile.offer_footer : profile.invoice_footer;
-    if (!pIntro && !pFooter) { toast('Keine Vorlage in den Einstellungen hinterlegt', 'error'); return; }
-    if (pIntro) setIntro(pIntro);
-    if (pFooter) setFooter(pFooter);
+    // Falls back to the built-in default texts when the profile has none saved,
+    // matching what the Settings fields show as pre-seeded suggestions.
+    const p = profile || {};
+    const pIntro = (type === 'offer' ? p.offer_intro : p.invoice_intro) || TEXT_SUGGESTIONS[type === 'offer' ? 'offer_intro' : 'invoice_intro'];
+    const pFooter = (type === 'offer' ? p.offer_footer : p.invoice_footer) || TEXT_SUGGESTIONS[type === 'offer' ? 'offer_footer' : 'invoice_footer'];
+    setIntro(pIntro);
+    setFooter(pFooter);
   };
 
   const setItem = (i, k, v) => setItems((arr) => arr.map((it, j) => j === i ? { ...it, [k]: v } : it));
