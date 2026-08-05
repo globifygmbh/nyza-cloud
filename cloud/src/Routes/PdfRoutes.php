@@ -132,13 +132,11 @@ final class PdfRoutes
                     $info = @getimagesize($e['path']); if (!$info) continue;
                     [$pxW, $pxH] = $info;
                     $type = $info[2] === IMAGETYPE_PNG ? 'PNG' : ($info[2] === IMAGETYPE_GIF ? 'GIF' : 'JPG');
-                    // A4 page in the image's orientation, image fitted edge-to-edge.
-                    $land = $pxW > $pxH;
-                    [$pw, $ph] = $land ? [297.0, 210.0] : [210.0, 297.0];
-                    $pdf->AddPage($land ? 'L' : 'P', [$pw, $ph]);
-                    $scale = min($pw / $pxW, $ph / $pxH);
-                    $w = $pxW * $scale; $h = $pxH * $scale;
-                    $pdf->Image($e['path'], ($pw - $w) / 2, ($ph - $h) / 2, $w, $h, $type);
+                    // Page = exact image format (96 dpi → mm), no letterboxing —
+                    // the image keeps its own aspect ratio and orientation.
+                    $mmW = $pxW * 25.4 / 96; $mmH = $pxH * 25.4 / 96;
+                    $pdf->AddPage($mmW > $mmH ? 'L' : 'P', [$mmW, $mmH]);
+                    $pdf->Image($e['path'], 0, 0, $mmW, $mmH, $type);
                 } else {
                     $n = $pdf->setSourceFile($e['path']);
                     for ($p = 1; $p <= $n; $p++) self::place($pdf, $pdf->importPage($p));
