@@ -4639,7 +4639,7 @@ const PDF_POS_OPTS = [
 ];
 const PDF_TOOLS = [
   { id: 'resize', label: 'Format ändern', desc: 'A0–A6 skalieren', icon: Ic.filePdf, grad: 'linear-gradient(135deg, oklch(0.66 0.2 20), oklch(0.58 0.19 8))', kind: 'resize' },
-  { id: 'merge', label: 'Zusammenführen', desc: 'PDFs zu einer', icon: Ic.copy, grad: 'linear-gradient(135deg, oklch(0.7 0.16 250), oklch(0.62 0.16 275))', kind: 'multi', endpoint: 'merge', accept: 'application/pdf,.pdf', min: 2, run: 'Zusammenführen', hint: 'Reihenfolge = Upload-Reihenfolge. Mit den Pfeilen umsortieren.' },
+  { id: 'merge', label: 'Zusammenführen', desc: 'PDFs & Bilder zu einer', icon: Ic.copy, grad: 'linear-gradient(135deg, oklch(0.7 0.16 250), oklch(0.62 0.16 275))', kind: 'multi', endpoint: 'merge', accept: 'application/pdf,.pdf,image/png,.png,image/jpeg,.jpg,.jpeg,image/gif,.gif', min: 2, run: 'Zusammenführen', hint: 'PDFs, PNG und JPG mischbar — Bilder werden als eigene Seite eingefügt. Reihenfolge = Upload-Reihenfolge. Mit den Pfeilen umsortieren.' },
   { id: 'split', label: 'Teilen', desc: 'in mehrere PDFs', icon: Ic.grid, grad: 'linear-gradient(135deg, oklch(0.72 0.16 200), oklch(0.64 0.16 225))', kind: 'single', endpoint: 'split', run: 'Teilen', fields: [
     { key: 'mode', label: 'Modus', type: 'select', def: 'pages', options: [{ v: 'pages', l: 'Jede Seite einzeln (ZIP)' }, { v: 'ranges', l: 'Nach Bereichen (ZIP)' }] },
     { key: 'ranges', label: 'Bereiche', type: 'text', def: '', ph: '1-3, 4-6, 7', help: 'Je Komma-Gruppe eine Datei.', showIf: (v) => v.mode === 'ranges' },
@@ -4730,7 +4730,7 @@ function PdfDrop({ multi, accept, files, onFiles, label }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
           {files.map((f, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 11, background: 'var(--surface)', border: '1px solid var(--border)' }}>
-              <span style={{ color: 'var(--accent)', flexShrink: 0 }}>{Ic.filePdf(18)}</span>
+              <span style={{ color: 'var(--accent)', flexShrink: 0 }}>{(f.type || '').startsWith('image/') ? Ic.fileImg(18) : Ic.filePdf(18)}</span>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontSize: 12.5, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</div>
                 <div style={{ fontSize: 10.5, color: 'var(--fg-3)' }}>{(f.size / 1024 / 1024).toFixed(1)} MB</div>

@@ -108,18 +108,41 @@ final class PdfRoutes
         $files = $req->getUploadedFiles()['files'] ?? [];
         if (!is_array($files)) $files = [$files];
         $files = array_values(array_filter($files, fn($f) => $f && $f->getError() === UPLOAD_ERR_OK));
-        if (count($files) < 2) return Json::err($res, 'Bitte mindestens zwei PDFs wählen', 422);
-        $paths = [];
+        if (count($files) < 2) return Json::err($res, 'Bitte mindestens zwei Dateien wählen', 422);
+        $entries = []; $paths = [];
         foreach ($files as $f) {
             if ((int)$f->getSize() > self::MAX) { self::cleanup($paths); return Json::err($res, 'Datei zu groß', 413); }
-            $p = Storage::temp() . '/pdfm_' . bin2hex(random_bytes(6)) . '.pdf';
+            $mt = strtolower((string)$f->getClientMediaType());
+            $fn = strtolower((string)($f->getClientFilename() ?: ''));
+            // Images (PNG/JPG/GIF — the formats FPDF can embed) become one page each.
+            $isImg = preg_match('/\.(png|jpe?g|gif)$/', $fn) === 1
+                || str_contains($mt, 'png') || str_contains($mt, 'jpeg') || str_contains($mt, 'jpg') || str_contains($mt, 'gif');
+            $ext = $isImg
+                ? ((str_contains($mt, 'png') || str_ends_with($fn, '.png')) ? 'png'
+                    : ((str_contains($mt, 'gif') || str_ends_with($fn, '.gif')) ? 'gif' : 'jpg'))
+                : 'pdf';
+            $p = Storage::temp() . '/pdfm_' . bin2hex(random_bytes(6)) . '.' . $ext;
             $f->moveTo($p); $paths[] = $p;
+            $entries[] = ['path' => $p, 'img' => $isImg];
         }
         try {
             $pdf = new NyzaPdf();
-            foreach ($paths as $path) {
-                $n = $pdf->setSourceFile($path);
-                for ($p = 1; $p <= $n; $p++) self::place($pdf, $pdf->importPage($p));
+            foreach ($entries as $e) {
+                if ($e['img']) {
+                    $info = @getimagesize($e['path']); if (!$info) continue;
+                    [$pxW, $pxH] = $info;
+                    $type = $info[2] === IMAGETYPE_PNG ? 'PNG' : ($info[2] === IMAGETYPE_GIF ? 'GIF' : 'JPG');
+                    // A4 page in the image's orientation, image fitted edge-to-edge.
+                    $land = $pxW > $pxH;
+                    [$pw, $ph] = $land ? [297.0, 210.0] : [210.0, 297.0];
+                    $pdf->AddPage($land ? 'L' : 'P', [$pw, $ph]);
+                    $scale = min($pw / $pxW, $ph / $pxH);
+                    $w = $pxW * $scale; $h = $pxH * $scale;
+                    $pdf->Image($e['path'], ($pw - $w) / 2, ($ph - $h) / 2, $w, $h, $type);
+                } else {
+                    $n = $pdf->setSourceFile($e['path']);
+                    for ($p = 1; $p <= $n; $p++) self::place($pdf, $pdf->importPage($p));
+                }
             }
             $out = $pdf->Output('S');
         } catch (\Throwable $e) { self::cleanup($paths); return Json::err($res, 'Zusammenführen fehlgeschlagen (evtl. komprimierte PDF).', 422); }
