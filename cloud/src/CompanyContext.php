@@ -9,7 +9,8 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  * Multi-company (Mandantenfähigkeit) resolution for accounting. Every accounting
  * record belongs to a company; the client picks an "active company" per request
  * via the `X-Company-Id` header or `?company_id` query param. Membership is
- * stored in company_members; admins implicitly have access to every company.
+ * stored in company_members; an admin implicitly has access to every company in
+ * their own Kontogruppe (see WorkspaceContext) — never beyond it.
  *
  * The company profile (legal name, bank details, payment term, reminder fees …)
  * lives per-company in companies.profile as a JSON document — replacing the old
@@ -27,46 +28,56 @@ final class CompanyContext
     public static function active(Request $req, int $uid): int
     {
         $pdo = Database::pdo();
+        $wid = WorkspaceContext::of($uid);
 
         $requested = self::requestedId($req);
         if ($requested > 0 && self::isMember($uid, $requested)) {
             return $requested;
         }
 
-        // First company the user is a member of.
+        // First company the user is a member of — within their own group only.
         $s = $pdo->prepare(
             'SELECT cm.company_id FROM company_members cm '
             . 'JOIN companies c ON c.id = cm.company_id '
-            . 'WHERE cm.user_id = ? ORDER BY cm.company_id ASC LIMIT 1'
+            . 'WHERE cm.user_id = ? AND c.workspace_id = ? ORDER BY cm.company_id ASC LIMIT 1'
         );
-        $s->execute([$uid]);
+        $s->execute([$uid, $wid]);
         $row = $s->fetch();
         if ($row) return (int)$row['company_id'];
 
-        // No membership. Admins already have implicit access to every company
-        // (see isMember() below), so defaulting them to the lowest/primary one
-        // is just a convenience. A NON-admin with zero memberships must never
-        // silently land on someone else's company — that would hand a brand
-        // new restricted account the owner's whole Buchhaltung by default.
+        // No membership. An admin has implicit access to every company in their
+        // OWN group (see isMember() below), so defaulting them to the first one
+        // there is just a convenience. A user with zero grants must never
+        // silently land on someone else's company — that would hand a brand new
+        // restricted account another team's whole Buchhaltung by default.
         if (self::isAdmin($uid)) {
-            $min = $pdo->query('SELECT MIN(id) AS id FROM companies')->fetch();
+            $s = $pdo->prepare('SELECT MIN(id) AS id FROM companies WHERE workspace_id = ?');
+            $s->execute([$wid]);
+            $min = $s->fetch();
             if ($min && $min['id'] !== null) return (int)$min['id'];
         }
 
-        // Bootstrap an isolated company (and join only this user to it) —
-        // either nothing exists yet, or this is a non-admin with no grants.
-        $pdo->prepare('INSERT INTO companies (name, profile) VALUES (?, NULL)')
-            ->execute(['Mein Unternehmen']);
+        // Bootstrap an isolated company inside this user's group (and join only
+        // this user to it) — either the group has none yet, or this is a
+        // non-admin with no grants.
+        $pdo->prepare('INSERT INTO companies (name, profile, workspace_id) VALUES (?, NULL, ?)')
+            ->execute(['Mein Unternehmen', $wid]);
         $cid = (int)$pdo->lastInsertId();
         $pdo->prepare('INSERT INTO company_members (company_id, user_id) VALUES (?, ?)')
             ->execute([$cid, $uid]);
         return $cid;
     }
 
-    /** Membership exists for (user, company), OR the user is an admin. */
+    /**
+     * Membership exists for (user, company), OR the user is an admin of the
+     * group that owns the company. The Hauptadmin crosses groups; every other
+     * role — admin included — is confined to their own Kontogruppe.
+     */
     public static function isMember(int $uid, int $companyId): bool
     {
         if ($companyId <= 0) return false;
+        if (WorkspaceContext::isPrimary($uid)) return true;
+        if (!WorkspaceContext::ownsCompany(WorkspaceContext::of($uid), $companyId)) return false;
         if (self::isAdmin($uid)) return true;
         $s = Database::pdo()->prepare('SELECT 1 FROM company_members WHERE company_id = ? AND user_id = ?');
         $s->execute([$companyId, $uid]);

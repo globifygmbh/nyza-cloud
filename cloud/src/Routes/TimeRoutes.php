@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Nyza\Routes;
 
 use Nyza\CompanyContext;
+use Nyza\WorkspaceContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -40,7 +41,12 @@ final class TimeRoutes
         $uid = (int)$req->getAttribute('uid');
         $qp = $req->getQueryParams();
         // Members may view another member's entries via ?user_id; default = self.
+        // Only co-members of the SAME Kontogruppe — otherwise this would expose
+        // another team's whole time sheet to anyone who guesses a user id.
         $target = !empty($qp['user_id']) ? (int)$qp['user_id'] : $uid;
+        if ($target !== $uid && !WorkspaceContext::userIn($target, WorkspaceContext::of($uid))) {
+            return Json::err($res, 'Kein Zugriff', 403, 'forbidden');
+        }
         $where = 't.user_id = ?';
         $params = [$target];
         if (!empty($qp['from'])) { $where .= ' AND DATE(t.started_at) >= ?'; $params[] = (string)$qp['from']; }
@@ -74,8 +80,8 @@ final class TimeRoutes
         $note = self::str($b['note'] ?? null);
         $contact = self::contactId($uid, $b['contact_id'] ?? null);
         Database::pdo()->prepare(
-            'INSERT INTO time_entries (user_id, contact_id, task, note, started_at, ended_at) VALUES (?, ?, ?, ?, NOW(), NULL)'
-        )->execute([$uid, $contact, $task, $note]);
+            'INSERT INTO time_entries (user_id, workspace_id, contact_id, task, note, started_at, ended_at) VALUES (?, ?, ?, ?, ?, NOW(), NULL)'
+        )->execute([$uid, WorkspaceContext::of($uid), $contact, $task, $note]);
         $id = (int)Database::pdo()->lastInsertId();
         return Json::ok($res, ['entry' => self::shape(self::fetchJoined($uid, $id))], 201);
     }
@@ -104,8 +110,8 @@ final class TimeRoutes
         $note = self::str($b['note'] ?? null);
         $contact = self::contactId($uid, $b['contact_id'] ?? null);
         Database::pdo()->prepare(
-            'INSERT INTO time_entries (user_id, contact_id, task, note, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?)'
-        )->execute([$uid, $contact, $task, $note, $start, $end]);
+            'INSERT INTO time_entries (user_id, workspace_id, contact_id, task, note, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        )->execute([$uid, WorkspaceContext::of($uid), $contact, $task, $note, $start, $end]);
         $id = (int)Database::pdo()->lastInsertId();
         return Json::ok($res, ['entry' => self::shape(self::fetchJoined($uid, $id))], 201);
     }

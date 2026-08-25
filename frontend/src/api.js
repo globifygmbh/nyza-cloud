@@ -358,6 +358,12 @@ export const API = {
   adminCreateUser: (body) => request('/api/admin/users', { method: 'POST', body }),
   adminUpdateUser: (id, body) => request('/api/admin/users/' + id, { method: 'PATCH', body }),
   adminDeleteUser: (id) => request('/api/admin/users/' + id, { method: 'DELETE' }),
+
+  // Kontogruppen (workspaces) — Hauptadmin only.
+  workspaces:       () => request('/api/workspaces'),
+  createWorkspace:  (name) => request('/api/workspaces', { method: 'POST', body: { name } }),
+  renameWorkspace:  (id, name) => request('/api/workspaces/' + id, { method: 'PATCH', body: { name } }),
+  deleteWorkspace:  (id) => request('/api/workspaces/' + id, { method: 'DELETE' }),
   adminCron:       () => request('/api/admin/cron'),
 
   // Multi-company (Mandanten)

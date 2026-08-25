@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Nyza\Routes;
 
 use Nyza\Database;
+use Nyza\WorkspaceContext;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -32,12 +33,15 @@ final class TaskRoutes
         $qp = $req->getQueryParams();
         $pdo = Database::pdo();
 
-        // Purge archived tasks older than a week (workspace-wide) before listing.
-        $pdo->prepare('DELETE FROM tasks WHERE archived_at IS NOT NULL AND archived_at < (NOW() - INTERVAL 7 DAY)')->execute([]);
+        $wid = WorkspaceContext::of($uid);
 
-        // Shared board: all members' tasks, with optional filters.
-        $where = 't.archived_at IS NULL';
-        $params = [];
+        // Purge archived tasks older than a week (this group only) before listing.
+        $pdo->prepare('DELETE FROM tasks WHERE workspace_id = ? AND archived_at IS NOT NULL AND archived_at < (NOW() - INTERVAL 7 DAY)')
+            ->execute([$wid]);
+
+        // Shared board — but only within the caller's Kontogruppe.
+        $where = 't.archived_at IS NULL AND t.workspace_id = ?';
+        $params = [$wid];
         if (!empty($qp['assignee'])) { $where .= ' AND t.assignee_id = ?'; $params[] = (int)$qp['assignee']; }
         if (!empty($qp['owner']))    { $where .= ' AND t.user_id = ?';     $params[] = (int)$qp['owner']; }
         if (!empty($qp['mine']))     { $where .= ' AND (t.assignee_id = ? OR t.user_id = ?)'; $params[] = $uid; $params[] = $uid; }
@@ -52,12 +56,13 @@ final class TaskRoutes
 
     public static function archived(Request $req, Response $res): Response
     {
+        $uid = (int)$req->getAttribute('uid');
         $stmt = Database::pdo()->prepare(
             'SELECT t.*, cu.name AS created_by_name, au.name AS assignee_name FROM tasks t '
             . 'LEFT JOIN users cu ON cu.id = t.user_id LEFT JOIN users au ON au.id = t.assignee_id '
-            . 'WHERE t.archived_at IS NOT NULL ORDER BY t.archived_at DESC'
+            . 'WHERE t.archived_at IS NOT NULL AND t.workspace_id = ? ORDER BY t.archived_at DESC'
         );
-        $stmt->execute([]);
+        $stmt->execute([WorkspaceContext::of($uid)]);
         return Json::ok($res, ['tasks' => array_map([self::class, 'shape'], $stmt->fetchAll())]);
     }
 
@@ -80,12 +85,13 @@ final class TaskRoutes
         if ($due === null) $dueTime = null; // a time without a date makes no sense
 
         $priority = self::clampPriority($b['priority'] ?? 1);
-        $assignee = self::validUser($b['assignee_id'] ?? null);
+        $wid = WorkspaceContext::of($uid);
+        $assignee = self::validUser($b['assignee_id'] ?? null, $wid);
 
         $stmt = Database::pdo()->prepare(
-            'INSERT INTO tasks (user_id, title, notes, due_date, due_time, priority, assignee_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO tasks (user_id, workspace_id, title, notes, due_date, due_time, priority, assignee_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         );
-        $stmt->execute([$uid, $title, $notes, $due, $dueTime, $priority, $assignee]);
+        $stmt->execute([$uid, $wid, $title, $notes, $due, $dueTime, $priority, $assignee]);
         $id = (int)Database::pdo()->lastInsertId();
         return Json::ok($res, ['task' => self::shape(self::fetchOne($uid, $id))], 201);
     }
@@ -132,7 +138,7 @@ final class TaskRoutes
         }
         if (array_key_exists('assignee_id', $b)) {
             $sets[] = 'assignee_id = ?';
-            $params[] = self::validUser($b['assignee_id']);
+            $params[] = self::validUser($b['assignee_id'], WorkspaceContext::of($uid));
         }
 
         if ($sets) {
@@ -221,22 +227,25 @@ final class TaskRoutes
         return $p;
     }
 
-    /** Validate an assignee id is an existing user, else null. */
-    private static function validUser($v): ?int
+    /** Validate an assignee is an existing user in the same Kontogruppe, else null. */
+    private static function validUser($v, int $workspaceId): ?int
     {
         if ($v === null || $v === '' || (int)$v <= 0) return null;
-        $s = Database::pdo()->prepare('SELECT 1 FROM users WHERE id = ?');
-        $s->execute([(int)$v]);
-        return $s->fetch() ? (int)$v : null;
+        return WorkspaceContext::userIn((int)$v, $workspaceId) ? (int)$v : null;
     }
 
+    /**
+     * Fetch a task the caller is allowed to touch. update/done/restore/delete all
+     * gate on this, so confining it to the caller's Kontogruppe secures them all.
+     */
     private static function fetchOne(int $uid, int $id): ?array
     {
         $stmt = Database::pdo()->prepare(
             'SELECT t.*, cu.name AS created_by_name, au.name AS assignee_name FROM tasks t '
-            . 'LEFT JOIN users cu ON cu.id = t.user_id LEFT JOIN users au ON au.id = t.assignee_id WHERE t.id = ?'
+            . 'LEFT JOIN users cu ON cu.id = t.user_id LEFT JOIN users au ON au.id = t.assignee_id '
+            . 'WHERE t.id = ? AND t.workspace_id = ?'
         );
-        $stmt->execute([$id]);
+        $stmt->execute([$id, WorkspaceContext::of($uid)]);
         $t = $stmt->fetch();
         return $t ?: null;
     }

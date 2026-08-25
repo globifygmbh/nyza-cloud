@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Nyza\Routes;
 
 use Nyza\CompanyContext;
+use Nyza\WorkspaceContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -56,15 +57,19 @@ final class CompanyRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $pdo = Database::pdo();
-        if (CompanyContext::isAdmin($uid)) {
+        if (WorkspaceContext::isPrimary($uid)) {
             $rows = $pdo->query('SELECT id, name FROM companies ORDER BY name ASC, id ASC')->fetchAll();
+        } elseif (CompanyContext::isAdmin($uid)) {
+            $s = $pdo->prepare('SELECT id, name FROM companies WHERE workspace_id = ? ORDER BY name ASC, id ASC');
+            $s->execute([WorkspaceContext::of($uid)]);
+            $rows = $s->fetchAll();
         } else {
             $s = $pdo->prepare(
                 'SELECT c.id, c.name FROM companies c '
                 . 'JOIN company_members cm ON cm.company_id = c.id '
-                . 'WHERE cm.user_id = ? ORDER BY c.name ASC, c.id ASC'
+                . 'WHERE cm.user_id = ? AND c.workspace_id = ? ORDER BY c.name ASC, c.id ASC'
             );
-            $s->execute([$uid]);
+            $s->execute([$uid, WorkspaceContext::of($uid)]);
             $rows = $s->fetchAll();
         }
         $companies = array_map(static fn($r) => ['id' => (int)$r['id'], 'name' => $r['name']], $rows);
@@ -76,7 +81,7 @@ final class CompanyRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $id = (int)$args['id'];
-        if (!self::exists($id)) return Json::err($res, 'Not found', 404);
+        if (!self::visible($uid, $id)) return Json::err($res, 'Not found', 404);
         if (!CompanyContext::isMember($uid, $id)) return Json::err($res, 'Kein Zugriff', 403, 'forbidden');
         return Json::ok($res, ['profile' => CompanyContext::profile($id)]);
     }
@@ -85,7 +90,7 @@ final class CompanyRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $id = (int)$args['id'];
-        if (!self::exists($id)) return Json::err($res, 'Not found', 404);
+        if (!self::visible($uid, $id)) return Json::err($res, 'Not found', 404);
         if (!CompanyContext::isMember($uid, $id)) return Json::err($res, 'Kein Zugriff', 403, 'forbidden');
 
         $body = (array) $req->getParsedBody();
@@ -108,7 +113,8 @@ final class CompanyRoutes
         if ($name === '') return Json::err($res, 'Name erforderlich', 422);
 
         $pdo = Database::pdo();
-        $pdo->prepare('INSERT INTO companies (name, profile) VALUES (?, NULL)')->execute([mb_substr($name, 0, 255)]);
+        $pdo->prepare('INSERT INTO companies (name, profile, workspace_id) VALUES (?, NULL, ?)')
+            ->execute([mb_substr($name, 0, 255), WorkspaceContext::of($uid)]);
         $id = (int)$pdo->lastInsertId();
         // Creator becomes a member so it shows up in their list immediately.
         $pdo->prepare('INSERT INTO company_members (company_id, user_id) VALUES (?, ?)')->execute([$id, $uid]);
@@ -121,7 +127,7 @@ final class CompanyRoutes
         $uid = (int)$req->getAttribute('uid');
         if (!CompanyContext::isAdmin($uid)) return Json::err($res, 'Nur Admin', 403, 'forbidden');
         $id = (int)$args['id'];
-        if (!self::exists($id)) return Json::err($res, 'Not found', 404);
+        if (!self::visible($uid, $id)) return Json::err($res, 'Not found', 404);
         $b = (array) $req->getParsedBody();
         $name = trim((string)($b['name'] ?? ''));
         if ($name === '') return Json::err($res, 'Name erforderlich', 422);
@@ -134,7 +140,7 @@ final class CompanyRoutes
         $uid = (int)$req->getAttribute('uid');
         if (!CompanyContext::isAdmin($uid)) return Json::err($res, 'Nur Admin', 403, 'forbidden');
         $id = (int)$args['id'];
-        if (!self::exists($id)) return Json::err($res, 'Not found', 404);
+        if (!self::visible($uid, $id)) return Json::err($res, 'Not found', 404);
 
         // Safer: refuse to delete a company that still has accounting records.
         $pdo = Database::pdo();
@@ -155,7 +161,7 @@ final class CompanyRoutes
         $uid = (int)$req->getAttribute('uid');
         if (!CompanyContext::isAdmin($uid)) return Json::err($res, 'Nur Admin', 403, 'forbidden');
         $id = (int)$args['id'];
-        if (!self::exists($id)) return Json::err($res, 'Not found', 404);
+        if (!self::visible($uid, $id)) return Json::err($res, 'Not found', 404);
         $s = Database::pdo()->prepare(
             'SELECT u.id, u.name, u.email FROM company_members cm '
             . 'JOIN users u ON u.id = cm.user_id WHERE cm.company_id = ? ORDER BY u.name ASC, u.id ASC'
@@ -172,14 +178,14 @@ final class CompanyRoutes
         $uid = (int)$req->getAttribute('uid');
         if (!CompanyContext::isAdmin($uid)) return Json::err($res, 'Nur Admin', 403, 'forbidden');
         $id = (int)$args['id'];
-        if (!self::exists($id)) return Json::err($res, 'Not found', 404);
+        if (!self::visible($uid, $id)) return Json::err($res, 'Not found', 404);
         $b = (array) $req->getParsedBody();
         $userId = (int)($b['user_id'] ?? 0);
         if ($userId <= 0) return Json::err($res, 'user_id erforderlich', 422);
 
         $pdo = Database::pdo();
-        $chk = $pdo->prepare('SELECT 1 FROM users WHERE id = ?');
-        $chk->execute([$userId]);
+        $chk = $pdo->prepare('SELECT 1 FROM users WHERE id = ? AND workspace_id = ?');
+        $chk->execute([$userId, WorkspaceContext::of($uid)]);
         if (!$chk->fetch()) return Json::err($res, 'Benutzer nicht gefunden', 404);
 
         $pdo->prepare(
@@ -194,7 +200,7 @@ final class CompanyRoutes
         $uid = (int)$req->getAttribute('uid');
         if (!CompanyContext::isAdmin($uid)) return Json::err($res, 'Nur Admin', 403, 'forbidden');
         $id = (int)$args['id'];
-        if (!self::exists($id)) return Json::err($res, 'Not found', 404);
+        if (!self::visible($uid, $id)) return Json::err($res, 'Not found', 404);
         $userId = (int)$args['userId'];
         Database::pdo()->prepare('DELETE FROM company_members WHERE company_id = ? AND user_id = ?')
             ->execute([$id, $userId]);
@@ -208,5 +214,17 @@ final class CompanyRoutes
         $s = Database::pdo()->prepare('SELECT 1 FROM companies WHERE id = ?');
         $s->execute([$id]);
         return (bool)$s->fetch();
+    }
+
+    /**
+     * A company the caller is allowed to administer: it must exist AND belong to
+     * their Kontogruppe. Reported as 404 rather than 403 so a foreign company id
+     * is indistinguishable from a non-existent one. The Hauptadmin sees all.
+     */
+    private static function visible(int $uid, int $id): bool
+    {
+        if (!self::exists($id)) return false;
+        if (WorkspaceContext::isPrimary($uid)) return true;
+        return WorkspaceContext::ownsCompany(WorkspaceContext::of($uid), $id);
     }
 }

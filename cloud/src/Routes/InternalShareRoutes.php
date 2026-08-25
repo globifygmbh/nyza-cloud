@@ -113,9 +113,10 @@ final class InternalShareRoutes
 
         $pdo = Database::pdo();
 
-        // Target must be an existing active user.
-        $tu = $pdo->prepare('SELECT id, name FROM users WHERE id = ? AND active = 1');
-        $tu->execute([$target]);
+        // Target must be an existing active user in the caller's Kontogruppe —
+        // sharing across groups would defeat the isolation boundary.
+        $tu = $pdo->prepare('SELECT id, name FROM users WHERE id = ? AND active = 1 AND workspace_id = ?');
+        $tu->execute([$target, \Nyza\WorkspaceContext::of($uid)]);
         $targetRow = $tu->fetch();
         if (!$targetRow) return Json::err($res, 'Target user not found', 404);
 

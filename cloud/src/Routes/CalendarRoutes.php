@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Nyza\Routes;
 
 use Nyza\Database;
+use Nyza\WorkspaceContext;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -80,9 +81,9 @@ final class CalendarRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $qp = $req->getQueryParams();
-        // Shared workspace calendar: everyone sees all events.
-        $where = '1=1';
-        $params = [];
+        // Shared calendar — but only within the caller's Kontogruppe.
+        $where = 'e.workspace_id = ?';
+        $params = [WorkspaceContext::of($uid)];
         // Overlap: event starts before window end AND ends after window start.
         if (!empty($qp['from'])) { $where .= ' AND e.ends_at >= ?';   $params[] = $qp['from'] . ' 00:00:00'; }
         if (!empty($qp['to']))   { $where .= ' AND e.starts_at <= ?'; $params[] = $qp['to'] . ' 23:59:59'; }
@@ -104,9 +105,9 @@ final class CalendarRoutes
         if ($title === '') return Json::err($res, 'Titel erforderlich', 422);
         $f = self::fields($b, true);
         Database::pdo()->prepare(
-            'INSERT INTO calendar_events (user_id, title, type, all_day, starts_at, ends_at, location, note, color, contact_id, person) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        )->execute([$uid, mb_substr($title, 0, 300), $f['type'], $f['all_day'], $f['starts_at'], $f['ends_at'], $f['location'], $f['note'], $f['color'], $f['contact_id'], $f['person']]);
+            'INSERT INTO calendar_events (user_id, workspace_id, title, type, all_day, starts_at, ends_at, location, note, color, contact_id, person) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([$uid, WorkspaceContext::of($uid), mb_substr($title, 0, 300), $f['type'], $f['all_day'], $f['starts_at'], $f['ends_at'], $f['location'], $f['note'], $f['color'], $f['contact_id'], $f['person']]);
         $id = (int)Database::pdo()->lastInsertId();
         return Json::ok($res, ['event' => self::shape(self::joined($uid, $id))], 201);
     }
@@ -179,9 +180,10 @@ final class CalendarRoutes
 
     private static function fetchOne(int $uid, int $id): ?array
     {
-        // Shared calendar: any member may load/edit/delete any event.
-        $s = Database::pdo()->prepare('SELECT * FROM calendar_events WHERE id = ?');
-        $s->execute([$id]);
+        // Shared calendar: any member of the SAME Kontogruppe may load/edit/delete
+        // an event. update() and delete() both gate on this.
+        $s = Database::pdo()->prepare('SELECT * FROM calendar_events WHERE id = ? AND workspace_id = ?');
+        $s->execute([$id, WorkspaceContext::of($uid)]);
         return $s->fetch() ?: null;
     }
 

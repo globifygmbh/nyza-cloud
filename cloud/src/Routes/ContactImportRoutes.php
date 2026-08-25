@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Nyza\Routes;
 
+use Nyza\CompanyContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
@@ -49,20 +50,23 @@ final class ContactImportRoutes
         if (!$records) return Json::err($res, 'Keine gültigen Zeilen gefunden', 422);
 
         $pdo = Database::pdo();
-        $exists = $pdo->prepare('SELECT 1 FROM contacts WHERE LOWER(name) = LOWER(?)');
+        // Imported contacts belong to the active company like any other contact.
+        // Leaving company_id NULL would make them visible to every Kontogruppe.
+        $cid = CompanyContext::active($req, $uid);
+        $exists = $pdo->prepare('SELECT 1 FROM contacts WHERE LOWER(name) = LOWER(?) AND company_id = ?');
         $ins = $pdo->prepare(
-            'INSERT INTO contacts (user_id, kind, name, contact_person, email, phone, street, zip, city, country, vat_id, is_customer, notes) '
-            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)'
+            'INSERT INTO contacts (user_id, company_id, kind, name, contact_person, email, phone, street, zip, city, country, vat_id, is_customer, notes) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)'
         );
 
         $imported = 0; $skipped = 0;
         $pdo->beginTransaction();
         try {
             foreach ($records as $r) {
-                $exists->execute([$r['name']]);
+                $exists->execute([$r['name'], $cid]);
                 if ($exists->fetch()) { $skipped++; continue; }
                 $ins->execute([
-                    $uid, $r['kind'], $r['name'], $r['contact_person'], $r['email'], $r['phone'],
+                    $uid, $cid, $r['kind'], $r['name'], $r['contact_person'], $r['email'], $r['phone'],
                     $r['street'], $r['zip'], $r['city'], $r['country'], $r['vat_id'], $r['notes'],
                 ]);
                 $imported++;

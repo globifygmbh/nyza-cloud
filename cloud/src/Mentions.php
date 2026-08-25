@@ -12,22 +12,19 @@ use Nyza\Routes\PushRoutes;
  */
 final class Mentions
 {
-    /** Active users the current user may mention (co-members; all active as fallback). */
+    /**
+     * Active users the current user may mention. Confined to their Kontogruppe —
+     * the old fallback listed EVERY active account on the installation whenever
+     * the user shared no company, which leaked other teams' member names.
+     */
     public static function mentionable(int $uid): array
     {
         $pdo = Database::pdo();
         $s = $pdo->prepare(
-            'SELECT DISTINCT u.id, u.name, u.email FROM users u
-             JOIN company_members cm2 ON cm2.user_id = u.id
-             JOIN company_members cm1 ON cm1.company_id = cm2.company_id
-             WHERE cm1.user_id = ? AND u.active = 1
-             ORDER BY u.name ASC, u.id ASC'
+            'SELECT id, name, email FROM users WHERE active = 1 AND workspace_id = ? ORDER BY name ASC, id ASC'
         );
-        $s->execute([$uid]);
+        $s->execute([WorkspaceContext::of($uid)]);
         $rows = $s->fetchAll();
-        if (!$rows) {
-            $rows = $pdo->query('SELECT id, name, email FROM users WHERE active = 1 ORDER BY name ASC, id ASC')->fetchAll();
-        }
         return array_map(static fn($r) => [
             'id' => (int)$r['id'], 'name' => $r['name'], 'email' => $r['email'],
         ], $rows);

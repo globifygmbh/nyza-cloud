@@ -40,10 +40,17 @@ final class AuthRoutes
         $app->get('/api/branding/logo/{uid}',   [self::class, 'serveLogo']);
     }
 
-    /** Workspace member list for assignment/filter dropdowns (any member). */
+    /**
+     * Member list for assignment/filter dropdowns — the caller's own
+     * Kontogruppe only, so one team never sees another team's employees.
+     */
     public static function workspaceUsers(Request $req, Response $res): Response
     {
-        $stmt = Database::pdo()->query('SELECT id, name, email FROM users WHERE active = 1 ORDER BY name ASC, email ASC');
+        $uid = (int)$req->getAttribute('uid');
+        $stmt = Database::pdo()->prepare(
+            'SELECT id, name, email FROM users WHERE active = 1 AND workspace_id = ? ORDER BY name ASC, email ASC'
+        );
+        $stmt->execute([\Nyza\WorkspaceContext::of($uid)]);
         $users = array_map(static fn($u) => ['id' => (int)$u['id'], 'name' => $u['name'], 'email' => $u['email']], $stmt->fetchAll());
         return Json::ok($res, ['users' => $users]);
     }

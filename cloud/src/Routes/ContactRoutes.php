@@ -45,7 +45,7 @@ final class ContactRoutes
         $qp = $req->getQueryParams();
         $pdo = Database::pdo();
 
-        $where = '(c.company_id = ? OR c.company_id IS NULL)';
+        $where = 'c.company_id = ?';
         $params = [$cid];
         if (isset($qp['customers'])) { $where .= ' AND c.is_customer = 1'; }
         if (!empty($qp['q'])) {
@@ -152,7 +152,7 @@ final class ContactRoutes
     {
         $stmt = Database::pdo()->prepare(
             'SELECT c.*, u.name AS created_by_name FROM contacts c LEFT JOIN users u ON u.id = c.user_id '
-            . 'WHERE c.id = ? AND (c.company_id = ? OR c.company_id IS NULL)'
+            . 'WHERE c.id = ? AND c.company_id = ?'
         );
         $stmt->execute([$id, $cid]);
         $c = $stmt->fetch();

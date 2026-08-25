@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Nyza\Routes;
 
 use Nyza\Database;
+use Nyza\WorkspaceContext;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -16,7 +17,9 @@ use Slim\Routing\RouteCollectorProxy;
  * may create, edit or delete accounts. Every route runs behind AuthMiddleware
  * AND requireAdmin(); a non-admin (or unknown) caller gets 403 "Nur Admin".
  *
- * Per-user data scoping / sharing is unchanged in this phase.
+ * An admin manages the accounts of their OWN Kontogruppe only; new accounts are
+ * created into that group. The Hauptadmin (is_primary) manages every group and
+ * is the only role that may move an account between groups.
  */
 final class AdminRoutes
 {
@@ -76,6 +79,7 @@ final class AdminRoutes
             'role' => $u['role'] ?? 'user',
             'active' => isset($u['active']) ? (int)$u['active'] : 1,
             'is_primary' => !empty($u['is_primary']),
+            'workspace_id' => isset($u['workspace_id']) && $u['workspace_id'] !== null ? (int)$u['workspace_id'] : null,
             'created_at' => $u['created_at'] ?? null,
         ];
         if (array_key_exists('storage_used', $u)) {
@@ -86,7 +90,7 @@ final class AdminRoutes
 
     private static function fetchOne(int $id): ?array
     {
-        $cols = 'id, email, name, role, active, is_primary, created_at';
+        $cols = 'id, email, name, role, active, is_primary, workspace_id, created_at';
         if (self::hasStorageUsed()) $cols .= ', storage_used';
         $stmt = Database::pdo()->prepare("SELECT $cols FROM users WHERE id = ?");
         $stmt->execute([$id]);
@@ -94,18 +98,38 @@ final class AdminRoutes
         return $u ?: null;
     }
 
+    /**
+     * Whether the calling admin may manage the target account: same Kontogruppe,
+     * or the caller is the Hauptadmin. Reported as 404 so accounts in other
+     * groups are indistinguishable from non-existent ones.
+     */
+    private static function manages(array $me, array $target): bool
+    {
+        if (WorkspaceContext::isPrimary((int)$me['id'])) return true;
+        return isset($target['workspace_id'])
+            && (int)$target['workspace_id'] === WorkspaceContext::of((int)$me['id']);
+    }
+
     public static function list(Request $req, Response $res): Response
     {
-        if (!self::requireAdmin($req)) return Json::err($res, 'Nur Admin', 403, 'forbidden');
-        $cols = 'id, email, name, role, active, is_primary, created_at';
+        $me = self::requireAdmin($req);
+        if (!$me) return Json::err($res, 'Nur Admin', 403, 'forbidden');
+        $cols = 'id, email, name, role, active, is_primary, workspace_id, created_at';
         if (self::hasStorageUsed()) $cols .= ', storage_used';
-        $rows = Database::pdo()->query("SELECT $cols FROM users ORDER BY id")->fetchAll();
+        if (WorkspaceContext::isPrimary((int)$me['id'])) {
+            $rows = Database::pdo()->query("SELECT $cols FROM users ORDER BY id")->fetchAll();
+        } else {
+            $st = Database::pdo()->prepare("SELECT $cols FROM users WHERE workspace_id = ? ORDER BY id");
+            $st->execute([WorkspaceContext::of((int)$me['id'])]);
+            $rows = $st->fetchAll();
+        }
         return Json::ok($res, ['users' => array_map([self::class, 'shape'], $rows)]);
     }
 
     public static function create(Request $req, Response $res): Response
     {
-        if (!self::requireAdmin($req)) return Json::err($res, 'Nur Admin', 403, 'forbidden');
+        $me = self::requireAdmin($req);
+        if (!$me) return Json::err($res, 'Nur Admin', 403, 'forbidden');
         $b = (array) $req->getParsedBody();
 
         $email = trim((string)($b['email'] ?? ''));
@@ -124,8 +148,13 @@ final class AdminRoutes
         $chk->execute([$email]);
         if ($chk->fetch()) return Json::err($res, 'E-Mail bereits vergeben', 409, 'email_taken');
 
-        $pdo->prepare('INSERT INTO users (email, password_hash, name, role, active) VALUES (?, ?, ?, ?, 1)')
-            ->execute([$email, password_hash($password, PASSWORD_BCRYPT), $name, $role]);
+        $wid = WorkspaceContext::of((int)$me['id']);
+        if (WorkspaceContext::isPrimary((int)$me['id']) && (int)($b['workspace_id'] ?? 0) > 0) {
+            $wid = (int)$b['workspace_id'];
+        }
+
+        $pdo->prepare('INSERT INTO users (email, password_hash, name, role, active, workspace_id) VALUES (?, ?, ?, ?, 1, ?)')
+            ->execute([$email, password_hash($password, PASSWORD_BCRYPT), $name, $role, $wid]);
         $id = (int)$pdo->lastInsertId();
 
         return Json::ok($res, ['user' => self::shape(self::fetchOne($id) ?? [])], 201);
@@ -137,12 +166,27 @@ final class AdminRoutes
         if (!$me) return Json::err($res, 'Nur Admin', 403, 'forbidden');
         $id = (int)$args['id'];
         $target = self::fetchOne($id);
-        if (!$target) return Json::err($res, 'Not found', 404);
+        if (!$target || !self::manages($me, $target)) return Json::err($res, 'Not found', 404);
         $b = (array) $req->getParsedBody();
         $isSelf = ((int)$me['id'] === $id);
 
         $sets = [];
         $params = [];
+
+        if (isset($b['workspace_id'])) {
+            if (!WorkspaceContext::isPrimary((int)$me['id'])) {
+                return Json::err($res, 'Nur der Hauptadmin kann die Kontogruppe ändern', 403, 'forbidden');
+            }
+            if (!empty($target['is_primary'])) {
+                return Json::err($res, 'Der Hauptadmin kann die Gruppe nicht wechseln', 422, 'primary_admin');
+            }
+            $wid = (int)$b['workspace_id'];
+            $chk = Database::pdo()->prepare('SELECT 1 FROM workspaces WHERE id = ?');
+            $chk->execute([$wid]);
+            if (!$chk->fetch()) return Json::err($res, 'Kontogruppe nicht gefunden', 404);
+            $sets[] = 'workspace_id = ?';
+            $params[] = $wid;
+        }
 
         if (isset($b['name'])) {
             $sets[] = 'name = ?';
@@ -200,7 +244,7 @@ final class AdminRoutes
             return Json::err($res, 'Du kannst dich nicht selbst löschen', 422, 'self_delete');
         }
         $target = self::fetchOne($id);
-        if (!$target) return Json::err($res, 'Not found', 404);
+        if (!$target || !self::manages($me, $target)) return Json::err($res, 'Not found', 404);
         if (!empty($target['is_primary'])) {
             return Json::err($res, 'Der Hauptadmin kann nicht gelöscht werden', 422, 'primary_admin');
         }

@@ -7200,11 +7200,73 @@ function CompanyMembersModal({ company, onClose }) {
   );
 }
 
+/**
+ * Kontogruppen — the isolation boundary above companies. Each group owns its
+ * users AND its companies; members of one group never see another group's
+ * tasks, times, contacts, employees or Buchhaltung. Hauptadmin only.
+ */
+function WorkspacesAdminSection({ onChanged }) {
+  const [list, setList] = useState(null);
+  const [name, setName] = useState('');
+  const load = () => API.workspaces().then((d) => setList(d.workspaces || [])).catch(() => setList([]));
+  useEffect(() => { load(); }, []);
+  const create = async () => {
+    if (!name.trim()) return;
+    try { await API.createWorkspace(name.trim()); setName(''); load(); onChanged && onChanged(); toast('Kontogruppe angelegt', 'success'); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const rename = async (w) => {
+    const n = window.prompt('Kontogruppe umbenennen', w.name);
+    if (!n || !n.trim()) return;
+    try { await API.renameWorkspace(w.id, n.trim()); load(); onChanged && onChanged(); } catch (e) { toast(e.message, 'error'); }
+  };
+  const del = async (w) => {
+    if (!await confirmDialog({ title: 'Kontogruppe löschen?', message: `„${w.name}" wird gelöscht. Geht nur, wenn keine Benutzer und Firmen mehr zugewiesen sind.`, confirmLabel: 'Löschen', danger: true })) return;
+    try { await API.deleteWorkspace(w.id); load(); onChanged && onChanged(); } catch (e) { toast(e.message, 'error'); }
+  };
+  const fld = { height: 40, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', flex: 1 };
+  return (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '16px 18px' }}>
+      <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 12, lineHeight: 1.5 }}>
+        Eine Kontogruppe kapselt Benutzer <em>und</em> Firmen komplett ab: Aufgaben, Kalender, Zeiten,
+        Kontakte, Mitarbeiterlisten und Buchhaltung sind nur innerhalb der eigenen Gruppe sichtbar.
+        Die Gruppe eines Benutzers legst du unten in der Benutzerverwaltung fest.
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Neue Kontogruppe (z. B. Team Müller)" onKeyDown={(e) => { if (e.key === 'Enter') create(); }} style={fld}/>
+        <Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={create}>Anlegen</Btn>
+      </div>
+      {list === null ? <div style={{ color: 'var(--fg-3)' }}>{Ic.loader(18)}</div> : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}>
+          {list.map((w) => (
+            <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>{w.user_count} {w.user_count === 1 ? 'Benutzer' : 'Benutzer'} · {w.company_count} {w.company_count === 1 ? 'Firma' : 'Firmen'}</div>
+              </div>
+              <span onClick={() => rename(w)} title="Umbenennen" style={{ cursor: 'pointer', color: 'var(--fg-3)', display: 'inline-flex' }}>{Ic.fileGen(15)}</span>
+              <span onClick={() => del(w)} title="Löschen" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex' }}>{Ic.trash(15)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UserAdminSection({ currentUser }) {
   const [users, setUsers] = useState(null);
   const [editing, setEditing] = useState(null);
+  const [workspaces, setWorkspaces] = useState([]);
   const load = () => API.adminUsers().then((d) => setUsers(d.users || [])).catch((e) => { toast(e.message, 'error'); setUsers([]); });
   useEffect(() => { load(); }, []);
+  // Only the Hauptadmin may see/assign groups; for everyone else this 403s and
+  // the picker simply stays hidden.
+  useEffect(() => {
+    if (!currentUser?.is_primary) return;
+    API.workspaces().then((d) => setWorkspaces(d.workspaces || [])).catch(() => {});
+  }, [currentUser?.is_primary]);
+  const wsName = (id) => (workspaces.find((w) => w.id === id) || {}).name;
   const save = async (data) => {
     try { if (data.id) await API.adminUpdateUser(data.id, data); else await API.adminCreateUser(data); setEditing(null); load(); toast('Gespeichert', 'success'); }
     catch (e) { toast(e.message, 'error'); }
@@ -7225,7 +7287,7 @@ function UserAdminSection({ currentUser }) {
               <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600, flexShrink: 0 }}>{(u.name || u.email || '?').slice(0, 1).toUpperCase()}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 540, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.name || u.email}{u.id === currentUser?.id ? ' (du)' : ''}</div>
-                <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{u.email}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{u.email}{wsName(u.workspace_id) ? ' · ' + wsName(u.workspace_id) : ''}</div>
               </div>
               {u.is_primary && <span title="Kann nicht gelöscht oder herabgestuft werden" style={{ fontSize: 9.5, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'color-mix(in oklab, #eab308 20%, transparent)', color: '#eab308' }}>HAUPTADMIN</span>}
               {u.role === 'admin' && <span style={{ fontSize: 9.5, fontWeight: 700, padding: '2px 7px', borderRadius: 999, background: 'color-mix(in oklab, var(--accent) 18%, transparent)', color: 'var(--accent)' }}>ADMIN</span>}
@@ -7235,15 +7297,16 @@ function UserAdminSection({ currentUser }) {
           ))}
         </div>
       )}
-      {editing && <UserModal u={editing} self={editing.id === currentUser?.id} onSave={save} onClose={() => setEditing(null)}/>}
+      {editing && <UserModal u={editing} self={editing.id === currentUser?.id} workspaces={workspaces} onSave={save} onClose={() => setEditing(null)}/>}
     </div>
   );
 }
 
-function UserModal({ u, self, onSave, onClose }) {
+function UserModal({ u, self, workspaces = [], onSave, onClose }) {
   const [name, setName] = useState(u.name || '');
   const [email, setEmail] = useState(u.email || '');
   const [role, setRole] = useState(u.role || 'user');
+  const [workspaceId, setWorkspaceId] = useState(u.workspace_id ? String(u.workspace_id) : '');
   const [active, setActive] = useState(u.active != null ? !!u.active : true);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -7253,6 +7316,8 @@ function UserModal({ u, self, onSave, onClose }) {
     if (password && password.length < 8) { toast('Passwort min. 8 Zeichen', 'error'); return; }
     setBusy(true);
     const body = { id: u.id, name: name.trim() || null, role, active: active ? 1 : 0 };
+    // Only sent when the Hauptadmin actually has the picker (others 403 on it).
+    if (workspaces.length > 0 && workspaceId) body.workspace_id = Number(workspaceId);
     if (!u.id) body.email = email.trim();
     if (password) body.password = password;
     await onSave(body);
@@ -7271,6 +7336,21 @@ function UserModal({ u, self, onSave, onClose }) {
           <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Voller Name" style={fld}/></label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>E-Mail {u.id && <span style={{ color: 'var(--fg-4)' }}>(nicht änderbar)</span>}</span><input type="email" value={email} disabled={!!u.id} onChange={(e) => setEmail(e.target.value)} placeholder="name@firma.at" style={{ ...fld, opacity: u.id ? 0.6 : 1 }}/></label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>{u.id ? 'Neues Passwort (optional)' : 'Passwort'}</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={u.id ? 'leer = unverändert' : 'min. 8 Zeichen'} style={fld}/></label>
+          {workspaces.length > 0 && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kontogruppe</span>
+              <select value={workspaceId} disabled={u.is_primary} onChange={(e) => setWorkspaceId(e.target.value)}
+                style={{ ...fld, cursor: u.is_primary ? 'not-allowed' : 'pointer', opacity: u.is_primary ? 0.6 : 1 }}>
+                <option value="">— Gruppe wählen —</option>
+                {workspaces.map((w) => <option key={w.id} value={String(w.id)}>{w.name}</option>)}
+              </select>
+              <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>
+                {u.is_primary
+                  ? 'Der Hauptadmin sieht alle Gruppen und kann nicht zugewiesen werden.'
+                  : 'Der Benutzer sieht ausschließlich Aufgaben, Zeiten, Kontakte und Buchhaltung dieser Gruppe.'}
+              </span>
+            </label>
+          )}
           <div style={{ display: 'flex', gap: 12 }}>
             <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}><span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Rolle</span>
               <select value={role} onChange={(e) => setRole(e.target.value)} disabled={locked} style={{ ...fld, cursor: locked ? 'not-allowed' : 'pointer', opacity: locked ? 0.6 : 1 }}><option value="user">Benutzer</option><option value="admin">Admin</option></select>
@@ -7376,6 +7456,10 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
           <div style={{ marginBottom: 28 }}><NotificationsSection/></div>
 
           {isAdmin && (<>
+            {user?.is_primary && (<>
+              <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Kontogruppen · Hauptadmin</div>
+              <div style={{ marginBottom: 28 }}><WorkspacesAdminSection/></div>
+            </>)}
             <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Benutzerverwaltung · Admin</div>
             <div style={{ marginBottom: 28 }}><UserAdminSection currentUser={user}/></div>
             <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Firmen (Mandanten) · Admin</div>
