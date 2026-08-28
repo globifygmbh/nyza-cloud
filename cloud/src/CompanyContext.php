@@ -35,7 +35,7 @@ final class CompanyContext
             return $requested;
         }
 
-        // First company the user is a member of — within their own group only.
+        // Preferred: a company this user is explicitly attached to, in their group.
         $s = $pdo->prepare(
             'SELECT cm.company_id FROM company_members cm '
             . 'JOIN companies c ON c.id = cm.company_id '
@@ -45,21 +45,17 @@ final class CompanyContext
         $row = $s->fetch();
         if ($row) return (int)$row['company_id'];
 
-        // No membership. An admin has implicit access to every company in their
-        // OWN group (see isMember() below), so defaulting them to the first one
-        // there is just a convenience. A user with zero grants must never
-        // silently land on someone else's company — that would hand a brand new
-        // restricted account another team's whole Buchhaltung by default.
-        if (self::isAdmin($uid)) {
-            $s = $pdo->prepare('SELECT MIN(id) AS id FROM companies WHERE workspace_id = ?');
-            $s->execute([$wid]);
-            $min = $s->fetch();
-            if ($min && $min['id'] !== null) return (int)$min['id'];
-        }
+        // Otherwise the group's first company — for every role. The group is the
+        // isolation boundary, so this can only ever land on the user's own team's
+        // books. Falling through to a fresh company here instead (as it used to
+        // for non-admins) spawned an empty "Mein Unternehmen" next to the real
+        // one the team had already created.
+        $s = $pdo->prepare('SELECT MIN(id) AS id FROM companies WHERE workspace_id = ?');
+        $s->execute([$wid]);
+        $min = $s->fetch();
+        if ($min && $min['id'] !== null) return (int)$min['id'];
 
-        // Bootstrap an isolated company inside this user's group (and join only
-        // this user to it) — either the group has none yet, or this is a
-        // non-admin with no grants.
+        // The group has no company at all yet — create its first one.
         $pdo->prepare('INSERT INTO companies (name, profile, workspace_id) VALUES (?, NULL, ?)')
             ->execute(['Mein Unternehmen', $wid]);
         $cid = (int)$pdo->lastInsertId();
@@ -69,19 +65,22 @@ final class CompanyContext
     }
 
     /**
-     * Membership exists for (user, company), OR the user is an admin of the
-     * group that owns the company. The Hauptadmin crosses groups; every other
-     * role — admin included — is confined to their own Kontogruppe.
+     * Whether the user may work in this company. The Kontogruppe is the access
+     * boundary: a group's members share the group's companies, exactly like they
+     * already share its tasks, calendar and times.
+     *
+     * No role crosses the boundary here — not even the Hauptadmin, whose extra
+     * powers are administrative (managing groups, assigning users), not reading
+     * another team's books. company_members still records who belongs where and
+     * drives the member UI; it no longer gates access on its own, because a
+     * user with no row used to get a private bootstrapped company inside a group
+     * that already had one, which is where the stray "Mein Unternehmen" rows
+     * came from.
      */
     public static function isMember(int $uid, int $companyId): bool
     {
         if ($companyId <= 0) return false;
-        if (WorkspaceContext::isPrimary($uid)) return true;
-        if (!WorkspaceContext::ownsCompany(WorkspaceContext::of($uid), $companyId)) return false;
-        if (self::isAdmin($uid)) return true;
-        $s = Database::pdo()->prepare('SELECT 1 FROM company_members WHERE company_id = ? AND user_id = ?');
-        $s->execute([$companyId, $uid]);
-        return (bool)$s->fetch();
+        return WorkspaceContext::ownsCompany(WorkspaceContext::of($uid), $companyId);
     }
 
     /** Decode companies.profile JSON → array (empty array if missing/null). */

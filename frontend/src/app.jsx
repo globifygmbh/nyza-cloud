@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import QRCode from 'qrcode';
-import { API, BASE, getToken, setToken, getCompany, setCompany } from './api.js';
+import { API, BASE, getToken, setToken, getCompany, setCompany, reconcileCompany } from './api.js';
 import {
   Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
   Toggle, CircularProgress, humanSize, timeAgo, ACCENTS, applyAccent,
@@ -7386,7 +7386,11 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   const [profileCompany, setProfileCompany] = useState(() => getCompany());
 
   useEffect(() => {
-    API.companies().then((d) => { setCompanies(d.companies || []); if (!profileCompany && d.active) setProfileCompany(String(d.active)); }).catch(() => {});
+    API.companies().then((d) => {
+      setCompanies(d.companies || []);
+      // Never keep an id this account can't actually open — that 404'd on save.
+      setProfileCompany(reconcileCompany(d.companies, d.active));
+    }).catch(() => {});
   }, []);
   useEffect(() => {
     if (!profileCompany) { setC({}); return; }
@@ -7595,7 +7599,11 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
   }, [tab, repYear, repPeriod, activeCompany]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    API.companies().then((d) => { setCompanies(d.companies || []); const a = getCompany() || (d.active ? String(d.active) : ''); if (a) { setCompany(a); setActiveCompany((prev) => prev !== a ? a : prev); } }).catch(() => {});
+    API.companies().then((d) => {
+      setCompanies(d.companies || []);
+      const a = reconcileCompany(d.companies, d.active);
+      if (a) { setCompany(a); setActiveCompany((prev) => prev !== a ? a : prev); }
+    }).catch(() => {});
   }, []);
   useEffect(() => {
     API.contacts({}).then((d) => setContacts(d.contacts || [])).catch(() => {});
@@ -9796,7 +9804,7 @@ function SignatureCreateModal({ documentId = null, documentLabel = '', onCreated
   const [created, setCreated] = useState(null);
   const fld = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' };
 
-  useEffect(() => { if (!preBound) API.companies().then((d) => { setCompanies(d.companies || []); if (!getCompany() && d.active) { setCompany(String(d.active)); setCompanyId(String(d.active)); } }).catch(() => {}); }, []);
+  useEffect(() => { if (!preBound) API.companies().then((d) => { setCompanies(d.companies || []); const a = reconcileCompany(d.companies, d.active); if (a) setCompanyId(a); }).catch(() => {}); }, []);
   useEffect(() => {
     if (preBound) return;
     if (company) setCompany(company);

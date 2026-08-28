@@ -20,6 +20,25 @@ export function setCompany(id) {
 export function setToken(t) {
   if (t) localStorage.setItem('nyza.token', t);
   else localStorage.removeItem('nyza.token');
+  // The active company is per-account, the token isn't: signing out (or into a
+  // different account in the same browser) must drop it, or the next account
+  // keeps sending a company id it may not be allowed to see — which surfaced as
+  // "Not found" when saving the Firmenprofil.
+  if (!t) localStorage.removeItem('nyza.company');
+}
+
+/**
+ * Pick the company to work in, given what the server says this account may see.
+ * A stored id that isn't in the list (stale, or from another Kontogruppe) is
+ * dropped in favour of the server's `active`. Returns the id as a string.
+ */
+export function reconcileCompany(companies, active) {
+  const ids = new Set((companies || []).map((c) => String(c.id)));
+  const stored = getCompany();
+  if (stored && ids.has(stored)) return stored;
+  const next = active ? String(active) : (companies && companies[0] ? String(companies[0].id) : '');
+  setCompany(next || null);
+  return next;
 }
 
 async function request(path, opts = {}) {

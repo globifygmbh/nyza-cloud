@@ -57,23 +57,23 @@ final class CompanyRoutes
     {
         $uid = (int)$req->getAttribute('uid');
         $pdo = Database::pdo();
-        if (WorkspaceContext::isPrimary($uid)) {
-            $rows = $pdo->query('SELECT id, name FROM companies ORDER BY name ASC, id ASC')->fetchAll();
-        } elseif (CompanyContext::isAdmin($uid)) {
-            $s = $pdo->prepare('SELECT id, name FROM companies WHERE workspace_id = ? ORDER BY name ASC, id ASC');
-            $s->execute([WorkspaceContext::of($uid)]);
-            $rows = $s->fetchAll();
-        } else {
-            $s = $pdo->prepare(
-                'SELECT c.id, c.name FROM companies c '
-                . 'JOIN company_members cm ON cm.company_id = c.id '
-                . 'WHERE cm.user_id = ? AND c.workspace_id = ? ORDER BY c.name ASC, c.id ASC'
-            );
-            $s->execute([$uid, WorkspaceContext::of($uid)]);
-            $rows = $s->fetchAll();
-        }
+
+        // Resolve the active company FIRST. It may bootstrap the group's very
+        // first company, and listing before that would return an empty set while
+        // handing back an `active` id that isn't in it — which looked to the user
+        // like a stray company appearing out of nowhere.
+        $active = CompanyContext::active($req, $uid);
+
+        // Own Kontogruppe only — for every role, the Hauptadmin included. Their
+        // cross-group powers are administrative (managing groups and assigning
+        // users); mixing another team's companies into the accounting switcher
+        // would just invite booking into the wrong one.
+        $s = $pdo->prepare('SELECT id, name FROM companies WHERE workspace_id = ? ORDER BY name ASC, id ASC');
+        $s->execute([WorkspaceContext::of($uid)]);
+        $rows = $s->fetchAll();
+
         $companies = array_map(static fn($r) => ['id' => (int)$r['id'], 'name' => $r['name']], $rows);
-        return Json::ok($res, ['companies' => $companies, 'active' => CompanyContext::active($req, $uid)]);
+        return Json::ok($res, ['companies' => $companies, 'active' => $active]);
     }
 
     // ───── Profile ─────────────────────────────────────────────────────────────
