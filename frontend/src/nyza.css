@@ -296,3 +296,9 @@ html, body, #root { max-width: 100%; overflow-x: hidden; }
   .nyza-modal-foot .foot-note { display: none; }
   .nyza-modal-foot > button { flex: 1 1 auto; }
 }
+
+/* Content Plan editor: preview column drops below the form on narrow screens. */
+@media (max-width: 820px) {
+  .nyza-cp-editor { grid-template-columns: minmax(0, 1fr) !important; }
+  .nyza-cp-editor > div { border-right: none !important; }
+}

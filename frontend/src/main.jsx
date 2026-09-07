@@ -9,6 +9,7 @@ import { API, BASE, getToken, setToken } from './api.js';
 import { NyzaAmbient, applyAccent } from './system.jsx';
 import { AuthScreen, Dashboard } from './app.jsx';
 import { PublicSharePage, PublicUploadPage, PublicSignPage, PublicFormPage, PublicPortalPage, CenteredLoader } from './pubpages.jsx';
+import { PublicContentPlanPage } from './contentplan.jsx';
 import { ToastHost } from './toast.jsx';
 import { ConfirmHost, ContextMenuHost } from './overlays.jsx';
 
@@ -30,6 +31,8 @@ function getRoute() {
   if (m) return { kind: 'public-form', token: m[1] };
   m = path.match(/^\/portal\/([A-Za-z0-9_-]+)\/?$/);
   if (m) return { kind: 'public-portal', token: m[1] };
+  m = path.match(/^\/cp\/([A-Za-z0-9_-]+)\/?$/);
+  if (m) return { kind: 'public-contentplan', token: m[1] };
   return { kind: 'app' };
 }
 
@@ -66,6 +69,9 @@ function Root() {
 
   if (!authChecked) return <><NyzaAmbient/><CenteredLoader/></>;
 
+  if (route.kind === 'public-contentplan') {
+    return <><NyzaAmbient/><PublicContentPlanPage token={route.token}/><ToastHost/><ConfirmHost/></>;
+  }
   if (route.kind === 'public-share') {
     return <><NyzaAmbient/><PublicSharePage token={route.token}/><ToastHost/></>;
   }

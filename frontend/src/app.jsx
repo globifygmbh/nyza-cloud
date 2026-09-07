@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import QRCode from 'qrcode';
 import { API, BASE, getToken, setToken, getCompany, setCompany, reconcileCompany } from './api.js';
+import { ContentPlanApp } from './contentplan.jsx';
 import {
   Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
   Toggle, CircularProgress, humanSize, timeAgo, ACCENTS, applyAccent,
@@ -3659,6 +3660,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-content' && (
           <ContentApp onBack={() => setNav({ name: 'apps' })}/>
         )}
+        {nav.name === 'app-contentplan' && (
+          <ContentPlanApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -4580,6 +4584,7 @@ function AppsView({ user, onOpenApp }) {
     { id: 'pdf',        label: 'PDF',          desc: 'Format ändern',           icon: Ic.filePdf(26), grad: 'linear-gradient(135deg, oklch(0.66 0.2 20), oklch(0.58 0.19 8))' },
     { id: 'snippets',   label: 'Textbausteine', desc: 'Vorlagen für Mails',     icon: Ic.fileGen(26), grad: 'linear-gradient(135deg, oklch(0.7 0.14 235), oklch(0.6 0.13 260))' },
     { id: 'content',    label: 'Content',      desc: 'TikTok & Reels planen',   icon: Ic.camera(26),  grad: 'linear-gradient(135deg, oklch(0.68 0.2 350), oklch(0.6 0.2 300))' },
+    { id: 'contentplan', label: 'Content Plan', desc: 'Redaktionsplan & Freigabe', icon: Ic.calendar(26), grad: 'linear-gradient(135deg, oklch(0.7 0.17 60), oklch(0.62 0.19 25))' },
   ].filter((a) => !gatedIds.has(a.id) || isAdmin || hasCompany);
   const soon = [];
   const Tile = ({ a, disabled }) => (
