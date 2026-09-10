@@ -302,3 +302,23 @@ html, body, #root { max-width: 100%; overflow-x: hidden; }
   .nyza-cp-editor { grid-template-columns: minmax(0, 1fr) !important; }
   .nyza-cp-editor > div { border-right: none !important; }
 }
+
+/* ── Phone: make it behave like an app ───────────────────────────────────────
+   touch-action: manipulation drops the double-tap-to-zoom gesture (and with it
+   the 300ms tap delay) while leaving scrolling and the media viewer's own pinch
+   intact.
+
+   The 16px on form controls is the actual fix for "after login it was zoomed
+   in": iOS Safari zooms the whole page whenever a focused field has a font
+   smaller than 16px, and never zooms back out. The app's fields are 13-14px by
+   design, so they are bumped on touch devices only — desktop keeps its
+   compact look. !important because those sizes are set inline. */
+html {
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+}
+@media (hover: none) and (pointer: coarse) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}

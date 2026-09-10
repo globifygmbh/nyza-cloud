@@ -36,6 +36,16 @@ function getRoute() {
   return { kind: 'app' };
 }
 
+// iOS Safari ignores user-scalable=no while browsing (it only honours it once
+// the app is installed to the home screen), so pinch-zoom of the page chrome is
+// blocked here instead. The media viewer zooms images through its own touch
+// handling and is unaffected — these events are Safari's page zoom.
+if (typeof document !== 'undefined') {
+  for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) {
+    document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+  }
+}
+
 function Root() {
   const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme') || 'dark');
   const [user, setUser] = useState(null);

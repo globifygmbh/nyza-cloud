@@ -120,7 +120,6 @@ export function ListsApp({ onBack }) {
   const [draft, setDraft] = useState('');
   const [hideDone, setHideDone] = useState(false);
   const [modal, setModal] = useState(null);       // null | {} | list
-  const [showLists, setShowLists] = useState(false);
   const addRef = useRef(null);
 
   const loadLists = () => API.lists().then((d) => {
@@ -189,7 +188,7 @@ export function ListsApp({ onBack }) {
             const on = String(l.id) === String(activeId);
             const pct = l.total ? Math.round((l.done_count / l.total) * 100) : 0;
             return (
-              <div key={l.id} onClick={() => { setActiveId(String(l.id)); setShowLists(false); }} style={{
+              <div key={l.id} onClick={() => setActiveId(String(l.id))} style={{
                 display: 'flex', alignItems: 'center', gap: 9, padding: '9px 10px', borderRadius: 'var(--r-sm)', cursor: 'pointer',
                 background: on ? 'color-mix(in oklab, var(--accent) 14%, transparent)' : 'transparent', color: on ? 'var(--accent)' : 'var(--fg)',
               }}>
@@ -222,20 +221,33 @@ export function ListsApp({ onBack }) {
           <span style={{ color: 'var(--fg-3)', cursor: 'pointer' }} onClick={onBack}>Apps</span>
           <span style={{ color: 'var(--fg-4)' }}>{Ic.chevronR(12)}</span>
           <span style={{ fontWeight: 600 }}>Listen</span>
-          {mobile && active && (<>
-            <span style={{ color: 'var(--fg-4)' }}>{Ic.chevronR(12)}</span>
-            <span onClick={() => setShowLists((v) => !v)} style={{ color: 'var(--accent)', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{active.name}</span>
-          </>)}
         </div>
+        {mobile && (<>
+          <span style={{ flex: 1 }}/>
+          {(lists || []).length > 0 && (
+            <select value={activeId} onChange={(e) => setActiveId(e.target.value)} title="Liste wählen"
+              style={{ maxWidth: 190, height: 36, padding: '0 8px', borderRadius: 999, background: 'var(--surface-hi)', border: '1px solid var(--border)', color: 'var(--fg)', fontFamily: 'inherit', fontSize: 13.5, cursor: 'pointer' }}>
+              {lists.map((l) => <option key={l.id} value={String(l.id)}>{l.name} ({l.done_count}/{l.total})</option>)}
+            </select>
+          )}
+          <IconBtn size={36} title="Neue Liste" onClick={() => setModal({})}
+            style={{ flexShrink: 0, border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.plus(17)}</IconBtn>
+        </>)}
       </div>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
-        {(!mobile || showLists) && Sidebar}
-        {(!mobile || !showLists) && (
+        {!mobile && Sidebar}
+        {(
           <div data-scroll style={{ flex: 1, overflow: 'auto', padding: mobile ? '14px 12px 80px' : '18px 24px 80px', minWidth: 0 }}>
             {!active ? (
               <div style={{ color: 'var(--fg-3)', padding: 30, textAlign: 'center' }}>
-                {lists === null ? Ic.loader(22) : <>{Ic.checkSquare(30)}<div style={{ marginTop: 10, fontSize: 14 }}>Leg links eine Liste an, um loszulegen.</div></>}
+                {lists === null ? Ic.loader(22) : (<>
+                  {Ic.checkSquare(30)}
+                  <div style={{ marginTop: 10, fontSize: 14 }}>Noch keine Liste.</div>
+                  <div style={{ marginTop: 14 }}>
+                    <Btn variant="primary" icon={Ic.plus(15)} onClick={() => setModal({})}>Erste Liste anlegen</Btn>
+                  </div>
+                </>)}
               </div>
             ) : (
               <div style={{ maxWidth: 720 }}>
@@ -243,6 +255,12 @@ export function ListsApp({ onBack }) {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, margin: 0, letterSpacing: -0.3 }}>{active.name}</h1>
                     {active.note && <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 4, whiteSpace: 'pre-wrap' }}>{active.note}</div>}
+                    {mobile && (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                        <Btn variant="ghost" size="sm" icon={Ic.fileGen(13)} onClick={() => setModal(active)}>Umbenennen</Btn>
+                        <Btn variant="ghost" size="sm" icon={Ic.trash(13)} onClick={() => deleteList(active)}>Löschen</Btn>
+                      </div>
+                    )}
                     <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 4 }}>
                       {(items || []).length} {(items || []).length === 1 ? 'Eintrag' : 'Einträge'} · {doneCount} erledigt
                       {active.created_by_name ? ' · angelegt von ' + active.created_by_name : ''}
