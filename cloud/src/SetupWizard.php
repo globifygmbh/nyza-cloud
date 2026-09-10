@@ -66,6 +66,18 @@ final class SetupWizard
     }
 
     /** True if config.php loads, the DB connects, and at least one user exists. */
+    /**
+     * Build an in-wizard URL. Entering via `/?setup=1` and then following a
+     * bare `?step=…` link dropped the `setup` flag, so index.php stopped
+     * routing to the wizard and served the app instead — mid-setup you landed
+     * on the login screen with no admin account created. Keep the flag.
+     */
+    private function link(string $step, string $extra = ''): string
+    {
+        $q = isset($_GET['setup']) ? '?setup=1&step=' : '?step=';
+        return $q . $step . $extra;
+    }
+
     private function isProvisioned(): bool
     {
         try {
@@ -242,14 +254,14 @@ final class SetupWizard
             echo '</ul>';
 
             if (!$allGood) {
-                echo '<div class="warn">⚠ Erst die roten Punkte oben fixen, dann <a href="?step=checks">erneut prüfen</a>.</div>';
+                echo '<div class="warn">⚠ Erst die roten Punkte oben fixen, dann <a href="' . $this->link('checks') . '">erneut prüfen</a>.</div>';
             } else {
                 if ($configExists) {
                     echo '<div class="ok-box">✓ <code>config.php</code> existiert bereits. ';
-                    echo '<a href="?step=finish" class="btn btn-primary">Datenbank testen →</a> ';
-                    echo '<a href="?step=config" class="btn">Neu konfigurieren</a></div>';
+                    echo '<a href="' . $this->link('finish') . '" class="btn btn-primary">Datenbank testen →</a> ';
+                    echo '<a href="' . $this->link('config') . '" class="btn">Neu konfigurieren</a></div>';
                 } else {
-                    echo '<div class="ok-box">✓ Alle Checks bestanden. <a href="?step=config" class="btn btn-primary">Weiter zur Datenbank-Konfiguration →</a></div>';
+                    echo '<div class="ok-box">✓ Alle Checks bestanden. <a href="' . $this->link('config') . '" class="btn btn-primary">Weiter zur Datenbank-Konfiguration →</a></div>';
                 }
             }
         });
@@ -273,14 +285,14 @@ final class SetupWizard
 
             if ($error) echo '<div class="err">✗ ' . htmlspecialchars($error) . '</div>';
 
-            echo '<form method="post" action="?step=config" class="form">';
+            echo '<form method="post" action="' . $this->link('config') . '" class="form">';
             $this->field('db_host', 'MySQL Host', $values['db_host'], 'meist 127.0.0.1 oder localhost');
             $this->field('db_port', 'Port',       $values['db_port'], 'meist 3306');
             $this->field('db_name', 'Datenbank-Name', $values['db_name'], 'genau so wie dein Hoster sie nennt — z.B. nicolas_db27 oder web123_nyza');
             $this->field('db_user', 'Benutzer',   $values['db_user'], '');
             $this->field('db_pass', 'Passwort',   $values['db_pass'], '', 'password');
             echo '<div class="actions">';
-            echo '<a href="?step=checks" class="btn">← Zurück</a>';
+            echo '<a href="' . $this->link('checks') . '" class="btn">← Zurück</a>';
             echo '<button type="submit" class="btn btn-primary">Verbindung testen & speichern</button>';
             echo '</div>';
             echo '</form>';
@@ -352,7 +364,7 @@ final class SetupWizard
         // Redirect to admin-creation step so a page refresh doesn't re-POST DB
         // credentials. Admin step then handles the actual user/migration setup.
         $self = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
-        header('Location: ' . $self . '?step=admin');
+        header('Location: ' . $self . $this->link('admin'));
         exit;
     }
 
@@ -367,7 +379,7 @@ final class SetupWizard
     {
         // Guard: if config.php doesn't exist, the user shouldn't be here.
         if (!is_file($this->cloudDir . '/config.php')) {
-            header('Location: ?step=checks');
+            header('Location: ' . $this->link('checks'));
             exit;
         }
 
@@ -376,7 +388,7 @@ final class SetupWizard
             Config::load($this->cloudDir . '/config.php');
             $existing = Database::pdo()->query('SELECT COUNT(*) AS c FROM users')->fetch();
             if ($existing && (int)$existing['c'] > 0) {
-                header('Location: ?step=finish');
+                header('Location: ' . $this->link('finish'));
                 exit;
             }
         } catch (\Throwable $e) {
@@ -410,16 +422,16 @@ final class SetupWizard
                 if ($isSchemaIssue) {
                     echo '<div class="warn" style="margin-bottom:18px">';
                     echo '🛠 Sieht aus wie ein Schema-Problem (alte Karteileichen aus einem fehlgeschlagenen Setup-Versuch). ';
-                    echo '<a href="?step=reset" class="btn" style="margin-left:8px">DB zurücksetzen…</a>';
+                    echo '<a href="' . $this->link('reset') . '" class="btn" style="margin-left:8px">DB zurücksetzen…</a>';
                     echo '</div>';
                 }
             }
 
-            echo '<form method="post" action="?step=admin" class="form">';
+            echo '<form method="post" action="' . $this->link('admin') . '" class="form">';
             $this->field('admin_email', 'Admin E-Mail', $email, 'für Login + Upload-Notifications', 'email');
             $this->field('admin_name',  'Anzeigename',  '',   'wird in der Sidebar angezeigt');
             echo '<div class="actions">';
-            echo '<a href="?step=config" class="btn">← DB-Konfiguration ändern</a>';
+            echo '<a href="' . $this->link('config') . '" class="btn">← DB-Konfiguration ändern</a>';
             echo '<button type="submit" class="btn btn-primary">Account anlegen</button>';
             echo '</div>';
             echo '</form>';
@@ -431,7 +443,7 @@ final class SetupWizard
         // Guard: someone POSTed straight to ?step=admin without a config.php.
         // Calling Config::load below would recurse back into the wizard.
         if (!is_file($this->cloudDir . '/config.php')) {
-            header('Location: ?step=checks');
+            header('Location: ' . $this->link('checks'));
             exit;
         }
 
@@ -456,7 +468,7 @@ final class SetupWizard
         // already exists, refuse (the handle() gate already blocks unauth access,
         // but never create a second account from here).
         if ((int)($pdo->query('SELECT COUNT(*) AS c FROM users')->fetch()['c'] ?? 0) > 0) {
-            header('Location: ?step=finish');
+            header('Location: ' . $this->link('finish'));
             exit;
         }
 
@@ -512,7 +524,7 @@ final class SetupWizard
     private function renderResetConfirm(?string $error = null): void
     {
         if (!is_file($this->cloudDir . '/config.php')) {
-            header('Location: ?step=checks');
+            header('Location: ' . $this->link('checks'));
             exit;
         }
         $this->page('Datenbank zurücksetzen', function () use ($error) {
@@ -532,12 +544,12 @@ final class SetupWizard
 
             if ($error) echo '<div class="err">✗ ' . htmlspecialchars($error) . '</div>';
 
-            echo '<form method="post" action="?step=reset" class="form">';
+            echo '<form method="post" action="' . $this->link('reset') . '" class="form">';
             echo '<label><span>Zur Bestätigung tippe <code>RESET</code> ein</span>';
             echo '<input type="text" name="confirm" required autocomplete="off" placeholder="RESET"/>';
             echo '</label>';
             echo '<div class="actions">';
-            echo '<a href="?step=admin" class="btn">← Zurück</a>';
+            echo '<a href="' . $this->link('admin') . '" class="btn">← Zurück</a>';
             echo '<button type="submit" class="btn btn-primary">DB zurücksetzen</button>';
             echo '</div>';
             echo '</form>';
@@ -547,7 +559,7 @@ final class SetupWizard
     private function processResetForm(): void
     {
         if (!is_file($this->cloudDir . '/config.php')) {
-            header('Location: ?step=checks');
+            header('Location: ' . $this->link('checks'));
             exit;
         }
         if (trim((string)($_POST['confirm'] ?? '')) !== 'RESET') {
@@ -583,7 +595,7 @@ final class SetupWizard
 
         // Send the user back to the admin step — Database::pdo() there will
         // re-run migrations against the now-empty database.
-        header('Location: ?step=admin&reset=1');
+        header('Location: ' . $this->link('admin', '&reset=1'));
         exit;
     }
 
@@ -667,7 +679,7 @@ PHP;
     {
         $configPath = $this->cloudDir . '/config.php';
         if (!is_file($configPath)) {
-            header('Location: ?step=checks');
+            header('Location: ' . $this->link('checks'));
             exit;
         }
 
@@ -690,13 +702,13 @@ PHP;
             if ($error) {
                 echo '<h1>Setup · Fehler</h1>';
                 echo '<div class="err">✗ Setup nicht abgeschlossen:<br><code>' . htmlspecialchars($error) . '</code></div>';
-                echo '<a href="?step=config" class="btn">Zurück zur Konfiguration</a>';
+                echo '<a href="' . $this->link('config') . '" class="btn">Zurück zur Konfiguration</a>';
                 return;
             }
             if (!$hasAdmin) {
                 echo '<h1>Setup · Admin fehlt</h1>';
                 echo '<p class="lede">Datenbank ist OK, aber es gibt noch keinen Admin-Account.</p>';
-                echo '<a href="?step=admin" class="btn btn-primary">Admin anlegen →</a>';
+                echo '<a href="' . $this->link('admin') . '" class="btn btn-primary">Admin anlegen →</a>';
                 return;
             }
             echo '<div class="big-check">✓</div>';
