@@ -69,10 +69,18 @@ final class AuthRoutes
     /** Public user payload — id/email/name/accent/role/active + whether a logo exists. */
     public static function publicUser(array $u): array
     {
+        // logo_v changes whenever the file is replaced, so the client can bust
+        // its cache for a URL that is otherwise identical for every upload.
+        $logoV = null;
+        if (!empty($u['logo_path'])) {
+            $abs = Storage::abs((string)$u['logo_path']);
+            $logoV = is_file($abs) ? (string)@filemtime($abs) : null;
+        }
         return [
             'id' => (int)$u['id'], 'email' => $u['email'], 'name' => $u['name'],
             'accent' => $u['accent'] ?? null,
             'has_logo' => !empty($u['logo_path']),
+            'logo_v' => $logoV,
             'role' => $u['role'] ?? 'user',
             'active' => isset($u['active']) ? (int)$u['active'] : 1,
             'is_primary' => !empty($u['is_primary']),
@@ -391,9 +399,20 @@ final class AuthRoutes
         if (!is_file($abs)) return Json::err($res, 'Missing', 410);
         $ext = strtolower(pathinfo($abs, PATHINFO_EXTENSION));
         $mime = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'webp' => 'image/webp', 'svg' => 'image/svg+xml', 'gif' => 'image/gif'][$ext] ?? 'application/octet-stream';
+        // The URL is the same for every upload (branding/{uid}.{ext}), so a
+        // plain max-age served the PREVIOUS logo for up to an hour after it was
+        // replaced. Revalidate instead: an unchanged logo still costs only a
+        // 304, a replaced one is picked up immediately.
+        $etag = '"' . md5((string)@filemtime($abs) . '-' . (string)@filesize($abs)) . '"';
+        if (trim((string)$req->getHeaderLine('If-None-Match')) === $etag) {
+            return $res->withStatus(304)
+                ->withHeader('ETag', $etag)
+                ->withHeader('Cache-Control', 'no-cache, must-revalidate');
+        }
         return $res
             ->withHeader('Content-Type', $mime)
-            ->withHeader('Cache-Control', 'public, max-age=3600')
+            ->withHeader('Cache-Control', 'no-cache, must-revalidate')
+            ->withHeader('ETag', $etag)
             ->withHeader('X-Content-Type-Options', 'nosniff')
             ->withBody(new Stream(fopen($abs, 'rb')));
     }

@@ -969,7 +969,7 @@ export function ProfileModal({ user, onClose, onSaved }) {
   const [quotaGb, setQuotaGb] = useState(Math.round((user.storage_quota || 200 * GB) / GB));
   const [usedGb, setUsedGb] = useState((user.storage_used || 0) / GB);
   const [logoFile, setLogoFile] = useState(null);
-  const [logoPreview, setLogoPreview] = useState(user.has_logo ? API.logoUrl(user.id) + '?v=' + Date.now() : null);
+  const [logoPreview, setLogoPreview] = useState(user.has_logo ? API.logoUrl(user.id, user.logo_v || Date.now()) : null);
   const [removeLogo, setRemoveLogo] = useState(false);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
@@ -1121,7 +1121,7 @@ function Sidebar({ active, stats, user, onNavigate, onLogout, onTheme, theme, on
     }}>
       <div style={{ padding: '4px 10px 22px', cursor: 'pointer' }} onClick={() => onNavigate({ name: 'files' })}>
         {user?.has_logo
-          ? <img src={API.logoUrl(user.id)} alt="Logo" style={{ maxHeight: 30, maxWidth: 160, objectFit: 'contain' }}/>
+          ? <img src={API.logoUrl(user.id, user.logo_v)} alt="Logo" style={{ maxHeight: 30, maxWidth: 160, objectFit: 'contain' }}/>
           : <NyzaWordmark size={16}/>}
       </div>
       <Btn variant="primary" size="md" icon={Ic.upload(16)} full onClick={onUpload}>Hochladen</Btn>

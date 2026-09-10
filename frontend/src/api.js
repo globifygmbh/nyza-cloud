@@ -169,7 +169,7 @@ export const API = {
   updateProfile:  (body) => request('/api/auth/profile', { method: 'PATCH', body }),
   uploadLogo:     (file) => upload('/api/auth/logo', file, {}),
   deleteLogo:     () => request('/api/auth/logo', { method: 'DELETE' }),
-  logoUrl:        (uid) => url('/api/branding/logo/' + uid),
+  logoUrl:        (uid, v) => url('/api/branding/logo/' + uid) + (v ? '?v=' + encodeURIComponent(v) : ''),
 
   // Folders
   folders:      (parent) => request('/api/folders' + (parent ? '?parent_id=' + parent : '')),
