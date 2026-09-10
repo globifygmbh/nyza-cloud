@@ -421,6 +421,17 @@ export const API = {
   removeCompanyMember:(id, userId) => request('/api/companies/' + id + '/members/' + userId, { method: 'DELETE' }),
 
   // App settings (namespaced JSON store)
+  // ── Listen (shared team checklists) ──
+  lists:          () => request('/api/lists'),
+  list:           (id) => request('/api/lists/' + id),
+  createList:     (body) => request('/api/lists', { method: 'POST', body }),
+  updateList:     (id, body) => request('/api/lists/' + id, { method: 'PATCH', body }),
+  deleteList:     (id) => request('/api/lists/' + id, { method: 'DELETE' }),
+  addListItem:    (id, text) => request('/api/lists/' + id + '/items', { method: 'POST', body: { text } }),
+  updateListItem: (itemId, body) => request('/api/lists/items/' + itemId, { method: 'PATCH', body }),
+  deleteListItem: (itemId) => request('/api/lists/items/' + itemId, { method: 'DELETE' }),
+  clearListDone:  (id) => request('/api/lists/' + id + '/clear-done', { method: 'POST', body: {} }),
+
   getSettings:  (ns) => request('/api/settings/' + ns),
   saveSettings: (ns, body) => request('/api/settings/' + ns, { method: 'PUT', body }),
 

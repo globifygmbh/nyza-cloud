@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspens
 import QRCode from 'qrcode';
 import { API, BASE, getToken, setToken, getCompany, setCompany, reconcileCompany } from './api.js';
 import { ContentPlanApp } from './contentplan.jsx';
+import { ListsApp } from './lists.jsx';
 import {
   Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
   Toggle, CircularProgress, humanSize, timeAgo, ACCENTS, applyAccent,
@@ -3663,6 +3664,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         {nav.name === 'app-contentplan' && (
           <ContentPlanApp onBack={() => setNav({ name: 'apps' })}/>
         )}
+        {nav.name === 'app-lists' && (
+          <ListsApp onBack={() => setNav({ name: 'apps' })}/>
+        )}
         {nav.name === 'activity' && (
           <ActivityView refreshTick={refreshTick}/>
         )}
@@ -4567,6 +4571,35 @@ function AppsView({ user, onOpenApp }) {
     if (isAdmin) return;
     API.companies().then((d) => setHasCompany((d.companies || []).length > 0)).catch(() => setHasCompany(false));
   }, [isAdmin]);
+  // Pins are per ACCOUNT (app_settings ns='apps'), not per browser, so they
+  // follow the user to another device and don't leak between colleagues
+  // sharing a machine.
+  const [pinned, setPinned] = useState([]);
+  const [pinsLoaded, setPinsLoaded] = useState(false);
+  useEffect(() => {
+    API.getSettings('apps')
+      .then((d) => setPinned(Array.isArray(d?.settings?.pinned) ? d.settings.pinned : []))
+      .catch(() => {})
+      .finally(() => setPinsLoaded(true));
+  }, []);
+  const savePins = (next) => {
+    setPinned(next);                                  // optimistic
+    API.saveSettings('apps', { pinned: next }).catch((e) => toast(e.message, 'error'));
+  };
+  const togglePin = (id) => {
+    const next = pinned.includes(id) ? pinned.filter((x) => x !== id) : [...pinned, id];
+    savePins(next);
+    toast(pinned.includes(id) ? 'Losgelöst' : 'Angepinnt', 'success');
+  };
+  const movePin = (id, dir) => {
+    const i = pinned.indexOf(id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= pinned.length) return;
+    const next = [...pinned];
+    [next[i], next[j]] = [next[j], next[i]];
+    savePins(next);
+  };
+
   const gatedIds = new Set(['accounting', 'contacts']);
   const live = [
     { id: 'tasks',    label: 'Tasks',    desc: 'Aufgaben & To-dos', icon: Ic.checkSquare(26), grad: 'linear-gradient(135deg, oklch(0.72 0.18 282), oklch(0.64 0.17 248))' },
@@ -4585,10 +4618,29 @@ function AppsView({ user, onOpenApp }) {
     { id: 'snippets',   label: 'Textbausteine', desc: 'Vorlagen für Mails',     icon: Ic.fileGen(26), grad: 'linear-gradient(135deg, oklch(0.7 0.14 235), oklch(0.6 0.13 260))' },
     { id: 'content',    label: 'Content',      desc: 'TikTok & Reels planen',   icon: Ic.camera(26),  grad: 'linear-gradient(135deg, oklch(0.68 0.2 350), oklch(0.6 0.2 300))' },
     { id: 'contentplan', label: 'Content Plan', desc: 'Redaktionsplan & Freigabe', icon: Ic.calendar(26), grad: 'linear-gradient(135deg, oklch(0.7 0.17 60), oklch(0.62 0.19 25))' },
+    { id: 'lists',      label: 'Listen',       desc: 'Gemeinsame Checklisten', icon: Ic.checkSquare(26), grad: 'linear-gradient(135deg, oklch(0.72 0.15 130), oklch(0.64 0.16 160))' },
   ].filter((a) => !gatedIds.has(a.id) || isAdmin || hasCompany);
   const soon = [];
-  const Tile = ({ a, disabled }) => (
-    <button disabled={disabled} onClick={disabled ? undefined : () => onOpenApp(a.id)} style={{
+  // Pinned first, in the order the user arranged them; everything else keeps
+  // the natural order. Ids of apps that no longer exist are simply ignored.
+  const pinnedApps = pinned.map((id) => live.find((a) => a.id === id)).filter(Boolean);
+  const restApps = live.filter((a) => !pinned.includes(a.id));
+  const Tile = ({ a, disabled, isPinned, rank }) => (
+    <button disabled={disabled} onClick={disabled ? undefined : () => onOpenApp(a.id)}
+      onContextMenu={(e) => {
+        if (disabled) return;
+        e.preventDefault();
+        openContextMenu(e.clientX, e.clientY, [
+          { label: 'Öffnen', icon: Ic.eye(15), onClick: () => onOpenApp(a.id) },
+          { separator: true },
+          isPinned
+            ? { label: 'Nicht mehr anpinnen', icon: Ic.pin(15), onClick: () => togglePin(a.id) }
+            : { label: 'Anpinnen', icon: Ic.pin(15), onClick: () => togglePin(a.id) },
+          ...(isPinned && rank > 0 ? [{ label: 'Nach vorne', icon: Ic.chevronU(15), onClick: () => movePin(a.id, -1) }] : []),
+          ...(isPinned && rank < pinned.length - 1 ? [{ label: 'Nach hinten', icon: Ic.chevronD(15), onClick: () => movePin(a.id, 1) }] : []),
+        ]);
+      }}
+      style={{
       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '6px 4px',
       background: 'none', border: 'none', cursor: disabled ? 'default' : 'pointer', fontFamily: 'inherit',
       opacity: disabled ? 0.5 : 1, position: 'relative',
@@ -4602,6 +4654,9 @@ function AppsView({ user, onOpenApp }) {
         transition: 'transform .22s cubic-bezier(.2,.8,.2,1)', position: 'relative',
       }}>
         {a.icon}
+        {isPinned && (
+          <span title="Angepinnt" style={{ position: 'absolute', top: -5, right: -5, width: 20, height: 20, borderRadius: '50%', background: 'var(--surface)', border: '1px solid var(--border-hi)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Ic.pin(11)}</span>
+        )}
         {disabled && (
           <span style={{ position: 'absolute', top: -6, right: -6, fontSize: 8.5, fontWeight: 700, letterSpacing: 0.4, padding: '2px 6px', borderRadius: 999, background: 'var(--surface)', color: 'var(--fg-3)', border: '1px solid var(--border-hi)', textTransform: 'uppercase' }}>Bald</span>
         )}
@@ -4616,9 +4671,20 @@ function AppsView({ user, onOpenApp }) {
     <>
       <TopBar crumbs={['Apps']}/>
       <div data-scroll style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px' }}>
-        <SectionHeader title="Apps"/>
+        {pinnedApps.length > 0 && <>
+          <SectionHeader title="Angepinnte Apps"/>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 22, marginBottom: 34 }}>
+            {pinnedApps.map((a, i) => <Tile key={a.id} a={a} isPinned rank={i}/>)}
+          </div>
+        </>}
+        <SectionHeader title={pinnedApps.length > 0 ? 'Alle Apps' : 'Apps'}/>
+        {pinsLoaded && pinnedApps.length === 0 && (
+          <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: -8, marginBottom: 14 }}>
+            Tipp: Rechtsklick auf eine App → „Anpinnen", dann steht sie ganz oben.
+          </div>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 22, marginBottom: 40 }}>
-          {live.map((a) => <Tile key={a.id} a={a}/>)}
+          {restApps.map((a) => <Tile key={a.id} a={a} isPinned={false}/>)}
         </div>
         {soon.length > 0 && <>
           <SectionHeader title="In Entwicklung"/>
