@@ -39,6 +39,7 @@ final class AuthRoutes
         // Public: serve a user's logo for share/upload-page branding.
         $app->get('/api/branding/logo/{uid}',   [self::class, 'serveLogo']);
         $app->get('/api/branding',              [self::class, 'branding']);
+        $app->put('/api/branding',              [self::class, 'saveBranding'])->add(new AuthMiddleware());
     }
 
     /**
@@ -414,7 +415,12 @@ final class AuthRoutes
                 . 'ORDER BY is_primary DESC, id ASC LIMIT 1'
             )->fetch() ?: null;
         }
-        if (!$row) return Json::ok($res, ['has_logo' => false, 'user_id' => null, 'name' => null, 'logo_v' => null]);
+        if (!$row) {
+            return Json::ok($res, [
+                'has_logo' => false, 'user_id' => null, 'name' => null, 'logo_v' => null,
+                'site_name' => \Nyza\Brand::name(), 'description' => \Nyza\Brand::description(),
+            ]);
+        }
 
         $logoV = null;
         if (!empty($row['logo_path'])) {
@@ -422,11 +428,46 @@ final class AuthRoutes
             $logoV = is_file($abs) ? (string)@filemtime($abs) : null;
         }
         return Json::ok($res, [
-            'user_id'  => (int)$row['id'],
-            'name'     => $row['name'],
-            'has_logo' => $logoV !== null,
-            'logo_v'   => $logoV,
+            'user_id'     => (int)$row['id'],
+            'name'        => $row['name'],
+            'has_logo'    => $logoV !== null,
+            'logo_v'      => $logoV,
+            'site_name'   => \Nyza\Brand::name(),
+            'description' => \Nyza\Brand::description(),
+            'is_default'  => \Nyza\Brand::name() === \Nyza\Brand::DEFAULT_NAME,
         ]);
+    }
+
+    /**
+     * Change the installation's name/description — what a WhatsApp link preview
+     * and the browser tab show. Installation-wide, so Hauptadmin only; it is
+     * stored on the owner's app_settings row, which is where Brand reads it.
+     */
+    public static function saveBranding(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        if (!\Nyza\WorkspaceContext::isPrimary($uid)) {
+            return Json::err($res, 'Nur der Hauptadmin kann die Marke ändern', 403, 'forbidden');
+        }
+        $owner = \Nyza\Brand::ownerId();
+        if ($owner === null) return Json::err($res, 'Kein Inhaber gefunden', 404);
+
+        $b = (array)$req->getParsedBody();
+        $clean = static function ($v, int $max): string {
+            $v = trim((string)$v);
+            return mb_substr(preg_replace('/\s+/u', ' ', $v) ?? '', 0, $max);
+        };
+        $data = [
+            'site_name'   => $clean($b['site_name'] ?? '', 60),
+            'short_name'  => $clean($b['short_name'] ?? '', 30),
+            'description' => $clean($b['description'] ?? '', 200),
+        ];
+        Database::pdo()->prepare(
+            'INSERT INTO app_settings (user_id, ns, data) VALUES (?, ?, ?) '
+            . 'ON DUPLICATE KEY UPDATE data = VALUES(data)'
+        )->execute([$owner, 'branding', json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
+
+        return Json::ok($res, ['branding' => $data]);
     }
 
     public static function serveLogo(Request $req, Response $res, array $args): Response

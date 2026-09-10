@@ -7449,6 +7449,69 @@ const TEXT_SUGGESTIONS = {
   invoice_footer: 'Bitte überweisen Sie den Rechnungsbetrag unter Angabe der Rechnungsnummer innerhalb der angegebenen Zahlungsfrist auf das oben genannte Konto. Bei Fragen stehen wir Ihnen gerne zur Verfügung.',
 };
 
+
+/**
+ * Installation-wide brand: the name a WhatsApp/Signal link preview shows, the
+ * browser tab title and the PWA manifest. Hauptadmin only — it applies to every
+ * Kontogruppe on this domain, not just the current one.
+ */
+function BrandingSection() {
+  const [siteName, setSiteName] = useState('');
+  const [shortName, setShortName] = useState('');
+  const [desc, setDesc] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    API.branding().then((d) => {
+      setSiteName(d.is_default ? '' : (d.site_name || ''));
+      setDesc(d.description || '');
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+  }, []);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await API.saveBranding({ site_name: siteName.trim(), short_name: shortName.trim(), description: desc.trim() });
+      toast('Gespeichert — neue Links zeigen sofort den neuen Namen', 'success');
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const f = { height: 42, padding: '0 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)', outline: 'none', fontSize: 14, color: 'var(--fg)', fontFamily: 'inherit', width: '100%' };
+  return (
+    <div style={{ borderRadius: 'var(--r-lg)', background: 'var(--surface)', border: '1px solid var(--border)', padding: '18px 20px' }}>
+      <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 14, lineHeight: 1.5 }}>
+        Dieser Name erscheint in der Vorschau, wenn jemand einen Link von dir in WhatsApp, Signal oder
+        einer E-Mail teilt — und im Browser-Tab. Leer lassen für „Nyza Cloud".
+      </div>
+      {!loaded ? <div style={{ color: 'var(--fg-3)' }}>{Ic.loader(18)}</div> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <label style={{ flex: '2 1 220px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Name</span>
+              <input value={siteName} onChange={(e) => setSiteName(e.target.value)} placeholder="Nyza Cloud" style={f}/>
+            </label>
+            <label style={{ flex: '1 1 140px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Kurzname (Handy-Icon)</span>
+              <input value={shortName} onChange={(e) => setShortName(e.target.value)} placeholder="automatisch" style={f}/>
+            </label>
+          </div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Beschreibung</span>
+            <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Kurzer Satz unter dem Namen in der Vorschau" style={f}/>
+          </label>
+          <div style={{ padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 10.5, color: 'var(--fg-4)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Vorschau</div>
+            <div style={{ fontSize: 13.5, fontWeight: 600 }}>Beispiel-Ordner · {siteName.trim() || 'Nyza Cloud'}</div>
+            <div style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 2 }}>Geteilt über {siteName.trim() || 'Nyza Cloud'}</div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Btn variant="primary" disabled={busy} icon={busy ? Ic.loader(15) : Ic.check(15)} onClick={save}>Speichern</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   const [c, setC] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -7532,6 +7595,8 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
 
           {isAdmin && (<>
             {user?.is_primary && (<>
+              <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Marke &amp; Link-Vorschau · Hauptadmin</div>
+              <div style={{ marginBottom: 28 }}><BrandingSection/></div>
               <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>Kontogruppen · Hauptadmin</div>
               <div style={{ marginBottom: 28 }}><WorkspacesAdminSection/></div>
             </>)}

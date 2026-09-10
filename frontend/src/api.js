@@ -170,6 +170,7 @@ export const API = {
   uploadLogo:     (file) => upload('/api/auth/logo', file, {}),
   deleteLogo:     () => request('/api/auth/logo', { method: 'DELETE' }),
   branding:       (u) => request('/api/branding' + (u ? '?u=' + u : ''), { skipAuth: true }),
+  saveBranding:   (body) => request('/api/branding', { method: 'PUT', body }),
   logoUrl:        (uid, v) => url('/api/branding/logo/' + uid) + (v ? '?v=' + encodeURIComponent(v) : ''),
 
   // Folders

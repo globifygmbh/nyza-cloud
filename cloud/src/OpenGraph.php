@@ -6,7 +6,8 @@ namespace Nyza;
 /**
  * Server-rendered Open Graph tags for public link pages so chat apps
  * (WhatsApp, Signal, …) show a meaningful preview — the shared item's name
- * instead of a generic title, plus a cover image for galleries.
+ * instead of a generic title, plus a cover image for galleries. The site name
+ * shown alongside it comes from Brand (configurable in Einstellungen).
  */
 final class OpenGraph
 {
@@ -25,7 +26,8 @@ final class OpenGraph
         if (!preg_match('#^(s|u|f|sign|portal)/([A-Za-z0-9_-]+)#', $path, $m)) return '';
         $kind = $m[1]; $token = $m[2];
 
-        $title = null; $desc = 'Geteilt über Nyza Cloud'; $image = null;
+        $brand = Brand::name();
+        $title = null; $desc = 'Geteilt über ' . $brand; $image = null;
         try {
             $pdo = Database::pdo();
             if ($kind === 's') {
@@ -52,24 +54,24 @@ final class OpenGraph
                 }
             } elseif ($kind === 'u') {
                 $s = $pdo->prepare('SELECT title FROM upload_links WHERE token = ? LIMIT 1'); $s->execute([$token]);
-                $title = ($s->fetch()['title'] ?? null); $desc = 'Dateien hochladen · Nyza Cloud';
+                $title = ($s->fetch()['title'] ?? null); $desc = 'Dateien hochladen · ' . $brand;
             } elseif ($kind === 'f') {
                 $s = $pdo->prepare('SELECT title FROM forms WHERE token = ? AND active = 1 LIMIT 1'); $s->execute([$token]);
-                $title = ($s->fetch()['title'] ?? null); $desc = 'Formular · Nyza Cloud';
+                $title = ($s->fetch()['title'] ?? null); $desc = 'Formular · ' . $brand;
             } elseif ($kind === 'sign') {
                 $s = $pdo->prepare('SELECT title FROM signature_requests WHERE token = ? LIMIT 1'); $s->execute([$token]);
-                $title = ($s->fetch()['title'] ?? null); $desc = 'Zur Unterschrift · Nyza Cloud';
+                $title = ($s->fetch()['title'] ?? null); $desc = 'Zur Unterschrift · ' . $brand;
             } elseif ($kind === 'portal') {
                 $s = $pdo->prepare('SELECT name FROM portals WHERE token = ? LIMIT 1'); $s->execute([$token]);
-                $title = ($s->fetch()['name'] ?? null); $desc = 'Kundenportal · Nyza Cloud';
+                $title = ($s->fetch()['name'] ?? null); $desc = 'Kundenportal · ' . $brand;
             }
         } catch (\Throwable $e) { return ''; }
 
         if ($title === null || $title === '') return '';
         $e = static fn($s) => htmlspecialchars((string)$s, ENT_QUOTES);
-        $out = '<title>' . $e($title) . ' · Nyza Cloud</title>'
+        $out = '<title>' . $e($title) . ' · ' . $e($brand) . '</title>'
              . '<meta name="description" content="' . $e($desc) . '">'
-             . '<meta property="og:site_name" content="Nyza Cloud">'
+             . '<meta property="og:site_name" content="' . $e($brand) . '">'
              . '<meta property="og:type" content="website">'
              . '<meta property="og:title" content="' . $e($title) . '">'
              . '<meta property="og:description" content="' . $e($desc) . '">'

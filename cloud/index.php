@@ -119,6 +119,20 @@ $serveSpa = function ($res, $extraHead = '') use ($assetsRoot, $basePath) {
     if ($extraHead !== '') {
         $html = preg_replace('#<title>.*?</title>#is', '', $html, 1);
         $html = preg_replace('#<meta\s+name=["\']description["\'][^>]*>#i', '', $html, 1);
+    } else {
+        // No per-link preview: still swap the build-time "Nyza Cloud" for the
+        // configured brand, so the tab title and any generic link preview match
+        // what the owner set in Einstellungen.
+        $brand = \Nyza\Brand::name();
+        $desc = \Nyza\Brand::description();
+        $enc = static fn($v) => htmlspecialchars((string)$v, ENT_QUOTES);
+        $html = preg_replace('#<title>.*?</title>#is', '<title>' . $enc($brand) . '</title>', $html, 1);
+        $html = preg_replace(
+            '#<meta\s+name=["\']description["\'][^>]*>#i',
+            '<meta name="description" content="' . $enc($brand . ' — ' . $desc) . '">',
+            $html,
+            1
+        );
     }
     $hint = '<script>window.NYZA_BASE=' . json_encode($basePath ?: '') . ';</script>' . $extraHead;
     $html = preg_replace('/<head([^>]*)>/i', '<head$1>' . $hint, $html, 1);
@@ -148,14 +162,14 @@ $pwaBase = ($basePath === '' || $basePath === '/') ? '' : $basePath;
 
 $app->get('/manifest.webmanifest', function ($req, $res) use ($pwaBase) {
     $manifest = [
-        'name' => 'Nyza Cloud',
-        'short_name' => 'Nyza',
+        'name' => \Nyza\Brand::name(),
+        'short_name' => \Nyza\Brand::shortName(),
         'start_url' => ($pwaBase ?: '') . '/',
         'scope' => ($pwaBase ?: '') . '/',
         'display' => 'standalone',
         'background_color' => '#0B0B0F',
         'theme_color' => '#0B0B0F',
-        'description' => 'Premium Cloud-Storage mit Upload-Links.',
+        'description' => \Nyza\Brand::description(),
         'icons' => [
             ['src' => ($pwaBase ?: '') . '/icon.svg', 'sizes' => 'any', 'type' => 'image/svg+xml', 'purpose' => 'any maskable'],
         ],
