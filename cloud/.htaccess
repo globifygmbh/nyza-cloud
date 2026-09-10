@@ -18,7 +18,10 @@ RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^ index.php [QSA,L]
 
 # Direkten Zugriff auf private Verzeichnisse blockieren.
-RedirectMatch 404 (?i)/(src|vendor|migrations|storage|config\.php|composer\.(json|lock))(/|$)
+# RECOVERY.txt haelt waehrend einer Passwort-Wiederherstellung ein Geheimwort —
+# es darf nie ueber HTTP lesbar sein, sonst koennte es jeder abrufen und damit
+# selbst zuruecksetzen.
+RedirectMatch 404 (?i)/(src|vendor|migrations|storage|config\.php|RECOVERY\.txt|composer\.(json|lock))(/|$)
 
 # Long-cache für gehashte Assets von Vite
 <IfModule mod_expires.c>

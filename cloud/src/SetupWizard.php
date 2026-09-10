@@ -34,13 +34,19 @@ final class SetupWizard
         // creation). Lock it behind a valid admin token so an unauthenticated
         // visitor can't wipe data or hijack the install. During initial setup
         // (no config / no admin yet) it stays open so it can be completed.
-        if (is_file($this->cloudDir . '/config.php') && $this->isProvisioned() && !$this->isAuthedAdmin()) {
+        $step = $_GET['step'] ?? 'checks';
+        $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+
+        // The recovery step is the one exception to the lock: it is what you
+        // reach for precisely BECAUSE you can't log in any more. It proves
+        // ownership by requiring a secret written into a file in cloud/, which
+        // only someone with FTP/file access to the server can create.
+        $isRecovery = ($step === 'recover');
+
+        if (!$isRecovery && is_file($this->cloudDir . '/config.php') && $this->isProvisioned() && !$this->isAuthedAdmin()) {
             $this->renderLocked();
             return;
         }
-
-        $step = $_GET['step'] ?? 'checks';
-        $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
 
         if ($method === 'POST' && $step === 'config') {
             $this->processConfigForm();
@@ -54,12 +60,17 @@ final class SetupWizard
             $this->processResetForm();
             return;
         }
+        if ($method === 'POST' && $step === 'recover') {
+            $this->processRecoverForm();
+            return;
+        }
 
         switch ($step) {
             case 'config':  $this->renderConfigForm(); break;
             case 'admin':   $this->renderAdminForm(); break;
             case 'finish':  $this->renderFinish(); break;
             case 'reset':   $this->renderResetConfirm(); break;
+            case 'recover': $this->renderRecoverForm(); break;
             case 'checks':
             default:        $this->renderChecks(); break;
         }
@@ -126,6 +137,8 @@ final class SetupWizard
             echo '<p class="lede">Diese Installation ist bereits eingerichtet. Der Setup-Wizard ist aus Sicherheitsgründen gesperrt und nur als angemeldeter Admin erreichbar.</p>';
             echo '<div class="warn">Zum Entsperren musst du in der App eingeloggt sein. Klicke unten — dein Login-Token wird dann mitgegeben.</div>';
             echo '<div class="actions" style="margin-top:20px"><a id="unlock" class="btn btn-primary" href="#">Als Admin entsperren</a> <a class="btn" href="./">Zur App</a></div>';
+            echo '<p class="muted" style="margin-top:24px;font-size:13px">Passwort vergessen und kein Login mehr möglich? '
+               . '<a href="' . $this->link('recover') . '">Zugang wiederherstellen</a> (benötigt FTP-Zugriff auf den Server).</p>';
             echo "<script>(function(){var t=null;try{t=localStorage.getItem('nyza.token');}catch(e){}"
                . "var u=document.getElementById('unlock');var base=location.pathname.replace(/setup\\.php$/,'');"
                . "if(t){u.href=base+'?setup=1&token='+encodeURIComponent(t);}else{u.textContent='Bitte zuerst in der App einloggen';u.href='./';}})();</script>";
@@ -505,6 +518,129 @@ final class SetupWizard
         // The plaintext password is passed to the finish page via a one-shot
         // server-side render (no redirect) so it never appears in URLs/history.
         $this->renderFinishWithCredentials($email, $password);
+    }
+
+    // ───── Zugang wiederherstellen (Passwort vergessen) ──────────────────
+    //
+    // Recovering a lost admin password must not be possible for a random
+    // visitor, but it also can't require a login. The proof of ownership is
+    // filesystem access: the operator writes a secret of their choosing into
+    // cloud/RECOVERY.txt and types the same secret here. Anyone who can do that
+    // already controls the installation, so this grants nothing extra — and the
+    // file is deleted as soon as it has been used.
+
+    private const RECOVERY_FILE    = 'RECOVERY.txt';
+    private const RECOVERY_MIN     = 12;
+    private const RECOVERY_MAX_AGE = 1800;   // 30 minutes
+
+    /**
+     * Secret stored in cloud/RECOVERY.txt — but only while the file is fresh.
+     *
+     * .htaccess denies the file over HTTP, yet a server that ignores it (nginx,
+     * a misconfigured host) would expose the secret. The freshness window keeps
+     * that from being a standing key: a file left behind stops working on its
+     * own, so recovery is only ever open for the minutes the operator is
+     * actually doing it.
+     */
+    private function recoverySecret(): ?string
+    {
+        $path = $this->cloudDir . '/' . self::RECOVERY_FILE;
+        if (!is_file($path)) return null;
+        $age = time() - (int)@filemtime($path);
+        if ($age > self::RECOVERY_MAX_AGE) return null;
+        $v = trim((string)@file_get_contents($path));
+        return (strlen($v) >= self::RECOVERY_MIN) ? $v : null;
+    }
+
+    private function renderRecoverForm(?string $error = null, ?string $ok = null): void
+    {
+        $secret = $this->recoverySecret();
+        $file = self::RECOVERY_FILE;
+        $min = self::RECOVERY_MIN;
+        $this->page('Zugang wiederherstellen', function () use ($error, $ok, $secret, $file, $min) {
+            echo '<h1>Zugang wiederherstellen</h1>';
+            if ($ok) {
+                echo '<div class="ok-box">✓ ' . htmlspecialchars($ok) . '</div>';
+                echo '<div class="actions"><a href="./" class="btn btn-primary">Zum Login →</a></div>';
+                return;
+            }
+            echo '<p class="lede">Für den Fall, dass niemand mehr in die App kommt. Der Nachweis läuft über den '
+               . 'Datei-Zugriff auf den Server — wer den hat, kontrolliert die Installation ohnehin.</p>';
+            if ($error) echo '<div class="err">✗ ' . htmlspecialchars($error) . '</div>';
+
+            if (!$secret) {
+                echo '<div class="warn"><b>Schritt 1:</b> Lege per FTP im Ordner <code>cloud/</code> eine Datei '
+                   . '<code>' . htmlspecialchars($file) . '</code> an und schreibe ein selbst ausgedachtes '
+                   . 'Geheimwort hinein (mindestens ' . (int)$min . ' Zeichen, z. B. eine zufällige Zeichenfolge). '
+                   . 'Danach diese Seite neu laden. Die Datei gilt nur 30 Minuten — falls sie älter ist, '
+                   . 'einmal neu speichern.</div>';
+                echo '<div class="actions"><a href="" class="btn btn-primary">Erneut prüfen</a> '
+                   . '<a href="./" class="btn">Abbrechen</a></div>';
+                return;
+            }
+
+            echo '<div class="ok-box">✓ Datei <code>' . htmlspecialchars($file) . '</code> gefunden.</div>';
+            echo '<p class="lede"><b>Schritt 2:</b> Geheimwort aus der Datei eingeben und neues Passwort setzen. '
+               . 'Die Datei wird danach automatisch gelöscht.</p>';
+            echo '<form method="post" action="' . $this->link('recover') . '" class="form">';
+            $this->field('secret', 'Geheimwort aus der Datei', '', 'exakt der Inhalt von ' . $file);
+            $this->field('email', 'E-Mail des Accounts', '', 'leer lassen für den Hauptadmin', 'email');
+            $this->field('password', 'Neues Passwort', '', 'mindestens 10 Zeichen', 'password');
+            echo '<div class="actions"><button class="btn btn-primary" type="submit">Passwort setzen</button> '
+               . '<a href="./" class="btn">Abbrechen</a></div>';
+            echo '</form>';
+        });
+    }
+
+    private function processRecoverForm(): void
+    {
+        $secret = $this->recoverySecret();
+        if ($secret === null) {
+            $this->renderRecoverForm('Die Datei ' . self::RECOVERY_FILE . ' fehlt, ist älter als 30 Minuten, '
+                . 'oder das Geheimwort ist zu kurz.');
+            return;
+        }
+        $given = trim((string)($_POST['secret'] ?? ''));
+        // hash_equals: constant-time, so the secret can't be guessed by timing.
+        if ($given === '' || !hash_equals($secret, $given)) {
+            $this->renderRecoverForm('Geheimwort stimmt nicht mit dem Dateiinhalt überein.');
+            return;
+        }
+        $password = (string)($_POST['password'] ?? '');
+        if (strlen($password) < 10) {
+            $this->renderRecoverForm('Neues Passwort muss mindestens 10 Zeichen haben.');
+            return;
+        }
+        $email = trim((string)($_POST['email'] ?? ''));
+
+        try {
+            Config::load($this->cloudDir . '/config.php');
+            $pdo = Database::pdo();
+            if ($email !== '') {
+                $s = $pdo->prepare('SELECT id FROM users WHERE email = ?');
+                $s->execute([$email]);
+            } else {
+                $s = $pdo->query('SELECT id FROM users ORDER BY is_primary DESC, id ASC LIMIT 1');
+            }
+            $row = $s->fetch();
+            if (!$row) { $this->renderRecoverForm('Kein passender Account gefunden.'); return; }
+            $uid = (int)$row['id'];
+
+            // Also clear 2FA and re-grant owner rights: locked out is locked out,
+            // and a half-recovered account that still demands a TOTP code from a
+            // lost phone helps nobody.
+            $pdo->prepare(
+                "UPDATE users SET password_hash = ?, role = 'admin', is_primary = 1, active = 1, "
+                . 'totp_enabled = 0, totp_secret = NULL, twofa_recovery = NULL WHERE id = ?'
+            )->execute([password_hash($password, PASSWORD_BCRYPT), $uid]);
+        } catch (\Throwable $e) {
+            $this->renderRecoverForm('Datenbank-Fehler: ' . $e->getMessage());
+            return;
+        }
+
+        @unlink($this->cloudDir . '/' . self::RECOVERY_FILE);
+        $this->renderRecoverForm(null, 'Passwort gesetzt und Zwei-Faktor zurückgesetzt. Die Datei '
+            . self::RECOVERY_FILE . ' wurde gelöscht — du kannst dich jetzt anmelden.');
     }
 
     // ───── DB-Reset (Notausgang bei Migration-Fehlern) ───────────────────
