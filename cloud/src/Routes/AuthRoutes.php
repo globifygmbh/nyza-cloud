@@ -79,6 +79,25 @@ final class AuthRoutes
         ];
     }
 
+    /**
+     * Guarantee the install has exactly one owner. An installation set up on a
+     * fresh database ended up with no admin at all: migrations 029/057 grant
+     * admin + is_primary to existing rows, but on a new database they run
+     * before the setup wizard creates the first account, so nobody got them.
+     *
+     * Only ever fires when NO primary admin exists, so a healthy install (and
+     * one where the owner deliberately demoted others) is left untouched.
+     */
+    private static function ensurePrimaryAdmin(\PDO $pdo): void
+    {
+        $row = $pdo->query('SELECT COUNT(*) AS c FROM users WHERE is_primary = 1')->fetch();
+        if ((int)($row['c'] ?? 0) > 0) return;
+        $first = $pdo->query('SELECT MIN(id) AS id FROM users')->fetch();
+        if (!$first || $first['id'] === null) return;
+        $pdo->prepare("UPDATE users SET is_primary = 1, role = 'admin', active = 1 WHERE id = ?")
+            ->execute([(int)$first['id']]);
+    }
+
     public static function login(Request $req, Response $res): Response
     {
         // Brute-force guard: 10 attempts / 5 min per IP.
@@ -90,6 +109,7 @@ final class AuthRoutes
         $password = (string)($b['password'] ?? '');
 
         $pdo = Database::pdo();
+        self::ensurePrimaryAdmin($pdo);
         $stmt = $pdo->prepare('SELECT id, email, password_hash, name, accent, logo_path, totp_enabled, role, active, is_primary FROM users WHERE email = ?');
         $stmt->execute([$email]);
         $u = $stmt->fetch();

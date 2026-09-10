@@ -472,7 +472,14 @@ final class SetupWizard
                 $this->renderAdminForm('Diese E-Mail existiert bereits in der Datenbank.', $email);
                 return;
             }
-            $ins = $pdo->prepare('INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)');
+            // Explicitly admin + primary. On a FRESH database the migrations
+            // that hand out those flags (029 role, 057 is_primary) run before
+            // this INSERT, so they match zero rows and the column defaults
+            // ('user', 0) would silently leave the owner without any rights —
+            // no user management, no Kontogruppen, no self-updater.
+            $ins = $pdo->prepare(
+                "INSERT INTO users (email, password_hash, name, role, is_primary) VALUES (?, ?, ?, 'admin', 1)"
+            );
             $ins->execute([$email, $hash, $name]);
             $uid = (int)$pdo->lastInsertId();
             // Seed: a default folder so the admin lands somewhere on first login.
