@@ -38,6 +38,7 @@ final class AuthRoutes
         $app->get('/api/users',                 [self::class, 'workspaceUsers'])->add(new AuthMiddleware());
         // Public: serve a user's logo for share/upload-page branding.
         $app->get('/api/branding/logo/{uid}',   [self::class, 'serveLogo']);
+        $app->get('/api/branding',              [self::class, 'branding']);
     }
 
     /**
@@ -387,6 +388,45 @@ final class AuthRoutes
         if ($u && $u['logo_path']) Storage::deleteRel($u['logo_path']);
         $pdo->prepare('UPDATE users SET logo_path = NULL WHERE id = ?')->execute([$uid]);
         return Json::ok($res, ['ok' => true]);
+    }
+
+    /**
+     * Public branding for pages nobody is logged in on — the login screen, the
+     * password prompts on share/portal/content-plan links, and so on. Answers
+     * with the install owner's logo (the Hauptadmin, falling back to the oldest
+     * account), or a specific user's via ?u= when the page knows whose link it
+     * is showing.
+     */
+    public static function branding(Request $req, Response $res): Response
+    {
+        $pdo = Database::pdo();
+        $uid = (int)($req->getQueryParams()['u'] ?? 0);
+
+        $row = null;
+        if ($uid > 0) {
+            $s = $pdo->prepare('SELECT id, name, logo_path FROM users WHERE id = ? AND active = 1');
+            $s->execute([$uid]);
+            $row = $s->fetch() ?: null;
+        }
+        if (!$row) {
+            $row = $pdo->query(
+                'SELECT id, name, logo_path FROM users WHERE active = 1 '
+                . 'ORDER BY is_primary DESC, id ASC LIMIT 1'
+            )->fetch() ?: null;
+        }
+        if (!$row) return Json::ok($res, ['has_logo' => false, 'user_id' => null, 'name' => null, 'logo_v' => null]);
+
+        $logoV = null;
+        if (!empty($row['logo_path'])) {
+            $abs = Storage::abs((string)$row['logo_path']);
+            $logoV = is_file($abs) ? (string)@filemtime($abs) : null;
+        }
+        return Json::ok($res, [
+            'user_id'  => (int)$row['id'],
+            'name'     => $row['name'],
+            'has_logo' => $logoV !== null,
+            'logo_v'   => $logoV,
+        ]);
     }
 
     public static function serveLogo(Request $req, Response $res, array $args): Response

@@ -11,7 +11,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { API } from './api.js';
-import { Ic, Glass, Btn, IconBtn, NyzaWordmark, humanSize } from './system.jsx';
+import { Ic, Glass, Btn, IconBtn, NyzaWordmark, BrandMark, humanSize } from './system.jsx';
 import { toast } from './toast.jsx';
 import { confirmDialog } from './overlays.jsx';
 
@@ -874,7 +874,7 @@ export function PublicContentPlanPage({ token }) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <Glass style={{ padding: 28, borderRadius: 'var(--r-xl)', width: '100%', maxWidth: 380 }}>
-          <div style={{ marginBottom: 14 }}><NyzaWordmark size={16}/></div>
+          <div style={{ marginBottom: 14 }}><BrandMark size={16}/></div>
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Contentplan geschützt</div>
           <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginBottom: 14 }}>Bitte das Passwort eingeben, das du erhalten hast.</div>
           <input type="password" value={pwInput} autoFocus onChange={(e) => setPwInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && unlock()} placeholder="Passwort" style={{ ...fld, marginBottom: 10 }}/>
@@ -936,7 +936,7 @@ export function PublicContentPlanPage({ token }) {
         })}
       </div>
 
-      <div style={{ marginTop: 40, textAlign: 'center', color: 'var(--fg-4)', fontSize: 11.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><NyzaWordmark size={13}/> Contentplan</div>
+      <div style={{ marginTop: 40, textAlign: 'center', color: 'var(--fg-4)', fontSize: 11.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><BrandMark size={13}/> Contentplan</div>
 
       {open && <PublicItemModal token={token} pw={pw} item={open} clientName={data.client} onClose={() => setOpen(null)} onUpdated={(it) => { updated(it); setOpen(it); }}/>}
     </div>

@@ -6,7 +6,7 @@ import { API, BASE, getToken, setToken, getCompany, setCompany, reconcileCompany
 import { ContentPlanApp } from './contentplan.jsx';
 import { ListsApp } from './lists.jsx';
 import {
-  Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
+  Ic, Glass, Btn, IconBtn, NyzaWordmark, BrandMark, FileIcon, PhotoPlaceholder,
   Toggle, CircularProgress, humanSize, timeAgo, ACCENTS, applyAccent,
 } from './system.jsx';
 import { toast } from './toast.jsx';
@@ -637,7 +637,7 @@ export function AuthScreen({ onAuth }) {
     <div style={{ minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, position: 'relative', zIndex: 1 }}>
       <Glass style={{ width: '100%', maxWidth: 420, borderRadius: 'var(--r-xl)', padding: 36 }}>
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 28 }}>
-          <NyzaWordmark size={20}/>
+          <BrandMark size={20}/>
         </div>
         {!challenge ? (
           <>
@@ -1295,7 +1295,7 @@ function TopBar({ crumbs = ['Meine Dateien'], view, onView, onSearch, search, so
           style={{ flexShrink: 0, border: '1px solid var(--border)', borderRadius: 999 }}>{Ic.chevronL(17)}</IconBtn>
       )}
       <div className="nyza-brand-m" style={{ display: 'none', alignItems: 'center', minWidth: 0 }}>
-        <NyzaWordmark size={15}/>
+        <BrandMark size={15}/>
       </div>
       <div className={'nyza-crumbs' + (crumbs.length <= 1 ? ' nyza-crumbs-single' : '')} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, minWidth: 0, overflowX: 'auto' }}>
         {crumbs.map((c, i) => {

@@ -1,5 +1,6 @@
-// Nyza — design system primitives. Pure presentational components — no API,
-// no state beyond local UI hover. Imported by app.jsx and pubpages.jsx.
+// Nyza — design system primitives. Presentational components; the one
+// exception is <BrandMark/>, which looks up the install's logo (lazily, and
+// cached) because every public surface needs it. Imported across the app.
 
 import React from 'react';
 
@@ -160,6 +161,48 @@ export function NyzaWordmark({ size = 18 }) {
       }}>nyza<span style={{ opacity: 0.5, fontWeight: 400 }}> · cloud</span></span>
     </div>
   );
+}
+
+
+// Cached across mounts: every public page renders a brand mark, and they must
+// not each fire their own request.
+let _brandCache = null;
+let _brandPromise = null;
+function loadBrand(uid) {
+  const key = uid || 'default';
+  if (_brandCache && _brandCache.key === key) return Promise.resolve(_brandCache.value);
+  if (_brandPromise && _brandPromise.key === key) return _brandPromise.p;
+  const p = import('./api.js')
+    .then((m) => m.API.branding(uid))
+    .then((d) => { _brandCache = { key, value: d }; return d; })
+    .catch(() => ({ has_logo: false }));
+  _brandPromise = { key, p };
+  return p;
+}
+
+/**
+ * The installation's mark: the uploaded logo where one exists, otherwise the
+ * Nyza wordmark. Used on every surface that isn't behind a login (login screen,
+ * password prompts, portal, share and content-plan pages) so a customer sees
+ * the same branding everywhere. `uid` narrows it to a specific owner's logo
+ * when the page knows whose link it is showing.
+ */
+export function BrandMark({ size = 18, uid, style = {} }) {
+  const [brand, setBrand] = React.useState(() => (_brandCache && _brandCache.key === (uid || 'default') ? _brandCache.value : null));
+  React.useEffect(() => {
+    let alive = true;
+    loadBrand(uid).then((d) => { if (alive) setBrand(d); });
+    return () => { alive = false; };
+  }, [uid]);
+
+  if (brand && brand.has_logo && brand.user_id) {
+    const base = (typeof window !== 'undefined' && window.NYZA_BASE) || '';
+    const src = base + '/api/branding/logo/' + brand.user_id + (brand.logo_v ? '?v=' + encodeURIComponent(brand.logo_v) : '');
+    return <img src={src} alt={brand.name || 'Logo'} style={{ height: size * 1.7, maxWidth: 200, objectFit: 'contain', display: 'block', ...style }}/>;
+  }
+  // Until the lookup returns (and when no logo is set) show the wordmark, so
+  // nothing jumps around on a slow connection.
+  return <NyzaWordmark size={size}/>;
 }
 
 export function FileIcon({ kind = 'doc', size = 20, tint }) {

@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { API } from './api.js';
 import {
-  Ic, Glass, Btn, IconBtn, NyzaWordmark, FileIcon, PhotoPlaceholder,
+  Ic, Glass, Btn, IconBtn, NyzaWordmark, BrandMark, FileIcon, PhotoPlaceholder,
   humanSize, applyAccent,
 } from './system.jsx';
 import { Dropzone, UploadRow, MediaViewer, UploadReview, folderTone, DOC_STATUS } from './app.jsx';
@@ -184,6 +184,7 @@ export function PublicSharePage({ token }) {
     return (
       <div style={{ minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, position: 'relative', zIndex: 1 }}>
         <Glass style={{ width: '100%', maxWidth: 380, borderRadius: 'var(--r-xl)', padding: 32 }}>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}><BrandMark size={15}/></div>
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
             <div style={{
               width: 56, height: 56, borderRadius: 'var(--r-lg)',
@@ -587,6 +588,7 @@ export function PublicUploadPage({ token }) {
     return (
       <div style={{ minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, position: 'relative', zIndex: 1 }}>
         <Glass style={{ width: '100%', maxWidth: 380, borderRadius: 'var(--r-xl)', padding: 32 }}>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}><BrandMark size={15}/></div>
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
             <div style={{
               width: 56, height: 56, borderRadius: 'var(--r-lg)',
@@ -876,7 +878,7 @@ export function PublicSignPage({ token }) {
   return (
     <div style={{ minHeight: '100%', display: 'flex', justifyContent: 'center', padding: '32px 16px', position: 'relative', zIndex: 1 }}>
       <div style={{ width: '100%', maxWidth: 760 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}><NyzaWordmark size={16}/></div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}><BrandMark size={16}/></div>
         <Glass style={{ borderRadius: 'var(--r-xl)', padding: 28 }}>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, letterSpacing: -0.5, margin: 0 }}>{info.title}</h1>
           {info.message && <p style={{ fontSize: 14, color: 'var(--fg-2)', marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{info.message}</p>}
@@ -968,7 +970,7 @@ export function PublicFormPage({ token }) {
   return (
     <div style={{ minHeight: '100%', display: 'flex', justifyContent: 'center', padding: '32px 16px', position: 'relative', zIndex: 1 }}>
       <div style={{ width: '100%', maxWidth: 600 }}>
-        <div style={{ marginBottom: 18 }}><NyzaWordmark size={16}/></div>
+        <div style={{ marginBottom: 18 }}><BrandMark size={16}/></div>
         <Glass style={{ borderRadius: 'var(--r-xl)', padding: 28 }}>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, letterSpacing: -0.6, margin: 0 }}>{form.title}</h1>
           {form.description && <p style={{ fontSize: 14, color: 'var(--fg-2)', marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{form.description}</p>}
@@ -1289,6 +1291,7 @@ export function PublicPortalPage({ token }) {
     return (
       <div style={{ minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, position: 'relative', zIndex: 1 }}>
         <Glass style={{ width: '100%', maxWidth: 380, borderRadius: 'var(--r-xl)', padding: 32, textAlign: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}><BrandMark size={15}/></div>
           <div style={{ width: 56, height: 56, borderRadius: 'var(--r-lg)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px' }}>{Ic.lock(24)}</div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, margin: 0 }}>Kundenportal</h1>
           <p style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: 8 }}>Bitte Passwort eingeben.</p>
