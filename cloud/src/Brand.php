@@ -66,6 +66,33 @@ final class Brand
         return $v !== '' ? $v : self::DEFAULT_DESC;
     }
 
+    /** Relative storage path of the uploaded home-screen icon, if any. */
+    public static function iconPath(): ?string
+    {
+        $v = trim((string)(self::data()['icon_path'] ?? ''));
+        if ($v === '') return null;
+        return is_file(Storage::abs($v)) ? $v : null;
+    }
+
+    /** Absolute-ish icon info for the manifest / <link> tags, or null. */
+    public static function icon(): ?array
+    {
+        $rel = self::iconPath();
+        if ($rel === null) return null;
+        $abs = Storage::abs($rel);
+        $ext = strtolower(pathinfo($abs, PATHINFO_EXTENSION));
+        $mime = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
+                 'webp' => 'image/webp', 'svg' => 'image/svg+xml'][$ext] ?? 'image/png';
+        // Declare the real pixel size: Android ignores an icon whose declared
+        // sizes don't match, which would silently fall back to the built-in one.
+        $sizes = 'any';
+        if ($mime !== 'image/svg+xml') {
+            $info = @getimagesize($abs);
+            if ($info && $info[0] > 0) $sizes = $info[0] . 'x' . $info[1];
+        }
+        return ['rel' => $rel, 'mime' => $mime, 'sizes' => $sizes, 'v' => (string)@filemtime($abs)];
+    }
+
     /** Short name for the PWA/home-screen icon; falls back to the first word. */
     public static function shortName(): string
     {

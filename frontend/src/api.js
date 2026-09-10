@@ -171,6 +171,9 @@ export const API = {
   deleteLogo:     () => request('/api/auth/logo', { method: 'DELETE' }),
   branding:       (u) => request('/api/branding' + (u ? '?u=' + u : ''), { skipAuth: true }),
   saveBranding:   (body) => request('/api/branding', { method: 'PUT', body }),
+  uploadAppIcon:  (file) => upload('/api/branding/icon', file, {}),
+  deleteAppIcon:  () => request('/api/branding/icon', { method: 'DELETE' }),
+  appIconUrl:     (v) => url('/api/branding/icon') + (v ? '?v=' + encodeURIComponent(v) : ''),
   logoUrl:        (uid, v) => url('/api/branding/logo/' + uid) + (v ? '?v=' + encodeURIComponent(v) : ''),
 
   // Folders

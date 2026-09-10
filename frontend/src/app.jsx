@@ -7461,13 +7461,29 @@ function BrandingSection() {
   const [desc, setDesc] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    API.branding().then((d) => {
-      setSiteName(d.is_default ? '' : (d.site_name || ''));
-      setDesc(d.description || '');
-      setLoaded(true);
-    }).catch(() => setLoaded(true));
-  }, []);
+  const [icon, setIcon] = useState(null);
+  const [iconBusy, setIconBusy] = useState(false);
+  const iconRef = useRef(null);
+  const reload = () => API.branding().then((d) => {
+    setSiteName(d.is_default ? '' : (d.site_name || ''));
+    setShortName(d.short_name || '');
+    setDesc(d.description || '');
+    setIcon(d.icon || null);
+    setLoaded(true);
+  }).catch(() => setLoaded(true));
+  useEffect(() => { reload(); }, []);
+
+  const pickIcon = async (f) => {
+    if (!f) return;
+    setIconBusy(true);
+    try { await API.uploadAppIcon(f); await reload(); toast('App-Icon gespeichert', 'success'); }
+    catch (e) { toast(e.message, 'error'); } finally { setIconBusy(false); }
+  };
+  const dropIcon = async () => {
+    setIconBusy(true);
+    try { await API.deleteAppIcon(); await reload(); toast('Wieder das Standard-Icon', 'success'); }
+    catch (e) { toast(e.message, 'error'); } finally { setIconBusy(false); }
+  };
   const save = async () => {
     setBusy(true);
     try {
@@ -7498,6 +7514,29 @@ function BrandingSection() {
             <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Beschreibung</span>
             <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Kurzer Satz unter dem Namen in der Vorschau" style={f}/>
           </label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>App-Icon (Startbildschirm am Handy)</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ width: 60, height: 60, borderRadius: 14, overflow: 'hidden', flexShrink: 0, background: 'var(--surface-hi)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {icon
+                  ? <img src={API.appIconUrl(icon.v)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+                  : <span style={{ color: 'var(--fg-4)', fontSize: 11 }}>Standard</span>}
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <Btn variant="glass" size="sm" disabled={iconBusy} icon={iconBusy ? Ic.loader(13) : Ic.upload(13)} onClick={() => iconRef.current?.click()}>
+                  {icon ? 'Icon ersetzen' : 'Icon hochladen'}
+                </Btn>
+                {icon && <Btn variant="ghost" size="sm" disabled={iconBusy} onClick={dropIcon}>Entfernen</Btn>}
+                <input ref={iconRef} type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" style={{ display: 'none' }}
+                  onChange={(e) => { pickIcon(e.target.files?.[0]); e.target.value = ''; }}/>
+              </div>
+            </div>
+            <span style={{ fontSize: 11, color: 'var(--fg-4)', lineHeight: 1.5 }}>
+              Am besten ein quadratisches <b>PNG mit 512 × 512</b> Pixeln — iPhones zeigen SVG-Icons auf dem
+              Startbildschirm nicht an. Wichtiges nicht ganz an den Rand legen, Android schneidet das Icon rund zu.
+            </span>
+          </div>
+
           <div style={{ padding: '10px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: 10.5, color: 'var(--fg-4)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Vorschau</div>
             <div style={{ fontSize: 13.5, fontWeight: 600 }}>Beispiel-Ordner · {siteName.trim() || 'Nyza Cloud'}</div>

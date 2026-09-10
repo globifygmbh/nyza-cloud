@@ -40,6 +40,9 @@ final class AuthRoutes
         $app->get('/api/branding/logo/{uid}',   [self::class, 'serveLogo']);
         $app->get('/api/branding',              [self::class, 'branding']);
         $app->put('/api/branding',              [self::class, 'saveBranding'])->add(new AuthMiddleware());
+        $app->get('/api/branding/icon',         [self::class, 'serveAppIcon']);
+        $app->post('/api/branding/icon',        [self::class, 'uploadAppIcon'])->add(new AuthMiddleware());
+        $app->delete('/api/branding/icon',      [self::class, 'deleteAppIcon'])->add(new AuthMiddleware());
     }
 
     /**
@@ -435,6 +438,8 @@ final class AuthRoutes
             'site_name'   => \Nyza\Brand::name(),
             'description' => \Nyza\Brand::description(),
             'is_default'  => \Nyza\Brand::name() === \Nyza\Brand::DEFAULT_NAME,
+            'short_name'  => \Nyza\Brand::shortName(),
+            'icon'        => \Nyza\Brand::icon(),
         ]);
     }
 
@@ -443,6 +448,88 @@ final class AuthRoutes
      * and the browser tab show. Installation-wide, so Hauptadmin only; it is
      * stored on the owner's app_settings row, which is where Brand reads it.
      */
+    /**
+     * The home-screen / PWA icon. Public: it is referenced from the manifest and
+     * an <link rel="apple-touch-icon">, both fetched without a session.
+     */
+    public static function serveAppIcon(Request $req, Response $res): Response
+    {
+        $icon = \Nyza\Brand::icon();
+        if ($icon === null) return Json::err($res, 'No icon', 404);
+        $abs = Storage::abs($icon['rel']);
+        $etag = '"' . md5($icon['v'] . '-' . (string)@filesize($abs)) . '"';
+        if (trim((string)$req->getHeaderLine('If-None-Match')) === $etag) {
+            return $res->withStatus(304)->withHeader('ETag', $etag)
+                ->withHeader('Cache-Control', 'no-cache, must-revalidate');
+        }
+        return $res
+            ->withHeader('Content-Type', $icon['mime'])
+            ->withHeader('Cache-Control', 'no-cache, must-revalidate')
+            ->withHeader('ETag', $etag)
+            ->withHeader('X-Content-Type-Options', 'nosniff')
+            ->withBody(new Stream(fopen($abs, 'rb')));
+    }
+
+    public static function uploadAppIcon(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        if (!\Nyza\WorkspaceContext::isPrimary($uid)) {
+            return Json::err($res, 'Nur der Hauptadmin kann das App-Icon ändern', 403, 'forbidden');
+        }
+        $owner = \Nyza\Brand::ownerId();
+        if ($owner === null) return Json::err($res, 'Kein Inhaber gefunden', 404);
+
+        $file = $req->getUploadedFiles()['file'] ?? null;
+        if (is_array($file)) $file = $file[0];
+        if (!$file || $file->getError() !== UPLOAD_ERR_OK) return Json::err($res, 'Kein Bild hochgeladen', 422);
+        $mime = strtolower((string)($file->getClientMediaType() ?: ''));
+        $ext = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/webp' => 'webp', 'image/svg+xml' => 'svg'][$mime] ?? null;
+        if ($ext === null) return Json::err($res, 'Nur PNG, JPG, WebP oder SVG', 415);
+        if ((int)$file->getSize() > 2 * 1024 * 1024) return Json::err($res, 'Icon zu groß (max 2 MB)', 413);
+
+        $dir = Storage::root() . '/branding';
+        if (!is_dir($dir)) @mkdir($dir, 0775, true);
+        foreach (glob($dir . '/app-icon.*') ?: [] as $old) @unlink($old);
+        $rel = 'branding/app-icon.' . $ext;
+        $file->moveTo(Storage::abs($rel));
+
+        self::mergeBranding($owner, ['icon_path' => $rel]);
+        return Json::ok($res, ['icon' => \Nyza\Brand::icon()], 201);
+    }
+
+    public static function deleteAppIcon(Request $req, Response $res): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        if (!\Nyza\WorkspaceContext::isPrimary($uid)) {
+            return Json::err($res, 'Nur der Hauptadmin kann das App-Icon ändern', 403, 'forbidden');
+        }
+        $owner = \Nyza\Brand::ownerId();
+        if ($owner === null) return Json::err($res, 'Kein Inhaber gefunden', 404);
+        $rel = \Nyza\Brand::iconPath();
+        if ($rel !== null) Storage::deleteRel($rel);
+        self::mergeBranding($owner, ['icon_path' => '']);
+        return Json::ok($res, ['ok' => true]);
+    }
+
+    /** Merge keys into the owner's branding blob without clobbering the rest. */
+    private static function mergeBranding(int $owner, array $patch): void
+    {
+        $pdo = Database::pdo();
+        $s = $pdo->prepare('SELECT data FROM app_settings WHERE user_id = ? AND ns = ?');
+        $s->execute([$owner, 'branding']);
+        $row = $s->fetch();
+        $cur = [];
+        if ($row && $row['data'] !== null) {
+            $d = json_decode((string)$row['data'], true);
+            if (is_array($d)) $cur = $d;
+        }
+        $merged = array_merge($cur, $patch);
+        $pdo->prepare(
+            'INSERT INTO app_settings (user_id, ns, data) VALUES (?, ?, ?) '
+            . 'ON DUPLICATE KEY UPDATE data = VALUES(data)'
+        )->execute([$owner, 'branding', json_encode($merged, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
+    }
+
     public static function saveBranding(Request $req, Response $res): Response
     {
         $uid = (int)$req->getAttribute('uid');
@@ -462,10 +549,8 @@ final class AuthRoutes
             'short_name'  => $clean($b['short_name'] ?? '', 30),
             'description' => $clean($b['description'] ?? '', 200),
         ];
-        Database::pdo()->prepare(
-            'INSERT INTO app_settings (user_id, ns, data) VALUES (?, ?, ?) '
-            . 'ON DUPLICATE KEY UPDATE data = VALUES(data)'
-        )->execute([$owner, 'branding', json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]);
+        // Merge, so saving the name doesn't drop an uploaded icon.
+        self::mergeBranding($owner, $data);
 
         return Json::ok($res, ['branding' => $data]);
     }

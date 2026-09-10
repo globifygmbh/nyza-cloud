@@ -112,7 +112,20 @@ $serveSpa = function ($res, $extraHead = '') use ($assetsRoot, $basePath) {
     // they resolve on deep client-side routes too (/cloud/s/<token> etc.).
     $root = ($basePath === '' || $basePath === '/') ? '/' : $basePath . '/';
     $html = str_replace('href="manifest.webmanifest"', 'href="' . $root . 'manifest.webmanifest"', $html);
-    $html = str_replace('href="icon.svg"', 'href="' . $root . 'icon.svg"', $html);
+    // iOS reads <link rel="apple-touch-icon"> for the home-screen icon and does
+    // NOT support SVG there — the built-in mark therefore never showed on an
+    // iPhone. Point it at the uploaded icon when there is one.
+    $customIcon = \Nyza\Brand::icon();
+    $iconHref = $customIcon !== null
+        ? $root . 'api/branding/icon?v=' . rawurlencode($customIcon['v'])
+        : $root . 'icon.svg';
+    $html = str_replace('href="icon.svg"', 'href="' . htmlspecialchars($iconHref, ENT_QUOTES) . '"', $html);
+    $html = preg_replace(
+        '#<meta\s+name=["\']apple-mobile-web-app-title["\'][^>]*>#i',
+        '<meta name="apple-mobile-web-app-title" content="' . htmlspecialchars(\Nyza\Brand::shortName(), ENT_QUOTES) . '">',
+        $html,
+        1
+    );
 
     // When per-link preview tags are supplied, drop the static <title> and
     // description so the dynamic ones (in $extraHead) are authoritative.
@@ -170,9 +183,18 @@ $app->get('/manifest.webmanifest', function ($req, $res) use ($pwaBase) {
         'background_color' => '#0B0B0F',
         'theme_color' => '#0B0B0F',
         'description' => \Nyza\Brand::description(),
-        'icons' => [
-            ['src' => ($pwaBase ?: '') . '/icon.svg', 'sizes' => 'any', 'type' => 'image/svg+xml', 'purpose' => 'any maskable'],
-        ],
+        'icons' => (function () use ($pwaBase) {
+            $custom = \Nyza\Brand::icon();
+            if ($custom !== null) {
+                return [[
+                    'src' => ($pwaBase ?: '') . '/api/branding/icon?v=' . rawurlencode($custom['v']),
+                    'sizes' => $custom['sizes'],
+                    'type' => $custom['mime'],
+                    'purpose' => 'any maskable',
+                ]];
+            }
+            return [['src' => ($pwaBase ?: '') . '/icon.svg', 'sizes' => 'any', 'type' => 'image/svg+xml', 'purpose' => 'any maskable']];
+        })(),
     ];
     $res->getBody()->write(json_encode($manifest, JSON_UNESCAPED_SLASHES));
     return $res->withHeader('Content-Type', 'application/manifest+json; charset=utf-8');
