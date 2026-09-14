@@ -2412,7 +2412,7 @@ function SharedWithMeView({ onOpenFolder, onOpenFile }) {
           : (
             <>
               {folders.length > 0 && <><SectionHeader title="Ordner" count={folders.length}/>
-                <div style={{ display: 'grid', gap: 8, maxWidth: 820, marginBottom: 28 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 820, marginBottom: 28 }}>
                   {folders.map((f) => (
                     <div key={'f' + f.id} className="nyza-listrow" onClick={() => onOpenFolder(f)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
                       <span style={{ color: 'var(--accent)' }}>{Ic.folder(18)}</span>
@@ -2422,7 +2422,7 @@ function SharedWithMeView({ onOpenFolder, onOpenFile }) {
                   ))}
                 </div></>}
               {files.length > 0 && <><SectionHeader title="Dateien" count={files.length}/>
-                <div style={{ display: 'grid', gap: 8, maxWidth: 820 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 820 }}>
                   {files.map((f) => (
                     <div key={'x' + f.id} className="nyza-listrow" onClick={() => onOpenFile(f, files)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
                       <FileIcon kind={(f.mime_type || '').startsWith('image/') ? 'image' : (f.mime_type || '').startsWith('video/') ? 'video' : (f.mime_type === 'application/pdf') ? 'pdf' : 'doc'} size={16}/>
@@ -4412,7 +4412,7 @@ function SharesView({ refreshTick, basePath, afterChange, embedded }) {
         ) : shares.length === 0 ? (
           <EmptyHint icon={Ic.share(40)} title="Noch nichts geteilt" desc="Teile einen Ordner oder eine Datei — der Link erscheint hier."/>
         ) : (
-          <div style={{ display: 'grid', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10 }}>
             {shares.map((s) => (
               <div key={s.id} style={{ borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', overflow: 'hidden' }}>
               <div className="nyza-listrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px' }}>
@@ -4491,7 +4491,7 @@ function LinksView({ refreshTick, basePath, onCreate, afterChange, embedded }) {
           <EmptyHint icon={Ic.inbox(40)} title="Noch keine Upload-Links" desc="Erstelle einen Link, über den Externe ohne Login Dateien zu dir hochladen."
             actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={onCreate}>Upload-Link erstellen</Btn>}/>
         ) : (
-          <div style={{ display: 'grid', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 10 }}>
             {links.map((l) => (
               <div key={l.id} className="nyza-listrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
                 <div style={{ width: 38, height: 38, borderRadius: 'var(--r-sm)', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 4px 12px -4px var(--accent-glow)' }}>{Ic.inbox(18)}</div>
@@ -5098,7 +5098,7 @@ function SnippetsApp({ onBack }) {
           : items.length === 0 ? <EmptyHint icon={Ic.fileGen(40)} title="Keine Textbausteine" desc="Lege wiederkehrende Formulierungen an — Begrüßung, Zahlungsbedingungen, Verabschiedung — und füge sie beim Mail-Schreiben mit einem Klick ein."
               actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({})}>Neuer Baustein</Btn>}/>
           : (
-            <div style={{ display: 'grid', gap: 8, maxWidth: 760 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 760 }}>
               {items.map((s) => (
                 <div key={s.id} className="nyza-listrow" onClick={() => setEditing(s)} style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: '13px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
                   <div style={{ width: 34, height: 34, borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Ic.fileGen(15)}</div>
@@ -5377,7 +5377,7 @@ function TasksApp({ onBack }) {
             <div style={{ fontSize: 12, color: 'var(--fg-3)', marginBottom: 16, marginTop: -8 }}>Erledigte Aufgaben werden nach 7 Tagen automatisch gelöscht.</div>
             {archived === null ? <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
               : archived.length === 0 ? <EmptyHint icon={Ic.archive(40)} title="Archiv ist leer" desc="Abgehakte Aufgaben landen hier."/>
-              : <div style={{ display: 'grid', gap: 8, maxWidth: 820 }}>{archived.map((t) => <Row key={t.id} t={t} archivedRow/>)}</div>}
+              : <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 820 }}>{archived.map((t) => <Row key={t.id} t={t} archivedRow/>)}</div>}
           </>
         ) : tasks === null ? (
           <div style={{ color: 'var(--fg-3)', padding: 20 }}>{Ic.loader(22)}</div>
@@ -5394,7 +5394,7 @@ function TasksApp({ onBack }) {
                   <span style={{ fontSize: 12, color: 'var(--fg-4)' }}>{s.items.length}</span>
                   <div style={{ flex: 1, height: 1, background: 'var(--border)' }}/>
                 </div>
-                <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
                   {s.items.map((t) => <Row key={t.id} t={t}/>)}
                 </div>
               </div>
@@ -6713,7 +6713,7 @@ function ZeitenApp({ onBack }) {
                   <div style={{ flex: 1, height: 1, background: 'var(--border)' }}/>
                   <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>{fmtDur(g.total)}</span>
                 </div>
-                <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
                   {g.items.map((en) => (
                     <div key={en.id} className="nyza-listrow" onClick={() => { if (!readOnly) setModal(en); }}
                       style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: readOnly ? 'default' : 'pointer' }}>
@@ -7216,7 +7216,7 @@ function CompaniesAdminSection({ onChanged }) {
         <Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={create}>Anlegen</Btn>
       </div>
       {list === null ? <div style={{ color: 'var(--fg-3)' }}>{Ic.loader(18)}</div> : (
-        <div style={{ display: 'grid', gap: 6 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}>
           {list.map((co) => (
             <div key={co.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)' }}>
               <span style={{ flex: 1, fontSize: 13.5, fontWeight: 540 }}>{co.name}</span>
@@ -7352,7 +7352,7 @@ function UserAdminSection({ currentUser }) {
         <Btn variant="primary" size="sm" icon={Ic.plus(14)} onClick={() => setEditing({ role: 'user' })}>Benutzer anlegen</Btn>
       </div>
       {users === null ? <div style={{ color: 'var(--fg-3)', padding: 12 }}>{Ic.loader(20)}</div> : (
-        <div style={{ display: 'grid', gap: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
           {users.map((u) => (
             <div key={u.id} className="nyza-listrow" onClick={() => setEditing(u)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer', opacity: u.active ? 1 : 0.55 }}>
               <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'var(--accent-grad)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600, flexShrink: 0 }}>{(u.name || u.email || '?').slice(0, 1).toUpperCase()}</div>
@@ -7844,7 +7844,7 @@ function BuchhaltungApp({ onBack, onOpenSettings }) {
             <EmptyHint icon={Ic.archive(40)} title="Keine Produkte" desc="Lege wiederverwendbare Leistungen mit Preis & USt-Satz an."
               actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setProdEditing({})}>Produkt</Btn>}/>
           ) : (
-            <div style={{ display: 'grid', gap: 8, maxWidth: 760 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 760 }}>
               {products.map((p) => (
                 <div key={p.id} className="nyza-listrow" onClick={() => setProdEditing(p)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -9048,7 +9048,7 @@ function LedgerAccounts({ accounts, onReload }) {
   const TYPE_DE = { asset: 'Aktiva', liability: 'Passiva', equity: 'Eigenkapital', income: 'Erlös', expense: 'Aufwand' };
   const del = async (a) => { try { await API.deleteLedgerAccount(a.number); onReload(); } catch (e) { toast(e.message, 'error'); } };
   return (
-    <div style={{ display: 'grid', gap: 6 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 6 }}>
       {accounts.map((a) => (
         <div key={a.number} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 14px', borderRadius: 'var(--r-sm)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
           <span style={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums', color: 'var(--fg-3)', width: 44 }}>{a.number}</span>
@@ -10063,7 +10063,7 @@ function SignaturesApp({ onBack }) {
           : items.length === 0 ? <EmptyHint icon={Ic.check(40)} title="Keine Signaturanfragen" desc="Sende ein Dokument per Link zur Unterschrift — der Unterzeichner zeichnet mit dem Finger, das signierte Zertifikat landet im DMS."
               actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setCreating(true)}>Neue Signatur</Btn>}/>
           : (
-            <div style={{ display: 'grid', gap: 8, maxWidth: 820 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 820 }}>
               {items.map((s) => {
                 const st = SIG_STATUS[s.status] || SIG_STATUS.pending;
                 return (
@@ -10113,7 +10113,7 @@ function FormsApp({ onBack }) {
           : items.length === 0 ? <EmptyHint icon={Ic.list(40)} title="Keine Formulare" desc="Erstelle ein öffentliches Formular (Kontakt, Onboarding …) und teile den Link. Antworten inkl. Anhänge landen hier."
               actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({ title: '', description: '', fields: [], active: 1 })}>Neues Formular</Btn>}/>
           : (
-            <div style={{ display: 'grid', gap: 8, maxWidth: 820 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 820 }}>
               {items.map((f) => (
                 <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
                   <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => setSubsFor(f)}>
@@ -10278,7 +10278,7 @@ function VaultApp({ onBack }) {
           : items.length === 0 ? <EmptyHint icon={Ic.lock(40)} title="Keine Zugänge" desc="Speichere Logins, Passwörter und Links — verschlüsselt in der Datenbank."
               actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({})}>Neuer Zugang</Btn>}/>
           : (
-            <div style={{ display: 'grid', gap: 8, maxWidth: 720 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 720 }}>
               {items.map((e) => (
                 <div key={e.id} className="nyza-listrow" onClick={() => open(e)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
                   <div style={{ width: 34, height: 34, borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Ic.lock(15)}</div>
@@ -10628,7 +10628,7 @@ function KundenportalApp({ onBack }) {
           : items.length === 0 ? <EmptyHint icon={Ic.users(40)} title="Kein Kundenportal" desc="Lege pro Kunde ein passwortgeschütztes Portal an: seine Rechnungen/Angebote erscheinen automatisch, Ordner hängst du manuell an."
               actions={<Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setEditing({ _new: true })}>Neues Portal</Btn>}/>
           : (
-            <div style={{ display: 'grid', gap: 8, maxWidth: 760 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 760 }}>
               {items.map((p) => (
                 <div key={p.id} className="nyza-listrow" onClick={() => open(p)} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}>
                   <div style={{ width: 34, height: 34, borderRadius: 'var(--r-sm)', background: 'var(--surface-hi)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Ic.users(15)}</div>
@@ -10826,7 +10826,7 @@ function ActivityView({ refreshTick }) {
         ) : items.length === 0 ? (
           <EmptyHint icon={Ic.clock(40)} title="Noch keine Aktivität" desc="Uploads, geteilte Links und Upload-Links erscheinen hier."/>
         ) : (
-          <div style={{ display: 'grid', gap: 8, maxWidth: 760 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8, maxWidth: 760 }}>
             {items.map((a) => {
               const m = meta(a.kind);
               const p = a.payload || {};
@@ -10873,7 +10873,7 @@ function TrashView({ refreshTick, onOpenFile, afterChange }) {
         ) : files.length === 0 ? (
           <EmptyHint icon={Ic.trash(40)} title="Papierkorb ist leer" desc="Gelöschte Dateien landen hier und können wiederhergestellt werden."/>
         ) : (
-          <div style={{ display: 'grid', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
             {files.map((f) => (
               <div key={f.id} className="nyza-listrow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
                 <FileIcon kind={f.kind} size={16} tint={f.hue}/>

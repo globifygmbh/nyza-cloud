@@ -329,7 +329,7 @@ export function PublicSharePage({ token }) {
 
           {/* any non-media files still listed below */}
           {items.length > mediaAll.length && (
-            <div style={{ marginTop: 32, display: 'grid', gap: 8 }}>
+            <div style={{ marginTop: 32, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
               {items.filter((f) => f.kind !== 'image' && f.kind !== 'video').map((f) => (
                 <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer' }}
                   onClick={() => setViewing(f)}>
@@ -482,7 +482,7 @@ export function PublicSharePage({ token }) {
               })}
             </div>
           ) : (
-            <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
               {items.map((f) => {
                 const previewable = ['image', 'video', 'pdf', 'audio'].includes(f.kind) || /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|weba)$/i.test(f.name);
                 return (
@@ -1344,7 +1344,7 @@ export function PublicPortalPage({ token }) {
         {sigs.length > 0 && (
           <div style={{ marginTop: 28 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>Zu unterschreiben</div>
-            <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
               {sigs.map((s) => (
                 <div key={s.token} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
                   <span style={{ color: 'var(--accent)' }}>{Ic.check(16)}</span>
@@ -1361,7 +1361,7 @@ export function PublicPortalPage({ token }) {
         {ups.length > 0 && (
           <div style={{ marginTop: 28 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>Dateien hochladen</div>
-            <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 8 }}>
               {ups.map((u) => (
                 <div key={u.token} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
                   <span style={{ color: 'var(--accent)' }}>{Ic.upload(16)}</span>
