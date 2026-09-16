@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Nyza\Routes;
 
 use Nyza\Auth;
+use Nyza\CompanyContext;
 use Nyza\Config;
 use Nyza\Database;
 use Nyza\Json;
@@ -327,19 +328,31 @@ final class PushRoutes
         return $n;
     }
 
-    /** Unpaid invoices past their due date (doc_date + payment term). */
+    /**
+     * Unpaid invoices past their due date (doc_date + payment term).
+     *
+     * The term is per COMPANY (companies.profile). It used to come from the
+     * per-user app_settings ns='company', which the settings UI stopped writing
+     * when accounting moved to companies — so this silently fell back to the
+     * 14-day default and ignored the configured Zahlungsziel for everyone.
+     */
     private static function checkInvoices(int $uid, string $today): int
     {
         $pdo = Database::pdo();
-        $term = self::paymentTermDays($uid);
         $s = $pdo->prepare(
-            "SELECT id, number FROM documents "
-            . "WHERE user_id = ? AND type = 'invoice' AND paid_at IS NULL "
-            . 'AND DATE_ADD(doc_date, INTERVAL ? DAY) < ?'
+            "SELECT id, number, doc_date, company_id FROM documents "
+            . "WHERE user_id = ? AND type = 'invoice' AND paid_at IS NULL AND doc_date IS NOT NULL"
         );
-        $s->execute([$uid, $term, $today]);
+        $s->execute([$uid]);
+        $terms = [];   // company_id → days, so one lookup per company, not per invoice
         $n = 0;
         foreach ($s->fetchAll() as $d) {
+            $cid = (int)($d['company_id'] ?? 0);
+            if (!array_key_exists($cid, $terms)) {
+                $terms[$cid] = $cid > 0 ? CompanyContext::paymentTermDays($cid) : 14;
+            }
+            $due = date('Y-m-d', strtotime((string)$d['doc_date'] . ' +' . $terms[$cid] . ' days'));
+            if ($due >= $today) continue;
             $key = 'inv:' . (int)$d['id'];
             if (!self::claim($uid, $key)) continue;
             self::sendToUser($uid, [
@@ -402,19 +415,6 @@ final class PushRoutes
         if (!$row || $row['data'] === null) return [];
         $d = json_decode((string)$row['data'], true);
         return is_array($d) ? $d : [];
-    }
-
-    /** Company payment term in days (default 14), used for invoice due dates. */
-    private static function paymentTermDays(int $uid): int
-    {
-        $s = Database::pdo()->prepare('SELECT data FROM app_settings WHERE user_id = ? AND ns = ?');
-        $s->execute([$uid, 'company']);
-        $row = $s->fetch();
-        if (!$row || $row['data'] === null) return 14;
-        $d = json_decode((string)$row['data'], true);
-        $v = is_array($d) ? ($d['payment_term_days'] ?? null) : null;
-        if ($v === null || $v === '' || (int)$v <= 0) return 14;
-        return (int)$v;
     }
 
     // ───── app_kv helpers ──────────────────────────────────────────────────────

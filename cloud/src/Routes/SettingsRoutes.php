@@ -14,12 +14,19 @@ use Slim\Routing\RouteCollectorProxy;
 /**
  * Generic per-user settings store, namespaced (ns). Each (user, ns) holds a
  * JSON document. PUT shallow-merges the posted object into the stored one so
- * partial saves are fine. Used for the accounting company profile ('company')
- * and future app settings.
+ * partial saves are fine. Reads and writes are always the caller's own row.
+ *
+ * The allowlist is deliberately narrow: a namespace listed here is writable by
+ * ANY signed-in account with no further check, so nothing privileged may be
+ * read from one. 'company' used to be listed and still held the accounting
+ * profile; that moved to companies.profile (behind company membership checks)
+ * and the namespace is retired rather than left writable with no owner.
+ * Installation branding lives under ns 'branding' and is intentionally NOT
+ * listed — it is written only through the Hauptadmin-gated /api/branding.
  */
 final class SettingsRoutes
 {
-    private const ALLOWED_NS = ['company', 'notifications', 'apps'];
+    private const ALLOWED_NS = ['notifications', 'apps'];
     private const MAX_BYTES = 256 * 1024;
 
     public static function mount(App $app): void

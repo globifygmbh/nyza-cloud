@@ -126,16 +126,6 @@ final class ReminderRoutes
         ], $s->fetchAll());
     }
 
-    private static function company(int $uid): array
-    {
-        $s = Database::pdo()->prepare("SELECT data FROM app_settings WHERE user_id = ? AND ns = 'company'");
-        $s->execute([$uid]);
-        $row = $s->fetch();
-        if (!$row || !$row['data']) return [];
-        $d = json_decode((string)$row['data'], true);
-        return is_array($d) ? $d : [];
-    }
-
     private static function e(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
     private static function money($n): string { return number_format((float)$n, 2, ',', '.') . ' €'; }
     private static function de(?string $ymd): string
