@@ -550,6 +550,7 @@ export function PublicUploadPage({ token }) {
   const [counts, setCounts] = useState({});
   const [itemBusy, setItemBusy] = useState({});
   const cameraRef = useRef(null);
+  const uploadIdRef = useRef(0);
   useEffect(() => {
     const cl = state.data?.checklist;
     if (cl && cl.length) { const c = {}; cl.forEach((it) => { c[it.key] = it.count || 0; }); setCounts(c); }
@@ -623,7 +624,6 @@ export function PublicUploadPage({ token }) {
   // replaced each time) so the uploader keeps a running overview of what's
   // already done vs. still in flight, alongside the dropzone — not instead
   // of it — until they explicitly say they're finished.
-  const uploadIdRef = useRef(0);
   const doUpload = async (files) => {
     setReview(null);
     const items = files.map((f) => ({
