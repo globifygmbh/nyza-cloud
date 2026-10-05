@@ -1243,6 +1243,8 @@ function MoreSheet({ user, theme, onTheme, onNavigate, onSecurity, onProfile, on
           <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg, oklch(0.72 0.16 60), oklch(0.55 0.2 25))', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 600, fontSize: 14 }}>{(user?.name || '?').slice(0, 2).toUpperCase()}</div>
           <div><div style={{ fontSize: 14, fontWeight: 600 }}>{user?.name}</div><div style={{ fontSize: 12, color: 'var(--fg-3)' }}>{user?.email}</div></div>
         </div>
+        {item(Ic.users(18), 'Mit mir geteilt', () => onNavigate({ name: 'shared-with-me' }))}
+        {item(Ic.star(18), 'Favoriten', () => onNavigate({ name: 'favorites' }))}
         {item(Ic.clock(18), 'Aktivität', () => onNavigate({ name: 'activity' }))}
         {item(Ic.trash(18), 'Papierkorb', () => onNavigate({ name: 'trash' }))}
         {item(Ic.cog(18), 'Profil & Branding', onProfile)}
@@ -1600,7 +1602,7 @@ function KebabMenu({ items }) {
 }
 
 // ───── Folder card ─────────────────────────────────────────────────────────
-function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDropFiles, onContext }) {
+function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDropFiles, onContext, sharedBy }) {
   const t = folderTone(folder.tone);
   const tones = t.h;
   const cc = t.c;
@@ -1643,6 +1645,20 @@ function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDr
         {!!folder.pinned && (
           <div style={{ position: 'absolute', top: 10, left: 10, color: 'var(--accent)', background: 'rgba(0,0,0,0.45)', borderRadius: 999, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}
             title="Angepinnt">{Ic.pin(13)}</div>
+        )}
+        {sharedBy && (
+          <div title={'Geteilt von ' + sharedBy} style={{
+            position: 'absolute', bottom: 10, left: 10, display: 'flex', alignItems: 'center', gap: 6,
+            padding: '3px 9px 3px 3px', borderRadius: 999, background: 'rgba(0,0,0,0.5)', color: '#fff',
+            backdropFilter: 'blur(10px)', fontSize: 11, fontWeight: 540, maxWidth: 'calc(100% - 20px)',
+          }}>
+            <span style={{
+              width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
+              background: 'linear-gradient(135deg, oklch(0.72 0.16 60), oklch(0.55 0.2 25))',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700,
+            }}>{sharedBy.slice(0, 2).toUpperCase()}</span>
+            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sharedBy}</span>
+          </div>
         )}
         {!!folder.locked && (
           <div style={{ position: 'absolute', top: 10, left: folder.pinned ? 42 : 10, color: '#fff', background: 'rgba(0,0,0,0.5)', borderRadius: 999, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}
@@ -3889,6 +3905,13 @@ function FilesView({
     API.recentFiles().then((d) => setRecent(d.files || [])).catch(() => setRecent([]));
   }, [refreshTick]);
 
+  // Folders other members shared with me — shown alongside my own so they
+  // don't hide behind the separate "Mit mir geteilt" page.
+  const [sharedFolders, setSharedFolders] = useState([]);
+  useEffect(() => {
+    API.sharedWithMe().then((d) => setSharedFolders(d.folders || [])).catch(() => setSharedFolders([]));
+  }, [refreshTick]);
+
   // Listen for preference changes from ProfileModal
   useEffect(() => {
     const handler = () => setShowRecentPref(localStorage.getItem('nyza.showRecent') !== '0');
@@ -4022,6 +4045,15 @@ function FilesView({
                 actions={<><Btn variant="primary" size="md" icon={Ic.plus(14)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn><Btn variant="glass" size="md" icon={Ic.upload(14)} onClick={onUpload}>Hochladen</Btn></>}/>
             )}
 
+            {sharedFolders.length > 0 && (
+              <>
+                <SectionHeader title="Mit mir geteilt" count={sharedFolders.length}/>
+                <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 36 }}>
+                  {sharedFolders.map((f) => <FolderCard key={'s' + f.id} folder={f} sharedBy={f.owner_name || '—'}
+                    onClick={() => onOpenFolder(f)}/>)}
+                </div>
+              </>
+            )}
           </>
         )}
       </div>

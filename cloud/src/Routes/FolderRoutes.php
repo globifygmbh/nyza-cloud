@@ -62,7 +62,7 @@ final class FolderRoutes
     }
 
     /** decorate() each row plus merge in its recursive item_count/total_size. */
-    private static function decorateWithStats(array $rows, int $ownerUid): array
+    public static function decorateWithStats(array $rows, int $ownerUid): array
     {
         $stats = self::recursiveStats($ownerUid);
         return array_map(function ($f) use ($stats) {

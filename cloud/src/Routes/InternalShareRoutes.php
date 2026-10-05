@@ -245,8 +245,19 @@ final class InternalShareRoutes
         );
         $files->execute([$uid]);
 
+        // Same shape as the owner's own folder list (locked flag instead of the
+        // hash, recursive item_count/total_size) so the client can render them
+        // with the regular folder card. Stats are per owner's tree.
+        $byOwner = [];
+        foreach ($folders->fetchAll() as $f) $byOwner[(int)$f['user_id']][] = $f;
+        $folderRows = [];
+        foreach ($byOwner as $ownerId => $rows) {
+            foreach (FolderRoutes::decorateWithStats($rows, $ownerId) as $f) $folderRows[] = $f;
+        }
+        usort($folderRows, static fn($a, $b) => strcasecmp((string)$a['name'], (string)$b['name']));
+
         return Json::ok($res, [
-            'folders' => $folders->fetchAll(),
+            'folders' => $folderRows,
             'files' => $files->fetchAll(),
         ]);
     }
