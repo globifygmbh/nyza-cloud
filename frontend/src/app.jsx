@@ -15,6 +15,7 @@ import { uploadOwner, withUploadLock } from './uploads.js';
 
 // Heavy CodeMirror editor — only fetched when a text file is actually opened.
 const CodeEditor = lazy(() => import('./editor.jsx'));
+export const PdfViewer = lazy(() => import('./pdfviewer.jsx'));
 
 // Track viewport for mobile-responsive chrome.
 function useIsMobile() {
@@ -334,11 +335,13 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
           </>
         )}
         {kind === 'pdf' && (
-          <iframe key={cur.id} src={curSrc} title={cur.name} onClick={stop} style={{
-            width: '100%', height: '100%', maxWidth: 1100, border: 0,
-            borderRadius: 'var(--r-md)', background: '#fff',
-            boxShadow: '0 30px 80px rgba(0,0,0,0.6)',
-          }}/>
+          // Touches stay inside the PDF (scroll / pinch / pan) instead of
+          // reaching the swipe-to-next-file handler on the stage.
+          <div onClick={stop} onTouchStart={stop} onTouchEnd={stop} style={{ width: '100%', height: '100%', maxWidth: 1100, display: 'flex' }}>
+            <Suspense fallback={<div style={{ margin: 'auto', color: '#fff' }}>{Ic.loader(24)}</div>}>
+              <PdfViewer key={cur.id} src={curSrc} name={cur.name} style={{ flex: 1 }}/>
+            </Suspense>
+          </div>
         )}
         {isAudio && kind !== 'video' && (
           <Glass onClick={stop} style={{ width: '100%', maxWidth: 460, padding: '34px 36px', borderRadius: 'var(--r-xl)', textAlign: 'center' }}>

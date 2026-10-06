@@ -24,7 +24,9 @@ export default defineConfig(({ mode }) => ({
         // Predictable but content-hashed names for the long-cache .htaccess rule.
         entryFileNames: 'app-[hash].js',
         chunkFileNames: 'chunk-[hash].js',
-        assetFileNames: '[name]-[hash][extname]',
+        // .mjs (the pdf.js worker) → .js: many Apache setups don't map .mjs
+        // to a JavaScript MIME type, and module workers refuse anything else.
+        assetFileNames: (a) => /\.mjs$/.test(a.names?.[0] || a.name || '') ? '[name]-[hash].js' : '[name]-[hash][extname]',
       },
     },
   },

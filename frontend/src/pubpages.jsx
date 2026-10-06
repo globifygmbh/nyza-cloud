@@ -1,13 +1,13 @@
 // Public pages — no login. Mounted at /s/:token (share view) and /u/:token
 // (client upload). Both fetch from public endpoints; no Bearer auth.
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { API } from './api.js';
 import {
   Ic, Glass, Btn, IconBtn, NyzaWordmark, BrandMark, FileIcon, PhotoPlaceholder,
   humanSize, applyAccent,
 } from './system.jsx';
-import { Dropzone, UploadRow, MediaViewer, UploadReview, folderTone, DOC_STATUS } from './app.jsx';
+import { Dropzone, UploadRow, MediaViewer, UploadReview, folderTone, DOC_STATUS, PdfViewer } from './app.jsx';
 import { uploadClient, uploadPortal, withUploadLock } from './uploads.js';
 import { toast } from './toast.jsx';
 import { openContextMenu } from './overlays.jsx';
@@ -370,6 +370,39 @@ export function PublicSharePage({ token }) {
           );
         })()}
         <ShareFooter/>
+      </div>
+    );
+  }
+
+  // A single shared PDF opens straight into the reader — no landing page,
+  // no extra tap. Needs the file endpoint, which only serves when downloads
+  // are allowed; otherwise fall through to the regular share page.
+  const singlePdf = !isFolder && data.file && data.allow_download
+    && (data.file.kind === 'pdf' || data.file.mime_type === 'application/pdf');
+  if (singlePdf) {
+    const dl = API.shareFileUrl(token, data.file.id, password, true);
+    return (
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative', zIndex: 1 }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', paddingTop: 'calc(10px + env(safe-area-inset-top))',
+          borderBottom: '1px solid var(--border)', background: 'var(--surface)', flexShrink: 0,
+          backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+        }}>
+          {data.owner?.has_logo
+            ? <img src={API.logoUrl(data.owner.id)} alt={data.owner?.name} style={{ maxHeight: 28, maxWidth: 110, objectFit: 'contain', flexShrink: 0 }}/>
+            : <span style={{ color: 'var(--accent)', display: 'inline-flex', flexShrink: 0 }}>{Ic.filePdf(20)}</span>}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.file.name}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {humanSize(data.file.size || 0)}{data.owner?.name ? ' · geteilt von ' + data.owner.name : ''}
+              {data.expires_at && <> · bis {new Date(data.expires_at).toLocaleDateString('de-DE')}</>}
+            </div>
+          </div>
+          <IconBtn size={38} title="Herunterladen" onClick={() => { location.href = dl; }}>{Ic.download(18)}</IconBtn>
+        </div>
+        <Suspense fallback={<CenteredLoader/>}>
+          <PdfViewer src={API.shareFileUrl(token, data.file.id, password)} name={data.file.name} style={{ flex: 1 }}/>
+        </Suspense>
       </div>
     );
   }
