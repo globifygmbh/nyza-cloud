@@ -17,10 +17,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // foregrounded again. Holding a Web Lock is one of the documented
 // exemptions from that freezing, so we keep one held for the duration of
 // the upload run. Falls back to running unguarded where unsupported.
+//
+// The lock name is unique per run: holding *any* lock is what earns the
+// exemption, so there is nothing to gain from sharing one — and a shared
+// name made every upload wait behind any other tab (or a hung earlier run)
+// still holding it, so new uploads silently never started.
+let lockSeq = 0;
+const lockPrefix = 'nyza-upload-' + Math.random().toString(36).slice(2) + '-';
 export function withUploadLock(fn) {
   if (typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) return fn();
   try {
-    return navigator.locks.request('nyza-upload', fn);
+    return navigator.locks.request(lockPrefix + (++lockSeq), fn);
   } catch {
     return fn();
   }

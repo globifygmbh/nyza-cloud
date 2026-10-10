@@ -3472,6 +3472,8 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         toast(`Ordner „${name}" konnte nicht erstellt werden`, 'error');
       }
     }
+    // Show the new structure right away, not only once the first file lands.
+    if (sortedDirs.length) refreshAll();
     enqueueUploads(sorted.map((f) => {
       const parts = (f.webkitRelativePath || '').split('/');
       const dirPath = parts.slice(0, -1).join('/');

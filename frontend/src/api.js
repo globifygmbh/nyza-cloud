@@ -74,6 +74,21 @@ async function request(path, opts = {}) {
 }
 
 // XHR-based upload so we can wire a real progress bar.
+// Aborts an XHR whose request body stops moving for STALL_MS — a dropped
+// connection otherwise leaves the upload "uploading" forever and blocks the
+// queue behind it. Disarmed once the body is fully sent, so slow server-side
+// processing after the upload isn't mistaken for a stall.
+const STALL_MS = 60000;
+function stallGuard(xhr, reject) {
+  let t = null;
+  const arm = () => { clearTimeout(t); t = setTimeout(() => { xhr.onabort = null; xhr.abort(); reject(new Error('Upload hängt — Verbindung unterbrochen')); }, STALL_MS); };
+  const disarm = () => clearTimeout(t);
+  xhr.upload.addEventListener('progress', arm);
+  xhr.upload.addEventListener('load', disarm);
+  xhr.addEventListener('loadend', disarm);
+  return arm;
+}
+
 function upload(path, file, extraFields = {}, onProgress, signal) {
   return new Promise((resolve, reject) => {
     const fd = new FormData();
@@ -103,6 +118,7 @@ function upload(path, file, extraFields = {}, onProgress, signal) {
     };
     xhr.onabort = () => reject(Object.assign(new Error('Abgebrochen'), { code: 'aborted' }));
     xhr.onerror = () => reject(new Error('Network error'));
+    stallGuard(xhr, reject)();
     xhr.send(fd);
   });
 }
@@ -129,6 +145,7 @@ function rawPut(path, blob, onProgress, signal) {
     };
     xhr.onabort = () => reject(Object.assign(new Error('Abgebrochen'), { code: 'aborted' }));
     xhr.onerror = () => reject(new Error('Network error'));
+    stallGuard(xhr, reject)();
     xhr.send(blob);
   });
 }
@@ -151,6 +168,7 @@ function pubRaw(path, blob, onProgress) {
       } catch { reject(new Error('Chunk failed (' + xhr.status + ')')); }
     };
     xhr.onerror = () => reject(new Error('Network error'));
+    stallGuard(xhr, reject)();
     xhr.send(blob);
   });
 }
