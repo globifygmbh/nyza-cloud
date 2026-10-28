@@ -1401,13 +1401,20 @@ final class FileRoutes
         // host strips Content-Length from PHP responses, which Safari won't
         // play. Access has already been checked by the caller.
         if (!$download && (str_starts_with($mime, 'video/') || str_starts_with($mime, 'audio/'))) {
-            $link = \Nyza\MediaLink::url($file, $abs);
+            try { $link = \Nyza\MediaLink::url($file, $abs); } catch (\Throwable $e) { $link = null; }
             if ($link !== null) {
                 return $res->withStatus(302)
                     ->withHeader('Location', $link)
-                    ->withHeader('Cache-Control', 'private, max-age=3600');
+                    ->withHeader('Cache-Control', 'private, max-age=3600')
+                    ->withHeader('X-Nyza-Media', 'link');
             }
         }
+
+        // If PHP-side output compression is what strips Content-Length on
+        // this host, switch it off for this response (harmless otherwise).
+        @ini_set('zlib.output_compression', '0');
+        if (function_exists('apache_setenv')) { @apache_setenv('no-gzip', '1'); }
+        header('X-Nyza-Media: stream');
 
         $size = (int) filesize($abs);
         $disp = ($download ? 'attachment' : 'inline') . '; filename="' . addslashes($file['name']) . '"';

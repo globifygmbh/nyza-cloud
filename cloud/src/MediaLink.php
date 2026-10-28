@@ -13,7 +13,7 @@ namespace Nyza;
  * with proper lengths and native Range support, so after PHP has done the
  * access check we redirect the browser to a static copy of the file.
  *
- * The "copy" is a hard link (no extra disk space; falls back to a symlink)
+ * The "copy" is a hard link (no extra disk space)
  * in media/ under an unguessable name: HMAC of the file + a day bucket. The
  * day is part of the name, links older than yesterday are swept, so a URL
  * stops working after one to two days. Returns null whenever this can't be
@@ -45,13 +45,23 @@ final class MediaLink
         $path = $dir . '/' . $name;
 
         if (!is_file($path)) {
-            if (!@link($abs, $path) && !@symlink($abs, $path)) return null;
+            // Hosts often disable link() (disable_functions); in PHP 8 calling
+            // it then throws an Error that @ doesn't silence. No symlink
+            // fallback: whether Apache follows symlinks here can't be known
+            // from PHP, and a link it refuses would break playback outright.
+            if (!self::tryLink($abs, $path)) return null;
             if (random_int(1, 20) === 1) self::sweep($dir, $day);
         }
 
         $script = (string)($_SERVER['SCRIPT_NAME'] ?? '/index.php');
         $base = rtrim(str_replace('\\', '/', dirname($script)), '/');
         return $base . '/' . self::DIR . '/' . $name;
+    }
+
+    private static function tryLink(string $target, string $path): bool
+    {
+        if (!function_exists('link')) return false;
+        try { return (bool) @link($target, $path); } catch (\Throwable $e) { return false; }
     }
 
     /** Drop links from before yesterday. */
