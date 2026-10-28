@@ -1,9 +1,9 @@
 // In-page PDF viewer (pdf.js). Used instead of an <iframe> because mobile
 // browsers don't render embedded PDFs reliably: Android Chrome shows nothing
 // and iOS Safari only the first page. Pages are drawn to canvases sized to
-// the container width, and only rendered once they scroll near the viewport,
-// so long documents stay light on phones. Loaded lazily (default export) so
-// pdf.js stays out of the main bundle.
+// the container width, rendered only while near the viewport and released
+// again when they scroll away, so long documents stay light on phones.
+// Loaded lazily (default export) so pdf.js stays out of the main bundle.
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as pdfjs from 'pdfjs-dist';
@@ -15,6 +15,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 4;
 const PAD = 12; // gutter around pages, px
+const MAX_PX = 4_000_000; // per page canvas (~16 MB of bitmap)
 
 function PdfPage({ doc, num, width, scrollRoot, onVisible }) {
   const wrapRef = useRef(null);
@@ -32,12 +33,14 @@ function PdfPage({ doc, num, width, scrollRoot, onVisible }) {
     return () => { off = true; };
   }, [doc, num]);
 
-  // Render when within ~1.5 screens; report the page that's in the middle.
+  // Render while within ~1 screen of the viewport and drop the bitmap again
+  // once it scrolls further away — keeping every page drawn is what made
+  // phones kill the tab (and reload it) on long, image-heavy PDFs.
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) setNear(true); },
-      { root: scrollRoot.current, rootMargin: '150% 0px' });
+    const io = new IntersectionObserver(([e]) => setNear(e.isIntersecting),
+      { root: scrollRoot.current, rootMargin: '100% 0px' });
     const mid = new IntersectionObserver(([e]) => { if (e.isIntersecting) onVisible(num); },
       { root: scrollRoot.current, rootMargin: '-50% 0px -50% 0px' });
     io.observe(el); mid.observe(el);
@@ -50,9 +53,13 @@ function PdfPage({ doc, num, width, scrollRoot, onVisible }) {
     let off = false;
     doc.getPage(num).then((p) => {
       if (off) return;
-      const scale = width / size.w;
-      const dpr = Math.min(window.devicePixelRatio || 1, 3);
-      const v = p.getViewport({ scale: scale * dpr });
+      // Sharp on retina, but each canvas capped at MAX_PX pixels (zoomed-in
+      // pages get slightly softer instead of exhausting the phone's canvas
+      // memory — iOS Safari has a hard total budget).
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const want = (width / size.w) * dpr;
+      const cap = Math.sqrt(MAX_PX / (size.w * size.h));
+      const v = p.getViewport({ scale: Math.min(want, cap) });
       const c = canvasRef.current;
       if (!c) return;
       c.width = Math.floor(v.width);
@@ -60,8 +67,23 @@ function PdfPage({ doc, num, width, scrollRoot, onVisible }) {
       task = p.render({ canvasContext: c.getContext('2d'), viewport: v });
       task.promise.catch(() => {}); // cancelled on re-render / unmount
     });
-    return () => { off = true; if (task) task.cancel(); };
+    return () => {
+      off = true;
+      if (task) task.cancel();
+    };
   }, [doc, num, near, size, width]);
+
+  // Free the bitmap — and pdf.js's decoded images for the page — when it
+  // leaves the window (or unmounts).
+  useEffect(() => {
+    if (near) return;
+    const c = canvasRef.current;
+    if (c && c.width) {
+      c.width = 0; c.height = 0;
+      doc.getPage(num).then((p) => p.cleanup()).catch(() => {});
+    }
+  }, [near]);
+  useEffect(() => () => { const c = canvasRef.current; if (c) { c.width = 0; c.height = 0; } }, []);
 
   const h = size ? Math.round(width * size.h / size.w) : Math.round(width * 1.414);
   return (

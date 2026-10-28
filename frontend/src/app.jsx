@@ -190,6 +190,13 @@ function mdTabStyle(active) {
 // ←/→ keys, on-screen arrows and touch-swipe between files. Single-file mode
 // (file + src + downloadHref) still works.
 const LABEL_DEFS = [['green', '#22c55e', 'Freigegeben', '1'], ['yellow', '#eab308', 'Auswahl', '2'], ['red', '#ef4444', 'Überarbeiten', '3']];
+// Header buttons of the (always dark) media viewer.
+const viewerBtn = (active, wide) => ({
+  height: 36, minWidth: 36, padding: wide ? '0 12px' : 0, gap: 6, borderRadius: 'var(--r-sm)', flexShrink: 0,
+  background: active ? 'var(--accent-grad)' : 'rgba(255,255,255,0.1)', border: 'none', cursor: 'pointer',
+  color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 540,
+});
+
 export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, srcFor, downloadFor, onSaveText, comments, info = true, metaFor, onLabel, onClose }) {
   const isMobile = useIsMobile();
   const gallery = Array.isArray(items) && items.length > 0;
@@ -277,26 +284,25 @@ export function MediaViewer({ file, src, downloadHref, items, startIndex = 0, sr
             ))}
           </div>
         )}
-        {comments && (
-          <Btn variant={showComments ? 'primary' : 'glass'} size="sm" icon={Ic.comment(14)} onClick={() => setShowComments((s) => !s)}>{isMobile ? '' : 'Kommentare'}</Btn>
-        )}
-        {info && (
-          <button onClick={() => setShowInfo((s) => !s)} title="Infos" style={{
-            width: 36, height: 36, borderRadius: 'var(--r-sm)', cursor: 'pointer', flexShrink: 0,
-            background: showInfo ? 'var(--accent-grad)' : 'rgba(255,255,255,0.08)', border: 'none',
-            color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontFamily: 'var(--font-display)',
-          }}>i</button>
-        )}
-        {curDl && (
-          <a href={curDl} download={cur.name} style={{ display: 'inline-flex', textDecoration: 'none' }}>
-            <Btn variant="glass" size="sm" icon={Ic.download(14)}>{isMobile ? '' : 'Download'}</Btn>
-          </a>
-        )}
-        <button onClick={onClose} title="Schließen (Esc)" style={{
-          width: 36, height: 36, borderRadius: 'var(--r-sm)', flexShrink: 0,
-          background: 'rgba(255,255,255,0.08)', border: 'none', cursor: 'pointer',
-          color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        }}>{Ic.close(18)}</button>
+        {/* Actions: own group pushed right (on phones it wraps under the
+            name), styled for the always-dark viewer — not the theme's glass
+            buttons, whose text turns dark in light mode. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+          {comments && (
+            <button onClick={() => setShowComments((s) => !s)} title="Kommentare" style={viewerBtn(showComments, !isMobile)}>
+              {Ic.comment(15)}{!isMobile && <span>Kommentare</span>}
+            </button>
+          )}
+          {info && (
+            <button onClick={() => setShowInfo((s) => !s)} title="Infos" style={{ ...viewerBtn(showInfo, false), fontWeight: 700, fontFamily: 'var(--font-display)' }}>i</button>
+          )}
+          {curDl && (
+            <a href={curDl} download={cur.name} title="Download" style={{ ...viewerBtn(false, !isMobile), textDecoration: 'none' }}>
+              {Ic.download(15)}{!isMobile && <span>Download</span>}
+            </a>
+          )}
+          <button onClick={onClose} title="Schließen (Esc)" style={viewerBtn(false, false)}>{Ic.close(18)}</button>
+        </div>
       </div>
 
       <div onClick={stop} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{
