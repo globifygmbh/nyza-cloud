@@ -64,14 +64,39 @@ final class Database
             . ') ENGINE=InnoDB'
         );
 
+        $dir = __DIR__ . '/../migrations/mysql';
+        $files = glob($dir . '/*.sql') ?: [];
+        sort($files);
+
+        // Cheap check first: nothing pending → no lock needed (every request
+        // runs this on connect).
         $applied = [];
         foreach ($pdo->query('SELECT version FROM schema_migrations')->fetchAll() as $r) {
             $applied[$r['version']] = true;
         }
+        $pending = array_filter($files, static fn($f) => !isset($applied[basename($f, '.sql')]));
+        if (!$pending) return;
 
-        $dir = __DIR__ . '/../migrations/mysql';
-        $files = glob($dir . '/*.sql') ?: [];
-        sort($files);
+        // Serialize runners. Right after an update, the updater and any request
+        // from an open tab both see the new migration as pending; without this
+        // both execute it and the loser fails ("Duplicate column name").
+        // After acquiring, re-read what is applied — the other runner may
+        // have just done it.
+        $got = (int)$pdo->query("SELECT GET_LOCK('nyza_migrate', 60)")->fetchColumn();
+        try {
+            $applied = [];
+            foreach ($pdo->query('SELECT version FROM schema_migrations')->fetchAll() as $r) {
+                $applied[$r['version']] = true;
+            }
+            self::applyPending($pdo, $files, $applied);
+        } finally {
+            if ($got === 1) $pdo->query("SELECT RELEASE_LOCK('nyza_migrate')");
+        }
+    }
+
+    /** @param string[] $files @param array<string,bool> $applied */
+    private static function applyPending(PDO $pdo, array $files, array $applied): void
+    {
         foreach ($files as $f) {
             $version = basename($f, '.sql');
             if (isset($applied[$version])) continue;
