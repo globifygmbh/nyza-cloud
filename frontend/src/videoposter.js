@@ -68,7 +68,11 @@ export async function capturePoster(source) {
       g.drawImage(v, 0, 0, c.width, c.height);
       // A black frame is either a fade-in or a video the browser couldn't
       // actually decode. Try once further in; never store a black poster.
-      if (isBlank(g, c) && d > 2) { await seek(d / 2); g.drawImage(v, 0, 0, c.width, c.height); }
+      // (Unknown duration — e.g. browser screen recordings — try 1 s in.)
+      if (isBlank(g, c)) {
+        const t = d > 0 ? d / 2 : 1;
+        if (t > 0.05) { await seek(t); g.drawImage(v, 0, 0, c.width, c.height); }
+      }
       if (isBlank(g, c)) return null;
       return await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.82));
     })();

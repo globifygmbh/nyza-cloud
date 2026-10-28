@@ -2,13 +2,14 @@
 // (client upload). Both fetch from public endpoints; no Bearer auth.
 
 import React, { useState, useEffect, useRef, Suspense } from 'react';
-import { API } from './api.js';
+import { API, getToken } from './api.js';
 import {
   Ic, Glass, Btn, IconBtn, NyzaWordmark, BrandMark, FileIcon, PhotoPlaceholder,
   humanSize, applyAccent,
 } from './system.jsx';
 import { Dropzone, UploadRow, MediaViewer, UploadReview, folderTone, DOC_STATUS, PdfViewer } from './app.jsx';
 import { uploadClient, uploadPortal, withUploadLock } from './uploads.js';
+import { ensurePoster, setPosterOwner } from './videoposter.js';
 import { toast } from './toast.jsx';
 import { openContextMenu } from './overlays.jsx';
 
@@ -76,8 +77,25 @@ function ShareFooter() {
 
 // Thumbnail for the public share view: real image preview (cached GD thumb),
 // play-overlay for video, icon otherwise.
-function ShareThumb({ token, f, password }) {
+// `owner`: the signed-in owner is looking at their own share — missing
+// video/PDF posters are captured here too (stored for every visitor), so
+// browsing a share works like browsing the folders in the app.
+function ShareThumb({ token, f, password, owner }) {
   const [ok, setOk] = useState(true);
+  const [made, setMade] = useState(false);
+  const ref = useRef(null);
+  const hasPoster = !!Number(f.has_poster) || made;
+  useEffect(() => {
+    if (!owner || hasPoster || (f.kind !== 'video' && f.kind !== 'pdf') || !ref.current) return;
+    let off = false;
+    const io = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      io.disconnect();
+      ensurePoster(f).then((done) => { if (done && !off) { setOk(true); setMade(true); } });
+    }, { rootMargin: '300px' });
+    io.observe(ref.current);
+    return () => { off = true; io.disconnect(); };
+  }, [owner, f.id, hasPoster]);
   const play = (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -85,13 +103,14 @@ function ShareThumb({ token, f, password }) {
       </div>
     </div>
   );
-  if ((f.kind === 'image' || ((f.kind === 'video' || f.kind === 'pdf') && Number(f.has_poster))) && ok) {
-    const img = <img src={API.shareThumbUrl(token, f.id, password)} alt={f.name} loading="lazy" onError={() => setOk(false)}
+  if ((f.kind === 'image' || ((f.kind === 'video' || f.kind === 'pdf') && hasPoster)) && ok) {
+    const src = API.shareThumbUrl(token, f.id, password);
+    const img = <img src={made ? src + (src.includes('?') ? '&' : '?') + 'p=1' : src} alt={f.name} loading="lazy" onError={() => setOk(false)}
       style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: f.kind === 'pdf' ? 'top' : 'center', display: 'block' }}/>;
     return f.kind === 'video' ? <div style={{ position: 'relative', width: '100%', height: '100%' }}>{img}{play}</div> : img;
   }
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+    <div ref={ref} style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
       <FileIcon kind={f.kind} size={30} tint={f.hue}/>
       {f.kind === 'video' && play}
     </div>
@@ -136,6 +155,17 @@ export function PublicSharePage({ token }) {
   };
   useEffect(() => { load(); }, []);
   useEffect(() => { if (state.data?.owner?.accent) applyAccent(state.data.owner.accent); }, [state.data?.owner?.accent]);
+
+  // Is the signed-in owner viewing their own share? Then missing posters
+  // get captured while browsing it (see ShareThumb).
+  const [isOwner, setIsOwner] = useState(false);
+  const ownerOfShare = state.data?.owner?.id;
+  useEffect(() => {
+    if (!ownerOfShare || !getToken()) return;
+    API.me().then((d) => {
+      if (d?.user?.id && Number(d.user.id) === Number(ownerOfShare)) { setPosterOwner(d.user.id); setIsOwner(true); }
+    }).catch(() => {});
+  }, [ownerOfShare]);
 
   // Hoisted above the early returns below (data defaults to {} while still
   // loading/erroring) so useInfiniteReveal is called unconditionally on
@@ -508,7 +538,7 @@ export function PublicSharePage({ token }) {
                     cursor: previewable ? 'pointer' : 'default',
                   }}>
                     <div style={{ aspectRatio: '1/1', background: 'var(--surface-hi)' }}>
-                      <ShareThumb token={token} f={f} password={password}/>
+                      <ShareThumb token={token} f={f} password={password} owner={isOwner}/>
                     </div>
                     <div style={{ padding: '8px 10px' }}>
                       <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
@@ -532,7 +562,7 @@ export function PublicSharePage({ token }) {
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface)'; }}
                   onClick={() => previewable && setViewing(f)}>
                     <div style={{ width: 44, height: 44, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: 'var(--surface-hi)' }}>
-                      <ShareThumb token={token} f={f} password={password}/>
+                      <ShareThumb token={token} f={f} password={password} owner={isOwner}/>
                     </div>
                     <div className="nyza-listrow-main" style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13.5, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
