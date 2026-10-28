@@ -85,9 +85,9 @@ function ShareThumb({ token, f, password }) {
       </div>
     </div>
   );
-  if ((f.kind === 'image' || (f.kind === 'video' && Number(f.has_poster))) && ok) {
+  if ((f.kind === 'image' || ((f.kind === 'video' || f.kind === 'pdf') && Number(f.has_poster))) && ok) {
     const img = <img src={API.shareThumbUrl(token, f.id, password)} alt={f.name} loading="lazy" onError={() => setOk(false)}
-      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}/>;
+      style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: f.kind === 'pdf' ? 'top' : 'center', display: 'block' }}/>;
     return f.kind === 'video' ? <div style={{ position: 'relative', width: '100%', height: '100%' }}>{img}{play}</div> : img;
   }
   return (

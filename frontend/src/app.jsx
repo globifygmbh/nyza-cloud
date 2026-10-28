@@ -1720,9 +1720,13 @@ function FileTile({ file, selected, selecting, onActivate, onContext, onToggleSe
         ) : file.kind === 'video' ? (
           <VideoThumb file={file} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}/>
         ) : (
-          <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <FileIcon kind={file.kind} size={32} tint={file.hue}/>
-          </div>
+          file.kind === 'pdf' ? (
+            <PdfThumb file={file} style={{ width: '100%', height: '100%', display: 'block' }}/>
+          ) : (
+            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <FileIcon kind={file.kind} size={32} tint={file.hue}/>
+            </div>
+          )
         )}
         {file.kind === 'video' && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
@@ -2138,19 +2142,17 @@ async function readDataTransferFiles(dataTransfer) {
   return out;
 }
 
-// Video tile image: the stored poster frame when there is one; otherwise the
-// <video> element itself (first frame, where the browser manages it) while a
-// poster is captured in the background once the tile scrolls into view.
-// While a capture is pending the tile shows a plain placeholder rather than
-// a <video> too, so a folder of videos doesn't open two streams per tile.
-export function VideoThumb({ file, style }) {
+// Tile image for videos and PDFs: the stored poster (video still / first
+// page) when there is one. Otherwise a fallback — the <video> itself, or the
+// file icon for a PDF — while a poster is captured in the background once
+// the tile scrolls into view (owner only; see videoposter.js).
+function PosterThumb({ file, style, fallback, placeholder }) {
   const [poster, setPoster] = useState(!!Number(file.has_poster));
-  const [broken, setBroken] = useState(false);
-  // No capture possible here (Safari, someone else's file) → plain <video> tile straight away.
+  // No capture possible here (Safari video, someone else's file) → fallback straight away.
   const initial = () => (canBackfill(file) ? 'idle' : 'failed');
   const [state, setState] = useState(initial); // idle | pending | failed
   const ref = useRef(null);
-  useEffect(() => { setPoster(!!Number(file.has_poster)); setBroken(false); setState(initial()); }, [file.id, file.has_poster]);
+  useEffect(() => { setPoster(!!Number(file.has_poster)); setState(initial()); }, [file.id, file.has_poster]);
   useEffect(() => {
     if (poster || !ref.current) return;
     let off = false;
@@ -2168,14 +2170,23 @@ export function VideoThumb({ file, style }) {
     // `state` is deliberately not a dependency: flipping it to 'pending'
     // must not tear down this effect and drop the capture's result.
   }, [file.id, poster]);
-  if (poster && !broken) {
+  if (poster) {
     // A 404 here means the server dropped a blank poster: capture a new one.
     return <img src={API.thumbUrl(file.id) + '&p=1'} alt={file.name} loading="lazy" onError={() => { setPoster(false); setState(initial()); }} style={style}/>;
   }
-  if (state === 'failed' || broken) {
-    return <video src={`${API.fileRawUrl(file.id)}?token=${getToken()}#t=0.1`} muted playsInline preload="metadata" style={{ ...style, pointerEvents: 'none' }}/>;
-  }
-  return <div ref={ref} style={{ ...style, background: 'var(--surface-hi)', minHeight: style?.height ? undefined : 140 }}/>;
+  if (state === 'failed') return fallback;
+  return <div ref={ref} style={{ ...style, minHeight: style?.height ? undefined : 140, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-hi)' }}>{placeholder}</div>;
+}
+
+export function VideoThumb({ file, style }) {
+  return <PosterThumb file={file} style={style}
+    fallback={<video src={`${API.fileRawUrl(file.id)}?token=${getToken()}#t=0.1`} muted playsInline preload="metadata" style={{ ...style, pointerEvents: 'none' }}/>}/>;
+}
+
+export function PdfThumb({ file, style, iconSize = 32 }) {
+  const icon = <FileIcon kind="pdf" size={iconSize} tint={file.hue}/>;
+  return <PosterThumb file={file} style={{ ...style, objectFit: 'cover', objectPosition: 'top' }} placeholder={icon}
+    fallback={<div style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{icon}</div>}/>;
 }
 
 // ───── Dropzone ────────────────────────────────────────────────────────────
@@ -3442,9 +3453,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           patchUpload(next.id, { status: 'uploading' });
           try {
             const res = await uploadOwner(next.file, next.folderId, (p) => patchUpload(next.id, { pct: p }), ctrl.signal, next.mode);
-            // Videos: capture the poster from the local file before the tile
+            // Videos/PDFs: capture the poster from the local file before the tile
             // renders (refreshAll below), so it doesn't start its own backfill.
-            if (next.kind === 'video' && res?.file?.id && !res.skipped) posterFromUpload(res.file.id, next.file)?.then((ok) => { if (ok) refreshAll(); });
+            if ((next.kind === 'video' || next.kind === 'pdf') && res?.file?.id && !res.skipped) posterFromUpload(res.file.id, next.file, next.kind)?.then((ok) => { if (ok) refreshAll(); });
             patchUpload(next.id, { status: 'done', pct: 1, file: null });
             refreshAll();
           } catch (err) {
@@ -4049,6 +4060,8 @@ function FilesView({
                       ? <img src={API.thumbUrl(f.id)} alt={f.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
                       : f.kind === 'video'
                       ? <VideoThumb file={f} style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
+                      : f.kind === 'pdf'
+                      ? <PdfThumb file={f} iconSize={26} style={{ width: '100%', height: '100%' }}/>
                       : <FileIcon kind={f.kind} size={26} tint={f.hue}/>}
                   </div>
                   <div style={{ fontSize: 11.5, fontWeight: 500, marginTop: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>

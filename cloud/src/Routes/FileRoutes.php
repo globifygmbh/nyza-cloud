@@ -256,9 +256,10 @@ final class FileRoutes
     }
 
     /**
-     * Store a still frame for a video as its thumbnail. The browser captures
-     * it (at upload, or later when the owner first sees the video) because
-     * shared hosting rarely has ffmpeg. Owner only; the JPEG is re-encoded
+     * Store a poster for a video (still frame) or PDF (first page) as its
+     * thumbnail. The browser captures it (at upload, or later when the owner
+     * first sees the file) because shared hosting rarely has ffmpeg or
+     * Ghostscript. Owner only; the JPEG is re-encoded
      * through GD when available so only a clean, size-capped image is kept.
      */
     public static function setPoster(Request $req, Response $res, array $args): Response
@@ -266,7 +267,7 @@ final class FileRoutes
         $uid = (int)$req->getAttribute('uid');
         $f = self::fetchOne($uid, (int)$args['id']);
         if (!$f) return Json::err($res, 'Not found', 404);
-        if (($f['kind'] ?? '') !== 'video') return Json::err($res, 'Nur für Videos', 422);
+        if (!in_array($f['kind'] ?? '', ['video', 'pdf'], true)) return Json::err($res, 'Nur für Videos und PDFs', 422);
 
         $up = $req->getUploadedFiles()['poster'] ?? null;
         if (!$up || $up->getError() !== UPLOAD_ERR_OK) return Json::err($res, 'Kein Bild', 422);
@@ -351,8 +352,9 @@ final class FileRoutes
         $src = Storage::abs($f['storage_path']);
         if (!is_file($src)) return Json::err($res, 'File missing on disk', 410);
 
-        // Videos: the stored poster frame, or 404 so the client falls back.
-        if (($f['kind'] ?? '') === 'video') {
+        // Videos and PDFs: the stored poster (frame / first page), or 404 so
+        // the client falls back — never the whole file as a "thumbnail".
+        if (in_array($f['kind'] ?? '', ['video', 'pdf'], true)) {
             $poster = Storage::root() . '/thumbs/' . (int)$f['id'] . '.jpg';
             if (!is_file($poster)) return Json::err($res, 'No poster', 404);
             // Posters captured while Safari couldn't decode the stream came out

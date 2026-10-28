@@ -1,4 +1,4 @@
-// Video posters: a still frame captured in the browser and stored on the
+// Posters — a video still or a PDF's first page — captured in the browser and stored on the
 // server as the video's thumbnail (POST /api/files/:id/poster). Shared
 // hosting rarely has ffmpeg, and the device that uploads a video can almost
 // always decode it (an iPhone its own HEVC .mov), so capture happens there —
@@ -88,9 +88,17 @@ export async function capturePoster(source) {
 const attempts = new Map();
 let chain = Promise.resolve();
 
-function schedule(id, source) {
+async function capture(kind, source) {
+  if (kind === 'pdf') {
+    const { renderPdfThumb } = await import('./pdfthumb.js');
+    return renderPdfThumb(source);
+  }
+  return capturePoster(source);
+}
+
+function schedule(id, kind, source) {
   const p = chain.then(async () => {
-    const blob = await capturePoster(source);
+    const blob = await capture(kind, source);
     if (!blob) return false;
     try { await API.setPoster(id, blob); return true; } catch { return false; }
   });
@@ -99,31 +107,35 @@ function schedule(id, source) {
   return p;
 }
 
-/** Right after an upload: capture from the local file (no download needed). */
-export function posterFromUpload(id, file) {
+/** Right after an upload: capture from the local file (no download needed).
+ *  kind: 'video' | 'pdf'. */
+export function posterFromUpload(id, file, kind = 'video') {
   if (!id || attempts.has(id)) return attempts.get(id);
-  return schedule(id, file);
+  return schedule(id, kind, file);
 }
 
 // Safari / anything WebKit (all iOS browsers): frames drawn from a streamed
 // video come out black there, and the extra stream per video competes with
 // playback on a host with few PHP workers. Capture from the local file at
-// upload works fine, so only the backfill is skipped.
+// upload works fine, so only the video backfill is skipped. PDFs render
+// through pdf.js and are fine everywhere.
 const WEBKIT = typeof navigator !== 'undefined'
   && (/^((?!chrome|chromium|crios|fxios|edg|android).)*safari/i.test(navigator.userAgent)
     || /iP(hone|ad|od)/.test(navigator.userAgent));
 
 /** Whether a missing poster for this file can be captured from the stream. */
 export function canBackfill(file) {
-  if (WEBKIT || !file?.id || ownerId == null) return false;
+  if (!file?.id || ownerId == null) return false;
+  if (file.kind === 'video' && WEBKIT) return false;
+  if (file.kind !== 'video' && file.kind !== 'pdf') return false;
   return file.user_id == null || Number(file.user_id) === Number(ownerId);
 }
 
-/** A video tile without a poster: backfill it from the stream (owner only).
+/** A tile without a poster: backfill it from the stream (owner only).
  *  Resolves true once a poster is stored. */
 export function ensurePoster(file) {
   if (!file?.id) return Promise.resolve(false);
   if (attempts.has(file.id)) return attempts.get(file.id);
   if (!canBackfill(file)) return Promise.resolve(false);
-  return schedule(file.id, `${API.fileRawUrl(file.id)}?token=${getToken() || ''}`);
+  return schedule(file.id, file.kind, `${API.fileRawUrl(file.id)}?token=${getToken() || ''}`);
 }
