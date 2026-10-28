@@ -1397,25 +1397,6 @@ final class FileRoutes
         // Force download for types that could execute script in our origin.
         if (Storage::mustDownload($mime)) $download = true;
 
-        // Playback of audio/video goes through Apache (see MediaLink): this
-        // host strips Content-Length from PHP responses, which Safari won't
-        // play. Access has already been checked by the caller.
-        if (!$download && (str_starts_with($mime, 'video/') || str_starts_with($mime, 'audio/'))) {
-            try { $link = \Nyza\MediaLink::url($file, $abs); } catch (\Throwable $e) { $link = null; }
-            if ($link !== null) {
-                return $res->withStatus(302)
-                    ->withHeader('Location', $link)
-                    ->withHeader('Cache-Control', 'private, max-age=3600')
-                    ->withHeader('X-Nyza-Media', 'link');
-            }
-        }
-
-        // If PHP-side output compression is what strips Content-Length on
-        // this host, switch it off for this response (harmless otherwise).
-        @ini_set('zlib.output_compression', '0');
-        if (function_exists('apache_setenv')) { @apache_setenv('no-gzip', '1'); }
-        header('X-Nyza-Media: stream');
-
         $size = (int) filesize($abs);
         $disp = ($download ? 'attachment' : 'inline') . '; filename="' . addslashes($file['name']) . '"';
 
@@ -1435,14 +1416,6 @@ final class FileRoutes
                 exit;
             }
             $end = min($end, $size - 1);
-            // Open-ended ranges ("bytes=N-") from media elements: answer with
-            // at most 8 MB. Browsers only need a little and simply ask for the
-            // next range; without the cap each of these requests streams the
-            // whole rest of a big video and pins a PHP worker for minutes.
-            $isMedia = str_starts_with($mime, 'video/') || str_starts_with($mime, 'audio/');
-            if ($isMedia && !$download && $m[1] !== '' && $m[2] === '') {
-                $end = min($end, $start + 8 * 1024 * 1024 - 1);
-            }
             $partial = true;
         }
         $length = $end - $start + 1;
@@ -1469,9 +1442,6 @@ final class FileRoutes
             echo $buf;
             $remaining -= strlen($buf);
             @flush();
-            // Stop as soon as the client is gone (seek, closed tab, a tile
-            // that got its poster) instead of pushing the rest into the void.
-            if (connection_aborted()) break;
         }
         fclose($fp);
         exit;

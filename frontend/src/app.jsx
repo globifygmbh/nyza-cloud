@@ -12,7 +12,7 @@ import {
 import { toast } from './toast.jsx';
 import { confirmDialog, openContextMenu } from './overlays.jsx';
 import { uploadOwner, withUploadLock } from './uploads.js';
-import { posterFromUpload, ensurePoster, setPosterOwner } from './videoposter.js';
+import { posterFromUpload, ensurePoster, canBackfill, setPosterOwner } from './videoposter.js';
 
 // Heavy CodeMirror editor — only fetched when a text file is actually opened.
 const CodeEditor = lazy(() => import('./editor.jsx'));
@@ -2146,9 +2146,11 @@ async function readDataTransferFiles(dataTransfer) {
 export function VideoThumb({ file, style }) {
   const [poster, setPoster] = useState(!!Number(file.has_poster));
   const [broken, setBroken] = useState(false);
-  const [state, setState] = useState('idle'); // idle | pending | failed
+  // No capture possible here (Safari, someone else's file) → plain <video> tile straight away.
+  const initial = () => (canBackfill(file) ? 'idle' : 'failed');
+  const [state, setState] = useState(initial); // idle | pending | failed
   const ref = useRef(null);
-  useEffect(() => { setPoster(!!Number(file.has_poster)); setBroken(false); setState('idle'); }, [file.id, file.has_poster]);
+  useEffect(() => { setPoster(!!Number(file.has_poster)); setBroken(false); setState(initial()); }, [file.id, file.has_poster]);
   useEffect(() => {
     if (poster || !ref.current) return;
     let off = false;
@@ -2168,7 +2170,7 @@ export function VideoThumb({ file, style }) {
   }, [file.id, poster]);
   if (poster && !broken) {
     // A 404 here means the server dropped a blank poster: capture a new one.
-    return <img src={API.thumbUrl(file.id) + '&p=1'} alt={file.name} loading="lazy" onError={() => { setPoster(false); setState('idle'); }} style={style}/>;
+    return <img src={API.thumbUrl(file.id) + '&p=1'} alt={file.name} loading="lazy" onError={() => { setPoster(false); setState(initial()); }} style={style}/>;
   }
   if (state === 'failed' || broken) {
     return <video src={`${API.fileRawUrl(file.id)}?token=${getToken()}#t=0.1`} muted playsInline preload="metadata" style={{ ...style, pointerEvents: 'none' }}/>;

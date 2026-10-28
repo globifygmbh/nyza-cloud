@@ -2,4 +2,3 @@ config.php
 storage/files/
 storage/temp/
 RECOVERY.txt
-media/

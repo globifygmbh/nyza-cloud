@@ -105,11 +105,25 @@ export function posterFromUpload(id, file) {
   return schedule(id, file);
 }
 
+// Safari / anything WebKit (all iOS browsers): frames drawn from a streamed
+// video come out black there, and the extra stream per video competes with
+// playback on a host with few PHP workers. Capture from the local file at
+// upload works fine, so only the backfill is skipped.
+const WEBKIT = typeof navigator !== 'undefined'
+  && (/^((?!chrome|chromium|crios|fxios|edg|android).)*safari/i.test(navigator.userAgent)
+    || /iP(hone|ad|od)/.test(navigator.userAgent));
+
+/** Whether a missing poster for this file can be captured from the stream. */
+export function canBackfill(file) {
+  if (WEBKIT || !file?.id || ownerId == null) return false;
+  return file.user_id == null || Number(file.user_id) === Number(ownerId);
+}
+
 /** A video tile without a poster: backfill it from the stream (owner only).
  *  Resolves true once a poster is stored. */
 export function ensurePoster(file) {
   if (!file?.id) return Promise.resolve(false);
   if (attempts.has(file.id)) return attempts.get(file.id);
-  if (ownerId == null || (file.user_id != null && Number(file.user_id) !== Number(ownerId))) return Promise.resolve(false);
+  if (!canBackfill(file)) return Promise.resolve(false);
   return schedule(file.id, `${API.fileRawUrl(file.id)}?token=${getToken() || ''}`);
 }
