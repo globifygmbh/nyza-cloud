@@ -35,7 +35,9 @@ export async function capturePoster(source) {
   v.muted = true;
   v.playsInline = true;
   v.setAttribute('playsinline', '');
-  v.preload = 'auto';
+  // 'metadata', not 'auto': we only need one frame, and Safari otherwise
+  // starts pulling the whole video.
+  v.preload = 'metadata';
   let timer;
   try {
     const work = (async () => {
@@ -43,8 +45,10 @@ export async function capturePoster(source) {
       await once(v, 'loadedmetadata');
       const d = Number.isFinite(v.duration) ? v.duration : 0;
       const at = d > 0 ? Math.min(1, d / 4) : 0;
-      if (v.readyState < 2) await once(v, 'loadeddata');
-      if (at > 0) { v.currentTime = at; await once(v, 'seeked'); }
+      // Seeking loads the frame it lands on; with preload=metadata Safari may
+      // never fire loadeddata on its own, so only wait for it at t=0.
+      if (at > 0) { const s = once(v, 'seeked'); v.currentTime = at; await s; }
+      else if (v.readyState < 2) await once(v, 'loadeddata');
       if (!v.videoWidth || !v.videoHeight) return null;
       const scale = Math.min(1, MAX_W / v.videoWidth);
       const c = document.createElement('canvas');

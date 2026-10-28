@@ -2141,26 +2141,38 @@ async function readDataTransferFiles(dataTransfer) {
 // Video tile image: the stored poster frame when there is one; otherwise the
 // <video> element itself (first frame, where the browser manages it) while a
 // poster is captured in the background once the tile scrolls into view.
+// While a capture is pending the tile shows a plain placeholder rather than
+// a <video> too, so a folder of videos doesn't open two streams per tile.
 export function VideoThumb({ file, style }) {
   const [poster, setPoster] = useState(!!Number(file.has_poster));
   const [broken, setBroken] = useState(false);
+  const [state, setState] = useState('idle'); // idle | pending | failed
   const ref = useRef(null);
-  useEffect(() => { setPoster(!!Number(file.has_poster)); setBroken(false); }, [file.id, file.has_poster]);
+  useEffect(() => { setPoster(!!Number(file.has_poster)); setBroken(false); setState('idle'); }, [file.id, file.has_poster]);
   useEffect(() => {
     if (poster || !ref.current) return;
     let off = false;
     const io = new IntersectionObserver(([e]) => {
       if (!e.isIntersecting) return;
       io.disconnect();
-      ensurePoster(file).then((ok) => { if (ok && !off) setPoster(true); });
+      setState('pending');
+      ensurePoster(file).then((ok) => {
+        if (off) return;
+        if (ok) setPoster(true); else setState('failed');
+      });
     }, { rootMargin: '300px' });
     io.observe(ref.current);
     return () => { off = true; io.disconnect(); };
+    // `state` is deliberately not a dependency: flipping it to 'pending'
+    // must not tear down this effect and drop the capture's result.
   }, [file.id, poster]);
   if (poster && !broken) {
     return <img src={API.thumbUrl(file.id) + '&p=1'} alt={file.name} loading="lazy" onError={() => setBroken(true)} style={style}/>;
   }
-  return <video ref={ref} src={`${API.fileRawUrl(file.id)}?token=${getToken()}#t=0.1`} muted playsInline preload="metadata" style={{ ...style, pointerEvents: 'none' }}/>;
+  if (state === 'failed' || broken) {
+    return <video src={`${API.fileRawUrl(file.id)}?token=${getToken()}#t=0.1`} muted playsInline preload="metadata" style={{ ...style, pointerEvents: 'none' }}/>;
+  }
+  return <div ref={ref} style={{ ...style, background: 'var(--surface-hi)', minHeight: style?.height ? undefined : 140 }}/>;
 }
 
 // ───── Dropzone ────────────────────────────────────────────────────────────

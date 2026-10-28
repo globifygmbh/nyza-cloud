@@ -1390,6 +1390,14 @@ final class FileRoutes
                 exit;
             }
             $end = min($end, $size - 1);
+            // Open-ended ranges ("bytes=N-") from media elements: answer with
+            // at most 8 MB. Browsers only need a little and simply ask for the
+            // next range; without the cap each of these requests streams the
+            // whole rest of a big video and pins a PHP worker for minutes.
+            $isMedia = str_starts_with($mime, 'video/') || str_starts_with($mime, 'audio/');
+            if ($isMedia && !$download && $m[1] !== '' && $m[2] === '') {
+                $end = min($end, $start + 8 * 1024 * 1024 - 1);
+            }
             $partial = true;
         }
         $length = $end - $start + 1;
@@ -1416,6 +1424,9 @@ final class FileRoutes
             echo $buf;
             $remaining -= strlen($buf);
             @flush();
+            // Stop as soon as the client is gone (seek, closed tab, a tile
+            // that got its poster) instead of pushing the rest into the void.
+            if (connection_aborted()) break;
         }
         fclose($fp);
         exit;
