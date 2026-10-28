@@ -32,6 +32,7 @@ final class FileRoutes
             $g->get('/{id}',                  [self::class, 'show']);
             $g->get('/{id}/raw',              [self::class, 'raw']);
             $g->get('/{id}/thumb',            [self::class, 'thumb']);
+            $g->post('/{id}/poster',          [self::class, 'setPoster']);
             $g->get('/{id}/meta',             [self::class, 'meta']);
             $g->post('/{id}/star',            [self::class, 'star']);
             $g->post('/{id}/pin',             [self::class, 'pinFile']);
@@ -254,6 +255,39 @@ final class FileRoutes
         return self::serveThumb($res, $f);
     }
 
+    /**
+     * Store a still frame for a video as its thumbnail. The browser captures
+     * it (at upload, or later when the owner first sees the video) because
+     * shared hosting rarely has ffmpeg. Owner only; the JPEG is re-encoded
+     * through GD when available so only a clean, size-capped image is kept.
+     */
+    public static function setPoster(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $f = self::fetchOne($uid, (int)$args['id']);
+        if (!$f) return Json::err($res, 'Not found', 404);
+        if (($f['kind'] ?? '') !== 'video') return Json::err($res, 'Nur für Videos', 422);
+
+        $up = $req->getUploadedFiles()['poster'] ?? null;
+        if (!$up || $up->getError() !== UPLOAD_ERR_OK) return Json::err($res, 'Kein Bild', 422);
+        if ($up->getSize() > 3 * 1024 * 1024) return Json::err($res, 'Bild zu groß', 413);
+
+        $thumbDir = Storage::root() . '/thumbs';
+        if (!is_dir($thumbDir)) @mkdir($thumbDir, 0775, true);
+        $dst = $thumbDir . '/' . (int)$f['id'] . '.jpg';
+        $tmp = $dst . '.upload';
+        $up->moveTo($tmp);
+
+        $gi = @getimagesize($tmp);
+        if (!$gi || $gi[2] !== IMAGETYPE_JPEG) { @unlink($tmp); return Json::err($res, 'Kein JPEG', 422); }
+        $ok = extension_loaded('gd') ? self::makeThumb($tmp, $dst, 'image/jpeg', 480) : @rename($tmp, $dst);
+        @unlink($tmp);
+        if (!$ok) return Json::err($res, 'Vorschau konnte nicht gespeichert werden', 500);
+
+        Database::pdo()->prepare('UPDATE files SET has_poster = 1 WHERE id = ?')->execute([(int)$f['id']]);
+        return Json::ok($res, ['ok' => true]);
+    }
+
     /** Rich metadata for the info panel: dimensions + EXIF (camera, lens, aperture…). */
     public static function meta(Request $req, Response $res, array $args): Response
     {
@@ -298,6 +332,18 @@ final class FileRoutes
     {
         $src = Storage::abs($f['storage_path']);
         if (!is_file($src)) return Json::err($res, 'File missing on disk', 410);
+
+        // Videos: the stored poster frame, or 404 so the client falls back.
+        if (($f['kind'] ?? '') === 'video') {
+            $poster = Storage::root() . '/thumbs/' . (int)$f['id'] . '.jpg';
+            if (!is_file($poster)) return Json::err($res, 'No poster', 404);
+            return $res
+                ->withHeader('Content-Type', 'image/jpeg')
+                ->withHeader('Content-Length', (string)filesize($poster))
+                ->withHeader('Cache-Control', 'private, max-age=86400')
+                ->withHeader('X-Content-Type-Options', 'nosniff')
+                ->withBody(new Stream(fopen($poster, 'rb')));
+        }
 
         $mime = strtolower($f['mime_type'] ?? '');
         $canThumb = extension_loaded('gd') && in_array($mime, ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], true);
@@ -1273,7 +1319,7 @@ final class FileRoutes
         $delta = $newSize - (int)$existing['size'];
         $pdo = Database::pdo();
         $kind = Storage::kindFromMime($mime);
-        $pdo->prepare('UPDATE files SET storage_path = ?, mime_type = ?, size = ?, kind = ? WHERE id = ? AND user_id = ?')
+        $pdo->prepare('UPDATE files SET storage_path = ?, mime_type = ?, size = ?, kind = ?, has_poster = 0 WHERE id = ? AND user_id = ?')
             ->execute([$newRel, $mime, $newSize, $kind, (int)$existing['id'], $uid]);
         self::adjustStorage($uid, $delta);
         if ($oldRel !== '' && $oldRel !== $newRel) Storage::deleteRel($oldRel);

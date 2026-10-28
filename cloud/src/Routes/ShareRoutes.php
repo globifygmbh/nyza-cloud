@@ -404,7 +404,7 @@ final class ShareRoutes
             // Direct children only for the top level — subfolders are
             // browsed separately (GET .../folder/{fid}) instead of every
             // nested file being dumped into one flat list with no structure.
-            $files = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
+            $files = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at, has_poster FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
             $files->execute([(int)$share['folder_id']]);
             $sub = $pdo->prepare(
                 'SELECT f.id, f.name, f.tone, '
@@ -430,7 +430,7 @@ final class ShareRoutes
             $payload['total_files'] = (int)($totals['c'] ?? 0);
             $payload['total_size'] = (int)($totals['s'] ?? 0);
         } elseif ($share['file_id']) {
-            $f = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at FROM files WHERE id = ?');
+            $f = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at, has_poster FROM files WHERE id = ?');
             $f->execute([(int)$share['file_id']]);
             $payload['file'] = $f->fetch() ?: null;
         }
@@ -467,7 +467,7 @@ final class ShareRoutes
         );
         $sub->execute([$fid]);
 
-        $files = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
+        $files = $pdo->prepare('SELECT id, name, kind, size, mime_type, hue, label, taken_at, created_at, has_poster FROM files WHERE folder_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
         $files->execute([$fid]);
 
         return Json::ok($res, [

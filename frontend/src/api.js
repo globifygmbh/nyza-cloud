@@ -219,6 +219,7 @@ export const API = {
   deleteFile:  (id) => request('/api/files/' + id, { method: 'DELETE' }),
   fileRawUrl:  (id) => url('/api/files/' + id + '/raw'),
   thumbUrl:    (id) => url('/api/files/' + id + '/thumb') + '?token=' + (getToken() || ''),
+  setPoster:   (id, blob) => { const fd = new FormData(); fd.append('poster', blob, 'poster.jpg'); return request('/api/files/' + id + '/poster', { method: 'POST', body: fd }); },
   unzipFile:   (id) => request('/api/files/' + id + '/unzip', { method: 'POST', body: {} }),
   createText:  (body) => request('/api/files/text', { method: 'POST', body }),
   saveContent: (id, content) => request('/api/files/' + id + '/content', { method: 'PUT', body: { content } }),

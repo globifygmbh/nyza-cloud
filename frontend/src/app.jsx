@@ -12,6 +12,7 @@ import {
 import { toast } from './toast.jsx';
 import { confirmDialog, openContextMenu } from './overlays.jsx';
 import { uploadOwner, withUploadLock } from './uploads.js';
+import { posterFromUpload, ensurePoster, setPosterOwner } from './videoposter.js';
 
 // Heavy CodeMirror editor — only fetched when a text file is actually opened.
 const CodeEditor = lazy(() => import('./editor.jsx'));
@@ -1717,9 +1718,7 @@ function FileTile({ file, selected, selecting, onActivate, onContext, onToggleSe
             onError={() => setImgOk(false)}
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}/>
         ) : file.kind === 'video' ? (
-          <video src={`${API.fileRawUrl(file.id)}?token=${getToken()}#t=0.1`}
-            muted preload="metadata"
-            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', pointerEvents: 'none' }}/>
+          <VideoThumb file={file} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}/>
         ) : (
           <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <FileIcon kind={file.kind} size={32} tint={file.hue}/>
@@ -2137,6 +2136,31 @@ async function readDataTransferFiles(dataTransfer) {
   };
   for (const e of topEntries) await walk(e, '');
   return out;
+}
+
+// Video tile image: the stored poster frame when there is one; otherwise the
+// <video> element itself (first frame, where the browser manages it) while a
+// poster is captured in the background once the tile scrolls into view.
+export function VideoThumb({ file, style }) {
+  const [poster, setPoster] = useState(!!Number(file.has_poster));
+  const [broken, setBroken] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => { setPoster(!!Number(file.has_poster)); setBroken(false); }, [file.id, file.has_poster]);
+  useEffect(() => {
+    if (poster || !ref.current) return;
+    let off = false;
+    const io = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      io.disconnect();
+      ensurePoster(file).then((ok) => { if (ok && !off) setPoster(true); });
+    }, { rootMargin: '300px' });
+    io.observe(ref.current);
+    return () => { off = true; io.disconnect(); };
+  }, [file.id, poster]);
+  if (poster && !broken) {
+    return <img src={API.thumbUrl(file.id) + '&p=1'} alt={file.name} loading="lazy" onError={() => setBroken(true)} style={style}/>;
+  }
+  return <video ref={ref} src={`${API.fileRawUrl(file.id)}?token=${getToken()}#t=0.1`} muted playsInline preload="metadata" style={{ ...style, pointerEvents: 'none' }}/>;
 }
 
 // ───── Dropzone ────────────────────────────────────────────────────────────
@@ -3273,6 +3297,7 @@ function GlobalSearch({ onClose, onPickFile, onPickFolder, onGoto }) {
 
 // ───── Dashboard (router shell) ────────────────────────────────────────────
 export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
+  setPosterOwner(user?.id);
   const [view, setView] = useState('grid');
   const [sort, setSort] = useState({ by: 'date', dir: 'desc' });
   const [search, setSearch] = useState('');
@@ -3401,7 +3426,10 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
           uploadCtrls.current[next.id] = ctrl;
           patchUpload(next.id, { status: 'uploading' });
           try {
-            await uploadOwner(next.file, next.folderId, (p) => patchUpload(next.id, { pct: p }), ctrl.signal, next.mode);
+            const res = await uploadOwner(next.file, next.folderId, (p) => patchUpload(next.id, { pct: p }), ctrl.signal, next.mode);
+            // Videos: capture the poster from the local file before the tile
+            // renders (refreshAll below), so it doesn't start its own backfill.
+            if (next.kind === 'video' && res?.file?.id && !res.skipped) posterFromUpload(res.file.id, next.file)?.then((ok) => { if (ok) refreshAll(); });
             patchUpload(next.id, { status: 'done', pct: 1, file: null });
             refreshAll();
           } catch (err) {
@@ -4005,7 +4033,7 @@ function FilesView({
                     {f.kind === 'image'
                       ? <img src={API.thumbUrl(f.id)} alt={f.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
                       : f.kind === 'video'
-                      ? <video src={`${API.fileRawUrl(f.id)}?token=${getToken()}#t=0.1`} muted preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }}/>
+                      ? <VideoThumb file={f} style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
                       : <FileIcon kind={f.kind} size={26} tint={f.hue}/>}
                   </div>
                   <div style={{ fontSize: 11.5, fontWeight: 500, marginTop: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.name}</div>
@@ -4151,7 +4179,7 @@ function GalleryOwnerView({ files, onOpen, onLabel, onContext, selected, selectM
                 style={{ cursor: 'pointer', position: 'relative', outline: sel ? '3px solid var(--accent)' : 'none', outlineOffset: -3, borderRadius: 'var(--r-md)' }}>
                 {f.kind === 'image'
                   ? <img src={API.thumbUrl(f.id)} alt={f.name} loading="lazy" style={{ width: '100%', display: 'block', borderRadius: 'var(--r-md)' }}/>
-                  : <video src={`${API.fileRawUrl(f.id)}?token=${getToken()}#t=0.1`} muted preload="metadata" style={{ width: '100%', display: 'block', borderRadius: 'var(--r-md)', pointerEvents: 'none' }}/>
+                  : <VideoThumb file={f} style={{ width: '100%', display: 'block', borderRadius: 'var(--r-md)' }}/>
                 }
                 {onToggleSelect && (
                   <div onClick={(e) => { e.stopPropagation(); onToggleSelect(f.id); }} style={{

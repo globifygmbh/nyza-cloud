@@ -78,20 +78,22 @@ function ShareFooter() {
 // play-overlay for video, icon otherwise.
 function ShareThumb({ token, f, password }) {
   const [ok, setOk] = useState(true);
-  if (f.kind === 'image' && ok) {
-    return <img src={API.shareThumbUrl(token, f.id, password)} alt={f.name} loading="lazy" onError={() => setOk(false)}
+  const play = (
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="#fff"><path d="M3 1l9 6-9 6z"/></svg>
+      </div>
+    </div>
+  );
+  if ((f.kind === 'image' || (f.kind === 'video' && Number(f.has_poster))) && ok) {
+    const img = <img src={API.shareThumbUrl(token, f.id, password)} alt={f.name} loading="lazy" onError={() => setOk(false)}
       style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}/>;
+    return f.kind === 'video' ? <div style={{ position: 'relative', width: '100%', height: '100%' }}>{img}{play}</div> : img;
   }
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
       <FileIcon kind={f.kind} size={30} tint={f.hue}/>
-      {f.kind === 'video' && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="13" height="13" viewBox="0 0 14 14" fill="#fff"><path d="M3 1l9 6-9 6z"/></svg>
-          </div>
-        </div>
-      )}
+      {f.kind === 'video' && play}
     </div>
   );
 }
@@ -293,7 +295,9 @@ export function PublicSharePage({ token }) {
                     onClick={() => { if (selMode) { setSel((s) => { const n = new Set(s); n.has(f.id) ? n.delete(f.id) : n.add(f.id); return n; }); } else { setViewing(f); } }}>
                     {f.kind === 'video' ? (
                       <div style={{ position: 'relative' }}>
-                        <video src={API.shareFileUrl(token, f.id, password) + '#t=0.1'} preload="metadata" muted playsInline style={{ width: '100%', display: 'block' }}/>
+                        {Number(f.has_poster)
+                          ? <img src={API.shareThumbUrl(token, f.id, password)} alt={f.name} loading="lazy" style={{ width: '100%', display: 'block' }}/>
+                          : <video src={API.shareFileUrl(token, f.id, password) + '#t=0.1'} preload="metadata" muted playsInline style={{ width: '100%', display: 'block' }}/>}
                         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
                           <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                             <svg width="18" height="18" viewBox="0 0 14 14" fill="#fff"><path d="M3 1l9 6-9 6z"/></svg>
