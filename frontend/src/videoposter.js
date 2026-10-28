@@ -27,6 +27,15 @@ function once(el, ev) {
   });
 }
 
+function isBlank(g, c) {
+  const px = g.getImageData(0, 0, c.width, c.height).data;
+  const step = Math.max(4, Math.floor(px.length / 4 / 400) * 4); // ~400 samples
+  for (let i = 0; i < px.length; i += step) {
+    if (px[i] > 24 || px[i + 1] > 24 || px[i + 2] > 24) return false;
+  }
+  return true;
+}
+
 /** Grab one frame (~1 s in, or a quarter in for short clips) as a JPEG Blob.
  *  `source` is a File/Blob or a same-origin URL. Resolves null on failure. */
 export async function capturePoster(source) {
@@ -47,14 +56,20 @@ export async function capturePoster(source) {
       const at = d > 0 ? Math.min(1, d / 4) : 0;
       // Seeking loads the frame it lands on; with preload=metadata Safari may
       // never fire loadeddata on its own, so only wait for it at t=0.
-      if (at > 0) { const s = once(v, 'seeked'); v.currentTime = at; await s; }
+      const seek = async (t) => { const s = once(v, 'seeked'); v.currentTime = t; await s; };
+      if (at > 0) await seek(at);
       else if (v.readyState < 2) await once(v, 'loadeddata');
       if (!v.videoWidth || !v.videoHeight) return null;
       const scale = Math.min(1, MAX_W / v.videoWidth);
       const c = document.createElement('canvas');
       c.width = Math.round(v.videoWidth * scale);
       c.height = Math.round(v.videoHeight * scale);
-      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      const g = c.getContext('2d');
+      g.drawImage(v, 0, 0, c.width, c.height);
+      // A black frame is either a fade-in or a video the browser couldn't
+      // actually decode. Try once further in; never store a black poster.
+      if (isBlank(g, c) && d > 2) { await seek(d / 2); g.drawImage(v, 0, 0, c.width, c.height); }
+      if (isBlank(g, c)) return null;
       return await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.82));
     })();
     const timeout = new Promise((r) => { timer = setTimeout(() => r(null), TIMEOUT_MS); });

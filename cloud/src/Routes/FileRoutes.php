@@ -280,12 +280,30 @@ final class FileRoutes
 
         $gi = @getimagesize($tmp);
         if (!$gi || $gi[2] !== IMAGETYPE_JPEG) { @unlink($tmp); return Json::err($res, 'Kein JPEG', 422); }
+        if (self::isBlank($tmp)) { @unlink($tmp); return Json::err($res, 'Leeres Bild', 422); }
         $ok = extension_loaded('gd') ? self::makeThumb($tmp, $dst, 'image/jpeg', 480) : @rename($tmp, $dst);
         @unlink($tmp);
         if (!$ok) return Json::err($res, 'Vorschau konnte nicht gespeichert werden', 500);
 
         Database::pdo()->prepare('UPDATE files SET has_poster = 1 WHERE id = ?')->execute([(int)$f['id']]);
         return Json::ok($res, ['ok' => true]);
+    }
+
+    /** True for an (almost) uniformly black JPEG. Needs GD; without it, false. */
+    private static function isBlank(string $jpeg): bool
+    {
+        if (!extension_loaded('gd')) return false;
+        $img = @imagecreatefromjpeg($jpeg);
+        if (!$img) return false;
+        $s = imagecreatetruecolor(16, 16);
+        imagecopyresampled($s, $img, 0, 0, 0, 0, 16, 16, imagesx($img), imagesy($img));
+        $max = 0;
+        for ($y = 0; $y < 16; $y++) for ($x = 0; $x < 16; $x++) {
+            $c = imagecolorat($s, $x, $y);
+            $max = max($max, ($c >> 16) & 255, ($c >> 8) & 255, $c & 255);
+        }
+        imagedestroy($img); imagedestroy($s);
+        return $max < 24;
     }
 
     /** Rich metadata for the info panel: dimensions + EXIF (camera, lens, aperture…). */
@@ -337,6 +355,14 @@ final class FileRoutes
         if (($f['kind'] ?? '') === 'video') {
             $poster = Storage::root() . '/thumbs/' . (int)$f['id'] . '.jpg';
             if (!is_file($poster)) return Json::err($res, 'No poster', 404);
+            // Posters captured while Safari couldn't decode the stream came out
+            // solid black. Those compress to a few KB — check only small ones,
+            // drop them, and let the client capture a new one.
+            if (filesize($poster) < 8192 && self::isBlank($poster)) {
+                @unlink($poster);
+                Database::pdo()->prepare('UPDATE files SET has_poster = 0 WHERE id = ?')->execute([(int)$f['id']]);
+                return Json::err($res, 'No poster', 404);
+            }
             return $res
                 ->withHeader('Content-Type', 'image/jpeg')
                 ->withHeader('Content-Length', (string)filesize($poster))
@@ -1370,6 +1396,18 @@ final class FileRoutes
         $mime = $file['mime_type'] ?: 'application/octet-stream';
         // Force download for types that could execute script in our origin.
         if (Storage::mustDownload($mime)) $download = true;
+
+        // Playback of audio/video goes through Apache (see MediaLink): this
+        // host strips Content-Length from PHP responses, which Safari won't
+        // play. Access has already been checked by the caller.
+        if (!$download && (str_starts_with($mime, 'video/') || str_starts_with($mime, 'audio/'))) {
+            $link = \Nyza\MediaLink::url($file, $abs);
+            if ($link !== null) {
+                return $res->withStatus(302)
+                    ->withHeader('Location', $link)
+                    ->withHeader('Cache-Control', 'private, max-age=3600');
+            }
+        }
 
         $size = (int) filesize($abs);
         $disp = ($download ? 'attachment' : 'inline') . '; filename="' . addslashes($file['name']) . '"';

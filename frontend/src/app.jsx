@@ -2167,7 +2167,8 @@ export function VideoThumb({ file, style }) {
     // must not tear down this effect and drop the capture's result.
   }, [file.id, poster]);
   if (poster && !broken) {
-    return <img src={API.thumbUrl(file.id) + '&p=1'} alt={file.name} loading="lazy" onError={() => setBroken(true)} style={style}/>;
+    // A 404 here means the server dropped a blank poster: capture a new one.
+    return <img src={API.thumbUrl(file.id) + '&p=1'} alt={file.name} loading="lazy" onError={() => { setPoster(false); setState('idle'); }} style={style}/>;
   }
   if (state === 'failed' || broken) {
     return <video src={`${API.fileRawUrl(file.id)}?token=${getToken()}#t=0.1`} muted playsInline preload="metadata" style={{ ...style, pointerEvents: 'none' }}/>;
