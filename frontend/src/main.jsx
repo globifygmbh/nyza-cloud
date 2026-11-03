@@ -46,6 +46,16 @@ if (typeof document !== 'undefined') {
   }
 }
 
+// A dynamic import whose chunk no longer exists (the tab predates an update)
+// → reload once into the current version instead of failing silently.
+if (typeof window !== 'undefined') {
+  window.addEventListener('vite:preloadError', (e) => {
+    let again = false;
+    try { again = sessionStorage.getItem('nyza.chunkReload') === '1'; sessionStorage.setItem('nyza.chunkReload', '1'); } catch {}
+    if (!again) { e.preventDefault(); location.reload(); }
+  });
+}
+
 function Root() {
   const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme') || 'dark');
   const [user, setUser] = useState(null);

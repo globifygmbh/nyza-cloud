@@ -15,8 +15,23 @@ import { uploadOwner, withUploadLock } from './uploads.js';
 import { posterFromUpload, ensurePoster, canBackfill, setPosterOwner } from './videoposter.js';
 
 // Heavy CodeMirror editor — only fetched when a text file is actually opened.
-const CodeEditor = lazy(() => import('./editor.jsx'));
-export const PdfViewer = lazy(() => import('./pdfviewer.jsx'));
+// After an update the build's chunk files get new names and the old ones are
+// deleted, so a tab still running the previous version can't load e.g. the
+// PDF reader any more — it rendered nothing until a manual reload. Reload
+// once by ourselves instead (guarded, so a real outage can't loop).
+export function lazyReload(load) {
+  return lazy(() => load().then((m) => {
+    try { sessionStorage.removeItem('nyza.chunkReload'); } catch {}
+    return m;
+  }, (err) => {
+    let again = false;
+    try { again = sessionStorage.getItem('nyza.chunkReload') === '1'; sessionStorage.setItem('nyza.chunkReload', '1'); } catch {}
+    if (!again) { location.reload(); return new Promise(() => {}); }
+    throw err;
+  }));
+}
+const CodeEditor = lazyReload(() => import('./editor.jsx'));
+export const PdfViewer = lazyReload(() => import('./pdfviewer.jsx'));
 
 // Track viewport for mobile-responsive chrome.
 function useIsMobile() {
@@ -1392,7 +1407,7 @@ function SortControl({ sort, onSort }) {
           padding: 6, minWidth: 160,
         }}>
           {opts.map((o) => (
-            <button key={o.id} onClick={() => { onSort({ by: o.id, dir: sort.by === o.id && sort.dir === 'desc' ? 'asc' : 'desc' }); setOpen(false); }}
+            <button key={o.id} onClick={() => { onSort({ by: o.id, dir: sort.by === o.id ? (sort.dir === 'desc' ? 'asc' : 'desc') : (o.id === 'name' ? 'asc' : 'desc') }); setOpen(false); }}
               style={{
                 display: 'flex', width: '100%', alignItems: 'center', gap: 8, padding: '8px 10px',
                 borderRadius: 'var(--r-sm)', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
@@ -1612,15 +1627,16 @@ function KebabMenu({ items }) {
 }
 
 // ───── Folder card ─────────────────────────────────────────────────────────
-function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDropFiles, onContext, sharedBy }) {
+function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDropFiles, onContext, sharedBy, selecting, selected, onToggleSelect }) {
   const t = folderTone(folder.tone);
   const tones = t.h;
   const cc = t.c;
   const [dropOver, setDropOver] = useState(false);
   return (
-    <div onClick={onClick} onContextMenu={onContext ? (e) => { e.preventDefault(); e.stopPropagation(); onContext(folder, e); } : undefined} style={{
-      borderRadius: 'var(--r-lg)', background: 'var(--surface)',
+    <div data-folder-card onClick={selecting && onToggleSelect ? () => onToggleSelect(folder.id) : onClick} onContextMenu={onContext ? (e) => { e.preventDefault(); e.stopPropagation(); onContext(folder, e); } : undefined} style={{
+      borderRadius: 'var(--r-lg)', background: 'var(--surface)', position: 'relative',
       border: '1px solid ' + (dropOver ? 'var(--accent)' : 'var(--border)'),
+      outline: selected ? '3px solid var(--accent)' : 'none', outlineOffset: -2,
       backdropFilter: 'blur(20px) saturate(160%)', WebkitBackdropFilter: 'blur(20px) saturate(160%)',
       overflow: 'hidden', cursor: 'pointer',
       transition: 'transform .25s cubic-bezier(.2,.8,.2,1), box-shadow .25s, border-color .15s',
@@ -1652,9 +1668,16 @@ function FolderCard({ folder, onClick, onShare, onDelete, onRename, onMove, onDr
           fontSize: 10, fontWeight: 600, letterSpacing: 0.4, background: 'rgba(0,0,0,0.5)', color: '#fff',
           backdropFilter: 'blur(10px)', textTransform: 'uppercase',
         }}>{folder.kind === 'gallery' ? '◇ Galerie' : '◇ Dateien'}</div>
-        {!!folder.pinned && (
+        {!!folder.pinned && !selecting && (
           <div style={{ position: 'absolute', top: 10, left: 10, color: 'var(--accent)', background: 'rgba(0,0,0,0.45)', borderRadius: 999, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)' }}
             title="Angepinnt">{Ic.pin(13)}</div>
+        )}
+        {onToggleSelect && (selecting || selected) && (
+          <div onClick={(e) => { e.stopPropagation(); onToggleSelect(folder.id); }} title="Auswählen" style={{
+            position: 'absolute', top: 10, left: 10, width: 26, height: 26, borderRadius: 8, cursor: 'pointer', zIndex: 2,
+            background: selected ? 'var(--accent)' : 'rgba(0,0,0,0.45)', border: '2px solid ' + (selected ? 'var(--accent)' : 'rgba(255,255,255,0.8)'),
+            color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(6px)',
+          }}>{selected && Ic.check(15)}</div>
         )}
         {sharedBy && (
           <div title={'Geteilt von ' + sharedBy} style={{
@@ -2078,7 +2101,15 @@ function FileList({ files, selected, onOpen, onToggleSelect, onDragSelect, onSha
 }
 
 // ───── Selection action bar ────────────────────────────────────────────────
-function SelectionBar({ count, onZip, onMove, onDelete, onClear, busy }) {
+// Label for a mixed selection, e.g. "2 Ordner · 3 Dateien".
+function selectionLabel(folders, files) {
+  const parts = [];
+  if (folders) parts.push(folders + ' Ordner');
+  if (files) parts.push(files + (files === 1 ? ' Datei' : ' Dateien'));
+  return parts.join(' · ') + ' ausgewählt';
+}
+
+function SelectionBar({ count, label, onZip, onMove, onDelete, onClear, busy }) {
   return (
     <div className="nyza-selectionbar" style={{
       position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)', zIndex: 90,
@@ -2088,9 +2119,9 @@ function SelectionBar({ count, onZip, onMove, onDelete, onClear, busy }) {
       boxShadow: '0 1px 0 var(--inner-hi) inset, 0 20px 50px -10px rgba(0,0,0,0.5)',
       animation: 'slideUp 0.25s cubic-bezier(0.2,0.8,0.2,1)',
     }}>
-      <span style={{ fontSize: 13, fontWeight: 540 }}>{count} ausgewählt</span>
+      <span style={{ fontSize: 13, fontWeight: 540 }}>{label || (count + ' ausgewählt')}</span>
       <div style={{ width: 1, height: 22, background: 'var(--border)' }}/>
-      <Btn variant="glass" size="sm" icon={busy ? Ic.loader(13) : Ic.download(13)} disabled={busy} onClick={onZip}>ZIP</Btn>
+      {onZip && <Btn variant="glass" size="sm" icon={busy ? Ic.loader(13) : Ic.download(13)} disabled={busy} onClick={onZip}>ZIP</Btn>}
       {onMove && <Btn variant="glass" size="sm" icon={Ic.folder(13)} onClick={onMove}>Verschieben</Btn>}
       <Btn variant="glass" size="sm" icon={Ic.trash(13)} onClick={onDelete}>Löschen</Btn>
       <IconBtn size={30} title="Auswahl aufheben" onClick={onClear}>{Ic.close(15)}</IconBtn>
@@ -3030,7 +3061,7 @@ function folderTreeRows(allFolders, excludeId) {
   const excluded = new Set();
   if (excludeId) {
     const walk = (id) => { excluded.add(id); (byParent[id] || []).forEach((c) => walk(c.id)); };
-    walk(excludeId);
+    (Array.isArray(excludeId) ? excludeId : [excludeId]).forEach(walk);
   }
   const rows = [];
   const visit = (parentId, depth) => {
@@ -3240,18 +3271,27 @@ function EmptyHint({ icon, title, desc, actions }) {
   );
 }
 
-// Apply client-side sort to a file array.
-function sortFiles(files, sort) {
+// Apply client-side sort (Name / Größe / Datum) to files or folders. Pinned
+// items stay on top, as the server lists them.
+function sortItems(items, sort, sizeOf, dateOf) {
   const dir = sort.dir === 'asc' ? 1 : -1;
-  const copy = [...files];
+  const copy = [...items];
   copy.sort((a, b) => {
+    const p = (Number(b.pinned) || 0) - (Number(a.pinned) || 0);
+    if (p) return p;
     let r = 0;
-    if (sort.by === 'name') r = a.name.localeCompare(b.name, 'de');
-    else if (sort.by === 'size') r = (a.size || 0) - (b.size || 0);
-    else r = String(a.created_at || '').localeCompare(String(b.created_at || ''));
+    if (sort.by === 'name') r = String(a.name || '').localeCompare(String(b.name || ''), 'de', { numeric: true, sensitivity: 'base' });
+    else if (sort.by === 'size') r = (sizeOf(a) || 0) - (sizeOf(b) || 0);
+    else r = String(dateOf(a) || '').localeCompare(String(dateOf(b) || ''));
     return r * dir;
   });
   return copy;
+}
+function sortFiles(files, sort) {
+  return sortItems(files, sort, (f) => f.size, (f) => f.created_at);
+}
+function sortFolders(folders, sort) {
+  return sortItems(folders, sort, (f) => f.total_size, (f) => f.updated_at || f.created_at);
 }
 
 // ───── Global search (⌘K / Ctrl+K palette) ─────────────────────────────────
@@ -3346,7 +3386,12 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
     try { history.pushState({ nyzaNav: nav }, ''); } catch {}
   }, [nav]);
   useEffect(() => {
-    const onPop = (e) => { const n = e.state && e.state.nyzaNav; if (n && n.name) { navPopping.current = true; setNav(n); setSearch(''); } };
+    const onPop = (e) => {
+      // Back while a file is open closes the file — it doesn't also step
+      // the folder view back underneath it.
+      if (viewingRef.current) { viewingRef.current = false; setViewing(null); return; }
+      const n = e.state && e.state.nyzaNav; if (n && n.name) { navPopping.current = true; setNav(n); setSearch(''); }
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
@@ -3375,9 +3420,19 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const [moveTarget, setMoveTarget] = useState(null); // { kind:'folder'|'files', folder?, ids? }
   const [allFolders, setAllFolders] = useState([]);
   const [viewing, setViewing] = useState(null); // { items, index }
+  // The open viewer gets its own history entry, so the browser / phone back
+  // button closes it; closing it otherwise pops that entry again.
+  const viewingRef = useRef(false);
   const openViewer = (f, list) => {
     const items = (list && list.length) ? list : [f];
+    if (!viewingRef.current) { try { history.pushState({ nyzaNav: nav, nyzaViewer: true }, ''); } catch {} }
+    viewingRef.current = true;
     setViewing({ items, index: Math.max(0, items.findIndex((x) => x.id === f.id)) });
+  };
+  const closeViewer = () => {
+    if (viewingRef.current && history.state && history.state.nyzaViewer) { history.back(); return; } // onPop closes it
+    viewingRef.current = false;
+    setViewing(null);
   };
   const [uploads, setUploads] = useState([]);
   const [showUploadProgress, setShowUploadProgress] = useState(false);
@@ -3405,7 +3460,14 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const fileKind = (f) => f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : f.type === 'application/pdf' ? 'pdf' : 'doc';
 
   const loadStats = useCallback(() => { API.stats().then(setStats).catch(() => {}); }, []);
-  const loadFolders = useCallback(() => { API.folders().then((d) => setFolders(d.folders || [])).catch(() => {}); }, []);
+  // Until the first answer arrives the home view shows a skeleton — not
+  // "Noch keine Ordner", which on a slow phone connection looked like
+  // everything was gone until a reload.
+  const [foldersLoaded, setFoldersLoaded] = useState(false);
+  const loadFolders = useCallback(() => {
+    API.folders().then((d) => { setFolders(d.folders || []); setFoldersLoaded(true); })
+      .catch((e) => { setFoldersLoaded(true); toast(e.message || 'Ordner konnten nicht geladen werden', 'error'); });
+  }, []);
   // Full (nested) folder tree — needed up-front by the Verschieben-, Upload-Link-
   // and Portal-Ordner-Picker, not just lazily when Verschieben is opened.
   const loadAllFolders = useCallback(() => { API.allFolders().then((d) => setAllFolders(d.folders || [])).catch(() => {}); }, []);
@@ -3553,6 +3615,11 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
   const doMove = async (destFolderId) => {
     try {
       if (moveTarget.kind === 'folder') await API.moveFolder(moveTarget.folder.id, destFolderId);
+      else if (moveTarget.kind === 'mixed') {
+        for (const id of moveTarget.folderIds) await API.moveFolder(id, destFolderId);
+        if (moveTarget.fileIds.length) await API.moveFiles(moveTarget.fileIds, destFolderId);
+        moveTarget.onDone && moveTarget.onDone();
+      }
       else await API.moveFiles(moveTarget.ids, destFolderId);
       toast('Verschoben', 'success');
       setMoveTarget(null);
@@ -3612,6 +3679,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
       <div className={isMobile ? 'nyza-mobile-content' : ''} style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {nav.name === 'files' && (
           <FilesView
+            onMoveSelection={(sel) => openMove({ kind: 'mixed', ...sel })} onBulkChanged={refreshAll} foldersLoading={!foldersLoaded}
             user={user} stats={stats} folders={folders} view={view} setView={setView}
             sort={sort} setSort={setSort} search={search} setSearch={setSearch}
             refreshTick={refreshTick}
@@ -3654,7 +3722,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
         )}
         {nav.name === 'folder' && (
           <FolderView
-            folderId={nav.id} view={view} setView={setView} sort={sort} setSort={setSort}
+            key={nav.id}
+            folderId={nav.id}
+            onMoveSelection={(sel) => openMove({ kind: 'mixed', ...sel })} view={view} setView={setView} sort={sort} setSort={setSort}
             search={search} setSearch={setSearch} refreshTick={refreshTick}
             onBack={() => setNav({ name: 'files' })}
             onOpenFolder={(f) => setNav({ name: 'folder', id: f.id })}
@@ -3790,9 +3860,9 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
       )}
       {moveTarget && (
         <MoveModal
-          title={moveTarget.kind === 'folder' ? 'Ordner verschieben nach' : 'Dateien verschieben nach'}
+          title={moveTarget.kind === 'folder' ? 'Ordner verschieben nach' : moveTarget.kind === 'mixed' ? 'Auswahl verschieben nach' : 'Dateien verschieben nach'}
           allFolders={allFolders}
-          excludeId={moveTarget.kind === 'folder' ? moveTarget.folder.id : null}
+          excludeId={moveTarget.kind === 'folder' ? moveTarget.folder.id : moveTarget.kind === 'mixed' ? moveTarget.folderIds : null}
           onMove={doMove} onClose={() => setMoveTarget(null)}/>
       )}
       {searchOpen && (
@@ -3817,7 +3887,7 @@ export function Dashboard({ user, onUserChange, theme, onTheme, basePath }) {
             remove: async (f, cid) => { await API.delFileComment(f.id, cid); return (await API.fileComments(f.id)).comments || []; },
             askName: false, defaultName: user?.name || '',
           }}
-          onClose={() => setViewing(null)}/>
+          onClose={closeViewer}/>
       )}
 
       {isMobile && (
@@ -3957,14 +4027,16 @@ function FilesView({
   user, stats, folders, view, setView, sort, setSort, search, setSearch, refreshTick,
   onOpenFolder, onShareFolder, onRenameFolder, onRenameFile, onMoveFolder, onFolderColor, onMoveFiles, onDeleteFolder, onNewFolder, onUpload, onNewText, onUploadLink,
   onOpenFile, onShareFile, onShareInternalFile, onShareInternalFolder, onDeleteFile, onToggleStar, onDropFiles, onUnzip, onVersions, onDownloadFile,
-  onPinFile, onPinFolder, onLockFolder, onUnlockFolder,
+  onPinFile, onPinFolder, onLockFolder, onUnlockFolder, onMoveSelection, onBulkChanged, foldersLoading,
 }) {
   const [recent, setRecent] = useState([]);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [results, setResults] = useState(null); // server search results when searching
   const [showRecentPref, setShowRecentPref] = useState(() => localStorage.getItem('nyza.showRecent') !== '0');
   const [selected, setSelected] = useState(new Set());
+  const [selectedFolders, setSelectedFolders] = useState(new Set());
   const [selectMode, setSelectMode] = useState(false);
+  const [zipBusy, setZipBusy] = useState(false);
 
   useEffect(() => {
     API.recentFiles().then((d) => setRecent(d.files || [])).catch(() => setRecent([]));
@@ -3995,7 +4067,19 @@ function FilesView({
     return () => { off = true; clearTimeout(t); };
   }, [search, searching, refreshTick]);
 
-  const fFolders = folders;
+  const fFolders = sortFolders(folders, sort);
+  const selecting = selectMode || selected.size > 0 || selectedFolders.size > 0;
+  const toggleFolderSelect = (id) => setSelectedFolders((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const clearSel = () => { setSelected(new Set()); setSelectedFolders(new Set()); setSelectMode(false); };
+  const doBulkDelete = async () => {
+    const nf = selectedFolders.size, nd = selected.size;
+    const what = [nf ? nf + ' Ordner (mit Inhalt)' : '', nd ? nd + (nd === 1 ? ' Datei' : ' Dateien') : ''].filter(Boolean).join(' und ');
+    if (!await confirmDialog({ title: 'In den Papierkorb?', message: `${what} ${nf + nd === 1 ? 'wird' : 'werden'} in den Papierkorb verschoben.`, confirmLabel: 'In Papierkorb', danger: true })) return;
+    for (const id of selected) { try { await API.deleteFile(id); } catch {} }
+    for (const id of selectedFolders) { try { await API.deleteFolder(id); } catch {} }
+    toast('In den Papierkorb', 'success'); clearSel(); onBulkChanged && onBulkChanged();
+  };
+  const doBulkMove = () => onMoveSelection && onMoveSelection({ fileIds: [...selected], folderIds: [...selectedFolders], onDone: clearSel });
 
   const toggleSelect = (id) => {
     const list = results?.files || [];
@@ -4027,7 +4111,7 @@ function FilesView({
   return (
     <>
       <TopBar crumbs={['Meine Dateien']} view={view} onView={setView} search={search} onSearch={setSearch} sort={sort} onSort={setSort}
-        selectMode={selectMode} onSelectMode={(v) => { setSelectMode(v); if (!v) setSelected(new Set()); }}/>
+        selectMode={selectMode} onSelectMode={(v) => { setSelectMode(v); if (!v) { setSelected(new Set()); setSelectedFolders(new Set()); } }}/>
       <div data-scroll onContextMenu={bgCtx} style={{ flex: 1, overflow: 'auto', padding: '28px 32px 80px' }}>
         <div className="nyza-hero-actions" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap', marginBottom: 24 }}>
           <Btn variant="glass" size="md" icon={Ic.fileGen(15)} onClick={onNewText}>Notiz</Btn>
@@ -4086,11 +4170,12 @@ function FilesView({
               <>
                 {results.folders.length > 0 && (
                   <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 28 }}>
-                    {results.folders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)}/>)}
+                    {sortFolders(results.folders, sort).map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)}
+                      selecting={selecting} selected={selectedFolders.has(f.id)} onToggleSelect={toggleFolderSelect}/>)}
                   </div>
                 )}
                 {results.files.length > 0 && (
-                  <FileGrid files={results.files} selected={selected} onOpen={(f) => onOpenFile(f, results.files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onContext={fileCtx} selectMode={selectMode}/>
+                  <FileGrid files={sortFiles(results.files, sort)} selected={selected} onOpen={(f) => onOpenFile(f, results.files)} onToggleSelect={toggleSelect} onDragSelect={setSelected} onToggleStar={onToggleStar} onContext={fileCtx} selectMode={selectMode}/>
                 )}
               </>
             )}
@@ -4099,13 +4184,16 @@ function FilesView({
           <>
             <SectionHeader title="Ordner" count={fFolders.length} action={<Btn variant="glass" size="sm" icon={Ic.plus(13)} onClick={() => setCreatingFolder(true)}>Neuer Ordner</Btn>}/>
             {creatingFolder && <NewFolderModal onCreate={(n, k, t, tid) => { onNewFolder(n, k, t, tid); setCreatingFolder(false); }} onCancel={() => setCreatingFolder(false)}/>}
-            {fFolders.length > 0 ? (
+            {foldersLoading ? (
+              <SkeletonGrid count={4}/>
+            ) : fFolders.length > 0 ? (
               <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 36 }}>
                 {fFolders.map((f) => <FolderCard key={f.id} folder={f}
                   onClick={() => onOpenFolder(f)} onShare={() => onShareFolder(f)}
                   onRename={() => onRenameFolder(f)} onMove={() => onMoveFolder(f)}
                   onDropFiles={onDropFiles} onContext={folderCtx}
-                  onDelete={() => onDeleteFolder(f)}/>)}
+                  onDelete={() => onDeleteFolder(f)}
+                  selecting={selecting} selected={selectedFolders.has(f.id)} onToggleSelect={toggleFolderSelect}/>)}
               </div>
             ) : !creatingFolder && (
               <EmptyHint icon={Ic.folder(40)} title="Noch keine Ordner" desc="Lege einen Ordner an oder lade direkt Dateien hoch."
@@ -4124,6 +4212,10 @@ function FilesView({
           </>
         )}
       </div>
+      {(selected.size > 0 || selectedFolders.size > 0) && (
+        <SelectionBar count={selected.size + selectedFolders.size} label={selectionLabel(selectedFolders.size, selected.size)} busy={zipBusy}
+          onZip={selectedFolders.size ? null : () => downloadZip([...selected], setZipBusy, clearSel)} onMove={doBulkMove} onDelete={doBulkDelete} onClear={clearSel}/>
+      )}
     </>
   );
 }
@@ -4279,11 +4371,12 @@ function FolderView({
   folderId, view, setView, sort, setSort, search, setSearch, refreshTick,
   onBack, onOpenFolder, onUpload, onNewText, onShareFolder, onMoveFiles, onUploadLink, onOpenFile, onShareFile, onDeleteFile, onToggleStar, onDropFiles, afterChange,
   onUnzip, onVersions, onDownloadFile, onMoveFolder, onRenameFolder, onRenameFile, onShareFolderItem, onShareInternalFile, onShareInternalFolder, onDeleteFolder, onFolderColor, onLabelFile,
-  onPinFile, onPinFolder, onLockFolder, onUnlockFolder,
+  onPinFile, onPinFolder, onLockFolder, onUnlockFolder, onMoveSelection,
 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(new Set());
+  const [selectedFolders, setSelectedFolders] = useState(new Set());
   const [selectMode, setSelectMode] = useState(false);
   const [zipBusy, setZipBusy] = useState(false);
   const [over, setOver] = useState(false);
@@ -4295,13 +4388,17 @@ function FolderView({
   const [locked, setLocked] = useState(false);
   const [pin, setPin] = useState('');
 
+  // Only the newest request may update the view: on a slow connection an
+  // older reply (e.g. from before a refresh) must not overwrite a newer one.
+  const loadSeq = useRef(0);
   const load = useCallback(() => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     API.folder(folderId)
-      .then((d) => { setData(d); setLocked(false); setLoading(false); })
-      .catch((e) => { if (e.status === 423 || e.code === 'locked') { setLocked(true); setData(null); } else { toast(e.message, 'error'); } setLoading(false); });
+      .then((d) => { if (seq !== loadSeq.current) return; setData(d); setLocked(false); setLoading(false); })
+      .catch((e) => { if (seq !== loadSeq.current) return; if (e.status === 423 || e.code === 'locked') { setLocked(true); setData(null); } else { toast(e.message, 'error'); } setLoading(false); });
   }, [folderId]);
-  useEffect(() => { load(); setSelected(new Set()); }, [load, refreshTick]);
+  useEffect(() => { load(); setSelected(new Set()); setSelectedFolders(new Set()); }, [load, refreshTick]);
 
   const submitPin = () => {
     if (!pin) return;
@@ -4336,8 +4433,8 @@ function FolderView({
   if (!data) return null;
 
   const folder = data.folder;
-  const subfolders = data.subfolders || [];
   const q = search.toLowerCase();
+  const subfolders = sortFolders((data.subfolders || []).filter((f) => !q || f.name.toLowerCase().includes(q)), sort);
   const files = sortFiles((data.files || [])
     .filter((f) => !q || f.name.toLowerCase().includes(q))
     .filter((f) => !tagFilter || idsFor(f.id).includes(tagFilter))
@@ -4354,12 +4451,20 @@ function FolderView({
     if (id === '__all__') { setSelected((s) => s.size === files.length ? new Set() : new Set(files.map((f) => f.id))); return; }
     setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   };
-  const clearSel = () => { setSelected(new Set()); setSelectMode(false); };
+  const toggleFolderSelect = (id) => setSelectedFolders((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const clearSel = () => { setSelected(new Set()); setSelectedFolders(new Set()); setSelectMode(false); };
   const doZip = () => downloadZip([...selected], setZipBusy, clearSel);
   const doBulkDelete = async () => {
-    if (!await confirmDialog({ title: 'In den Papierkorb?', message: `${selected.size} ${selected.size === 1 ? 'Datei wird' : 'Dateien werden'} in den Papierkorb verschoben.`, confirmLabel: 'In Papierkorb', danger: true })) return;
+    const nf = selectedFolders.size, nd = selected.size;
+    const what = [nf ? nf + ' Ordner (mit Inhalt)' : '', nd ? nd + (nd === 1 ? ' Datei' : ' Dateien') : ''].filter(Boolean).join(' und ');
+    if (!await confirmDialog({ title: 'In den Papierkorb?', message: `${what} ${nf + nd === 1 ? 'wird' : 'werden'} in den Papierkorb verschoben.`, confirmLabel: 'In Papierkorb', danger: true })) return;
     for (const id of selected) { try { await API.deleteFile(id); } catch {} }
+    for (const id of selectedFolders) { try { await API.deleteFolder(id); } catch {} }
     toast('In den Papierkorb', 'success'); clearSel(); load(); afterChange && afterChange();
+  };
+  const doBulkMove = () => {
+    if (!selectedFolders.size) { onMoveFiles([...selected]); return; }
+    onMoveSelection && onMoveSelection({ fileIds: [...selected], folderIds: [...selectedFolders], onDone: clearSel });
   };
   const fileCtx = (f, e, selectThis) => {
     const multi = selected.has(f.id) && selected.size > 1;
@@ -4394,7 +4499,7 @@ function FolderView({
       <TopBar
         crumbs={[{ label: 'Meine Dateien', onClick: onBack }, ...((data.path || []).map((a) => ({ label: a.name, onClick: () => onOpenFolder({ id: a.id }) }))), folder.name]}
         view={view} onView={setView} search={search} onSearch={setSearch} sort={sort} onSort={setSort}
-        selectMode={selectMode} onSelectMode={(v) => { setSelectMode(v); if (!v) setSelected(new Set()); }}
+        selectMode={selectMode} onSelectMode={(v) => { setSelectMode(v); if (!v) { setSelected(new Set()); setSelectedFolders(new Set()); } }}
         right={
           <div style={{ display: 'flex', gap: 8 }}>
             <Btn variant="glass" size="sm" icon={Ic.fileGen(14)} onClick={() => onNewText(folder.id)}>Notiz</Btn>
@@ -4421,7 +4526,8 @@ function FolderView({
         {creatingSubfolder && <NewFolderModal title="Neuer Unterordner" onCreate={async (n, k, t) => { try { await API.newFolder({ name: n, kind: k, tone: t, parent_id: folderId }); toast('Unterordner erstellt', 'success'); setCreatingSubfolder(false); load(); } catch (e) { toast(e.message, 'error'); } }} onCancel={() => setCreatingSubfolder(false)}/>}
         {subfolders.length > 0 && (
           <div className="nyza-folder-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14, marginBottom: 32 }}>
-            {subfolders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)} onDropFiles={onDropFiles} onContext={folderCtx}/>)}
+            {subfolders.map((f) => <FolderCard key={f.id} folder={f} onClick={() => onOpenFolder(f)} onDropFiles={onDropFiles} onContext={folderCtx}
+              selecting={selectMode || selected.size > 0 || selectedFolders.size > 0} selected={selectedFolders.has(f.id)} onToggleSelect={toggleFolderSelect}/>)}
           </div>
         )}
 
@@ -4472,7 +4578,10 @@ function FolderView({
         )}
       </div>
 
-      {selected.size > 0 && <SelectionBar count={selected.size} busy={zipBusy} onZip={doZip} onMove={() => onMoveFiles([...selected])} onDelete={doBulkDelete} onClear={clearSel}/>}
+      {(selected.size > 0 || selectedFolders.size > 0) && (
+        <SelectionBar count={selected.size + selectedFolders.size} label={selectionLabel(selectedFolders.size, selected.size)} busy={zipBusy}
+          onZip={selectedFolders.size ? null : doZip} onMove={doBulkMove} onDelete={doBulkDelete} onClear={clearSel}/>
+      )}
       {tagTarget && (
         <TagPickerModal title={'Tags · ' + tagTarget.name} tags={tags}
           selectedIds={new Set(idsFor(tagTarget.id))}
