@@ -7766,6 +7766,7 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   const [companies, setCompanies] = useState([]);
   const [profileCompany, setProfileCompany] = useState(() => getCompany());
   const [logoV, setLogoV] = useState(null); // Rechnungs-Logo version, null = none
+  const [agbSlug, setAgbSlug] = useState(null);
   const [logoBusy, setLogoBusy] = useState(false);
   const logoRef = useRef(null);
 
@@ -7782,6 +7783,7 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
     API.companyProfile(profileCompany).then((d) => {
       const p = d.profile || {};
       setLogoV(d.logo_v || null);
+      setAgbSlug(d.agb_slug || null);
       // Seed sensible default texts for any of these fields that were never filled in,
       // so the field shows a ready-to-use draft instead of an empty box. Not saved
       // until the user hits "Speichern".
@@ -7806,7 +7808,11 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   const save = async () => {
     if (!profileCompany) { toast('Keine Firma gewählt', 'error'); return; }
     setBusy(true);
-    try { await API.saveCompanyProfile(profileCompany, { ...c, accounting_mode: accountingMode }); toast('Gespeichert', 'success'); }
+    try {
+      const r = await API.saveCompanyProfile(profileCompany, { ...c, accounting_mode: accountingMode });
+      if (r?.agb_slug !== undefined) setAgbSlug(r.agb_slug || null);
+      toast('Gespeichert', 'success');
+    }
     catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
   };
 
@@ -7953,6 +7959,29 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
                 {row(field('Einleitung Angebot', 'offer_intro', { ph: 'Sehr geehrte…', area: true }), field('Einleitung Rechnung', 'invoice_intro', { ph: 'Sehr geehrte…', area: true }))}
                 {row(field('Fußtext Angebot', 'offer_footer', { ph: 'Gültigkeitshinweis', area: true }), field('Fußtext Rechnung', 'invoice_footer', { ph: 'Zahlungshinweis', area: true }))}
                 {row(field('Grußformel', 'closing', { ph: 'Mit freundlichen Grüßen', area: true }))}
+              </>)}
+
+              {card('AGB', <>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 540, color: 'var(--fg-2)' }}>Allgemeine Geschäftsbedingungen</span>
+                  <textarea value={c.agb_text || ''} onChange={(e) => set('agb_text', e.target.value)} rows={10}
+                    placeholder={'§ 1 Geltungsbereich\n…'} style={{ ...fld, height: 'auto', padding: '10px 12px', resize: 'vertical', lineHeight: 1.5 }}/>
+                </label>
+                {(() => {
+                  const href = agbSlug ? location.origin + BASE + '/agbs/' + agbSlug : null;
+                  if (!href) return <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 10 }}>Nach dem Speichern bekommst du hier einen öffentlichen Link zu den AGB.</div>;
+                  const live = (c.agb_text || '').trim() !== '';
+                  return (
+                    <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 12, color: 'var(--fg-2)', fontWeight: 540 }}>Öffentlicher Link:</span>
+                      <a href={href} target="_blank" rel="noopener" style={{ fontSize: 12.5, color: 'var(--accent)', wordBreak: 'break-all' }}>{href}</a>
+                      <Btn variant="glass" size="sm" icon={Ic.copy(13)} onClick={() => {
+                        navigator.clipboard?.writeText(href).then(() => toast('Link kopiert', 'success'), () => toast(href));
+                      }}>Kopieren</Btn>
+                      {!live && <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>(ohne Text nicht erreichbar)</span>}
+                    </div>
+                  );
+                })()}
               </>)}
 
               {card('Mahnwesen', <>

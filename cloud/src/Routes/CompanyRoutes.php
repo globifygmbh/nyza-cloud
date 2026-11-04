@@ -89,7 +89,11 @@ final class CompanyRoutes
         if (!self::visible($uid, $id)) return Json::err($res, 'Not found', 404);
         if (!CompanyContext::isMember($uid, $id)) return Json::err($res, 'Kein Zugriff', 403, 'forbidden');
         $logo = self::logoFile($id);
-        return Json::ok($res, ['profile' => CompanyContext::profile($id), 'logo_v' => $logo ? (string)@filemtime($logo) : null]);
+        return Json::ok($res, [
+            'profile' => CompanyContext::profile($id),
+            'logo_v' => $logo ? (string)@filemtime($logo) : null,
+            'agb_slug' => AgbRoutes::slugOf($id),
+        ]);
     }
 
     public static function putProfile(Request $req, Response $res, array $args): Response
@@ -106,7 +110,9 @@ final class CompanyRoutes
             return Json::err($res, 'Profil zu groß', 413);
         }
         Database::pdo()->prepare('UPDATE companies SET profile = ? WHERE id = ?')->execute([$json, $id]);
-        return Json::ok($res, ['profile' => $merged]);
+        // First AGB text → give the company its public /agbs/{slug} link.
+        $slug = trim((string)($merged['agb_text'] ?? '')) !== '' ? AgbRoutes::ensureSlug($id) : AgbRoutes::slugOf($id);
+        return Json::ok($res, ['profile' => $merged, 'agb_slug' => $slug]);
     }
 
     // ───── Invoice logo ────────────────────────────────────────────────────────

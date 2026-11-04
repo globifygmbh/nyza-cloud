@@ -17,6 +17,7 @@ use Nyza\Json;
 use Nyza\Middleware\CorsMiddleware;
 use Nyza\Routes\ActivityRoutes;
 use Nyza\Routes\AdminRoutes;
+use Nyza\Routes\AgbRoutes;
 use Nyza\Routes\AuthRoutes;
 use Nyza\Routes\CalendarRoutes;
 use Nyza\Routes\CompanyRoutes;
@@ -315,6 +316,7 @@ PdfRoutes::mount($app);
 SnippetRoutes::mount($app);
 PushRoutes::mount($app);
 WebDavRoutes::mount($app);
+AgbRoutes::mount($app);
 
 /** Asset / SPA fallback for all non-API GETs. */
 $app->get('/{path:.+}', function ($req, $res, $args) use ($assetsRoot, $serveSpa, $basePath) {
