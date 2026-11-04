@@ -158,6 +158,11 @@ final class Updater
         $copied = $this->copyTree($src, $this->cloudDir);
         $add($copied . ' Dateien aktualisiert (config.php + storage/ unangetastet).');
 
+        // Drop cached bytecode so the next requests run the new PHP files
+        // (hosts with opcache.validate_timestamps=0 otherwise keep serving the
+        // old code — e.g. PDFs rendered with the previous template).
+        if (function_exists('opcache_reset')) { @opcache_reset(); }
+
         // 5) Run new migrations.
         try {
             Database::migrate(Database::pdo());
