@@ -1085,7 +1085,7 @@ final class DocumentRoutes
         ]);
         $bankCol = self::footerLines([
             $cv('bank_name') !== '' ? 'Bank: ' . $cv('bank_name') : '',
-            $cv('iban') !== '' ? 'IBAN: ' . $cv('iban') : '',
+            $cv('iban') !== '' ? 'IBAN: ' . trim(chunk_split(strtoupper(preg_replace('/\s+/', '', $cv('iban'))), 4, ' ')) : '',
             $cv('bic') !== '' ? 'BIC: ' . $cv('bic') : '',
             $cv('owner') !== '' ? 'Inhaber: ' . $cv('owner') : '',
         ]);
@@ -1119,6 +1119,36 @@ final class DocumentRoutes
 
         $netMoney = self::money($net);
         $grossMoney = self::money($gross);
+
+        // Payment box (invoices only): everything needed for the transfer in
+        // one light-grey block — amount, due date, bank data and the invoice
+        // number as Verwendungszweck. Offers have nothing to pay yet; their
+        // bank data stays in the page footer.
+        $payBox = '';
+        if (!$isOffer && $cv('iban') !== '' && $gross > 0) {
+            $due = '';
+            try {
+                $term = $cid > 0 ? CompanyContext::paymentTermDays($cid) : 14;
+                $due = (new \DateTimeImmutable(substr((string)$d['doc_date'], 0, 10)))->modify('+' . $term . ' days')->format('d.m.Y');
+            } catch (\Throwable $e) {}
+            $iban = trim(chunk_split(strtoupper(preg_replace('/\s+/', '', $cv('iban'))), 4, ' '));
+            $holder = $cv('account_holder') !== '' ? $cv('account_holder') : $legalName;
+            $rows = [
+                ['Kontoinhaber', self::e($holder), false],
+                ['IBAN', self::e($iban), true],
+                ['BIC', self::e($cv('bic')), false],
+                ['Bank', self::e($cv('bank_name')), false],
+                ['Betrag', $grossMoney, true],
+                ['Fällig am', self::e($due), true],
+                ['Verwendungszweck', self::e($d['number']), true],
+            ];
+            $rowsPay = '';
+            foreach ($rows as [$label, $val, $strong]) {
+                if ($val === '') continue;
+                $rowsPay .= '<tr><td class="pl">' . $label . '</td><td class="pv' . ($strong ? ' strong' : '') . '">' . $val . '</td></tr>';
+            }
+            $payBox = '<div class="paybox"><div class="pay-title">Zahlungsinformationen</div><table>' . $rowsPay . '</table></div>';
+        }
 
         // Recipient lines.
         $rcptHtml = '<div class="r-name">' . self::e($rcptName) . '</div>';
@@ -1165,6 +1195,12 @@ final class DocumentRoutes
   .tbox .c-num { text-align: right; }
   .tbox tr.grand td { background: {$accent}; color: #fff; font-weight: bold; font-size: 12px; padding: 7px 8px; }
   .clear { clear: both; }
+  .paybox { margin-top: 14px; background: #f2f2f4; padding: 10px 12px; page-break-inside: avoid; }
+  .pay-title { font-size: 8.5px; font-weight: bold; text-transform: uppercase; letter-spacing: .4px; color: #555; margin-bottom: 6px; }
+  .paybox table { border-collapse: collapse; }
+  .paybox td { padding: 2.5px 0; vertical-align: top; }
+  .paybox .pl { color: #888; width: 34mm; }
+  .paybox .pv.strong { font-weight: bold; }
   .footer-text { margin-top: 26px; font-size: 9.5px; }
   .closing { margin-top: 18px; }
   .signature { margin-top: 4px; font-weight: bold; }
@@ -1214,6 +1250,7 @@ final class DocumentRoutes
   </div>
 
   {$footerText}
+  {$payBox}
   {$closing}
   {$signature}
   {$signedBlock}
