@@ -1115,6 +1115,13 @@ final class DocumentRoutes
             $metaRows .= '<tr><td class="ml">UID</td><td class="mv">' . self::e($rcptVat) . '</td></tr>';
         }
 
+        // Offers: the AGB from the Firmenprofil on their own page(s) at the end.
+        $agbHtml = '';
+        if ($isOffer && trim($cv('agb_text')) !== '') {
+            $agbHtml = '<div class="agb"><h2 class="agb-title">Allgemeine Geschäftsbedingungen</h2>'
+                . '<div class="agb-text">' . nl2br(self::e(trim($cv('agb_text')))) . '</div></div>';
+        }
+
         $logoHtml = $logo !== null ? '<img class="logo" src="' . $logo . '" alt="">' : '';
 
         $netMoney = self::money($net);
@@ -1207,6 +1214,9 @@ final class DocumentRoutes
   .esign { margin-top: 30px; padding-top: 10px; border-top: 1px solid #ddd; }
   .esign-img { max-height: 90px; max-width: 320px; }
   .esign-meta { font-size: 10px; color: #555; margin-top: 4px; }
+  .agb { page-break-before: always; }
+  .agb-title { font-size: 14px; margin: 0 0 12px; }
+  .agb-text { font-size: 8.5px; line-height: 1.45; }
   .pagefoot { position: fixed; bottom: -22mm; left: 0; right: 0; height: 22mm;
     font-size: 7px; color: #999; border-top: 1px solid #e6e3f0; padding-top: 4px; }
   .pagefoot table { width: 100%; border-collapse: collapse; }
@@ -1254,6 +1264,7 @@ final class DocumentRoutes
   {$closing}
   {$signature}
   {$signedBlock}
+  {$agbHtml}
 
   <div class="pagefoot"><table><tr>
     <td><div class="line">{$contactCol}</div></td>
