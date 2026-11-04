@@ -442,7 +442,7 @@ final class DocumentRoutes
     {
         $company = CompanyContext::profile($cid);
         $items = self::loadItems((int)$doc['id']);
-        $html = self::renderHtml($uid, $doc, $items, $company, $sig);
+        $html = self::renderHtml($uid, $doc, $items, $company, $sig, $cid);
 
         $dompdf = new \Dompdf\Dompdf([
             'isRemoteEnabled'      => $sig !== null,
@@ -965,15 +965,19 @@ final class DocumentRoutes
         return $s === '' ? '0' : $s;
     }
 
-    /** Resolve the user's logo as a data URI for embedding, or null. */
-    private static function logoDataUri(int $uid): ?string
+    /** The logo for the document as a data URI, or null: the company's own
+     *  invoice logo (Firmenprofil) if set, otherwise the user's branding logo. */
+    private static function logoDataUri(int $uid, int $cid = 0): ?string
     {
         try {
-            $s = Database::pdo()->prepare('SELECT logo_path FROM users WHERE id = ?');
-            $s->execute([$uid]);
-            $row = $s->fetch();
-            if (!$row || empty($row['logo_path'])) return null;
-            $abs = Storage::abs($row['logo_path']);
+            $abs = $cid > 0 ? CompanyRoutes::logoFile($cid) : null;
+            if ($abs === null) {
+                $s = Database::pdo()->prepare('SELECT logo_path FROM users WHERE id = ?');
+                $s->execute([$uid]);
+                $row = $s->fetch();
+                if (!$row || empty($row['logo_path'])) return null;
+                $abs = Storage::abs($row['logo_path']);
+            }
             if (!is_file($abs)) return null;
             $ext = strtolower(pathinfo($abs, PATHINFO_EXTENSION));
             // Dompdf can't rasterise SVG cleanly here — skip it gracefully.
@@ -987,7 +991,7 @@ final class DocumentRoutes
         }
     }
 
-    private static function renderHtml(int $uid, array $d, array $items, array $co, ?array $sig = null): string
+    private static function renderHtml(int $uid, array $d, array $items, array $co, ?array $sig = null, int $cid = 0): string
     {
         $accent = self::ACCENT;
         $isOffer = $d['type'] === 'offer';
@@ -1002,7 +1006,7 @@ final class DocumentRoutes
         $senderParts = array_filter([$legalName, $cv('street'), trim($cv('zip') . ' ' . $cv('city')), $cv('country')]);
         $senderLine = implode(' · ', array_map([self::class, 'e'], $senderParts));
 
-        $logo = self::logoDataUri($uid);
+        $logo = self::logoDataUri($uid, $cid);
 
         // Recipient block. attn_name is the per-document "z. Hd." override
         // (pre-filled from the contact's contact_person on create, but freely

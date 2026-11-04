@@ -8,9 +8,11 @@ use Nyza\WorkspaceContext;
 use Nyza\Database;
 use Nyza\Json;
 use Nyza\Middleware\AuthMiddleware;
+use Nyza\Storage;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\App;
+use Slim\Psr7\Stream;
 use Slim\Routing\RouteCollectorProxy;
 
 /**
@@ -35,6 +37,9 @@ final class CompanyRoutes
             $g->post('',                        [self::class, 'create']);
             $g->get('/{id}/profile',            [self::class, 'getProfile']);
             $g->put('/{id}/profile',            [self::class, 'putProfile']);
+            $g->get('/{id}/logo',               [self::class, 'serveLogo']);
+            $g->post('/{id}/logo',              [self::class, 'uploadLogo']);
+            $g->delete('/{id}/logo',            [self::class, 'deleteLogo']);
             $g->patch('/{id}',                  [self::class, 'rename']);
             $g->delete('/{id}',                 [self::class, 'delete']);
             $g->get('/{id}/members',            [self::class, 'members']);
@@ -83,7 +88,8 @@ final class CompanyRoutes
         $id = (int)$args['id'];
         if (!self::visible($uid, $id)) return Json::err($res, 'Not found', 404);
         if (!CompanyContext::isMember($uid, $id)) return Json::err($res, 'Kein Zugriff', 403, 'forbidden');
-        return Json::ok($res, ['profile' => CompanyContext::profile($id)]);
+        $logo = self::logoFile($id);
+        return Json::ok($res, ['profile' => CompanyContext::profile($id), 'logo_v' => $logo ? (string)@filemtime($logo) : null]);
     }
 
     public static function putProfile(Request $req, Response $res, array $args): Response
@@ -101,6 +107,70 @@ final class CompanyRoutes
         }
         Database::pdo()->prepare('UPDATE companies SET profile = ? WHERE id = ?')->execute([$json, $id]);
         return Json::ok($res, ['profile' => $merged]);
+    }
+
+    // ───── Invoice logo ────────────────────────────────────────────────────────
+    // Optional per-company logo for offers/invoices. The user's branding logo is
+    // often white (for the dark app UI) and vanishes on the white PDF page, so
+    // documents prefer this one. Stored at branding/company-{id}.{ext}; found
+    // by glob, never by a path in the (client-writable) profile JSON.
+    private const LOGO_TYPES = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/webp' => 'webp', 'image/gif' => 'gif'];
+
+    /** Absolute path of the company's invoice logo, or null. */
+    public static function logoFile(int $id): ?string
+    {
+        foreach (glob(Storage::root() . '/branding/company-' . $id . '.*') ?: [] as $f) {
+            if (is_file($f)) return $f;
+        }
+        return null;
+    }
+
+    public static function uploadLogo(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        if (!self::visible($uid, $id)) return Json::err($res, 'Not found', 404);
+        if (!CompanyContext::isMember($uid, $id)) return Json::err($res, 'Kein Zugriff', 403, 'forbidden');
+        $file = $req->getUploadedFiles()['file'] ?? null;
+        if (is_array($file)) $file = $file[0];
+        if (!$file || $file->getError() !== UPLOAD_ERR_OK) return Json::err($res, 'Kein Bild hochgeladen', 422);
+        $ext = self::LOGO_TYPES[$file->getClientMediaType() ?: ''] ?? null;
+        // No SVG: Dompdf can't rasterise it reliably.
+        if ($ext === null) return Json::err($res, 'Nur PNG, JPG, WebP oder GIF', 415);
+        if ((int)$file->getSize() > 2 * 1024 * 1024) return Json::err($res, 'Logo zu groß (max 2 MB)', 413);
+
+        $dir = Storage::root() . '/branding';
+        if (!is_dir($dir)) @mkdir($dir, 0775, true);
+        foreach (glob($dir . '/company-' . $id . '.*') ?: [] as $old) @unlink($old);
+        $abs = $dir . '/company-' . $id . '.' . $ext;
+        $file->moveTo($abs);
+        return Json::ok($res, ['ok' => true, 'logo_v' => (string)@filemtime($abs)]);
+    }
+
+    public static function deleteLogo(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        if (!self::visible($uid, $id)) return Json::err($res, 'Not found', 404);
+        if (!CompanyContext::isMember($uid, $id)) return Json::err($res, 'Kein Zugriff', 403, 'forbidden');
+        foreach (glob(Storage::root() . '/branding/company-' . $id . '.*') ?: [] as $old) @unlink($old);
+        return Json::ok($res, ['ok' => true]);
+    }
+
+    public static function serveLogo(Request $req, Response $res, array $args): Response
+    {
+        $uid = (int)$req->getAttribute('uid');
+        $id = (int)$args['id'];
+        if (!self::visible($uid, $id) || !CompanyContext::isMember($uid, $id)) return Json::err($res, 'Not found', 404);
+        $abs = self::logoFile($id);
+        if ($abs === null) return Json::err($res, 'No logo', 404);
+        $ext = strtolower(pathinfo($abs, PATHINFO_EXTENSION));
+        $mime = array_flip(self::LOGO_TYPES)[$ext] ?? 'application/octet-stream';
+        return $res
+            ->withHeader('Content-Type', $mime)
+            ->withHeader('Cache-Control', 'private, no-cache')
+            ->withHeader('X-Content-Type-Options', 'nosniff')
+            ->withBody(new Stream(fopen($abs, 'rb')));
     }
 
     // ───── Create / rename / delete (admin) ────────────────────────────────────
@@ -152,6 +222,7 @@ final class CompanyRoutes
             }
         }
         $pdo->prepare('DELETE FROM companies WHERE id = ?')->execute([$id]);
+        foreach (glob(Storage::root() . '/branding/company-' . $id . '.*') ?: [] as $f) @unlink($f);
         return Json::ok($res, ['ok' => true]);
     }
 

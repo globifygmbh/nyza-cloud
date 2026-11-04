@@ -7765,6 +7765,9 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   const isAdmin = user?.role === 'admin';
   const [companies, setCompanies] = useState([]);
   const [profileCompany, setProfileCompany] = useState(() => getCompany());
+  const [logoV, setLogoV] = useState(null); // Rechnungs-Logo version, null = none
+  const [logoBusy, setLogoBusy] = useState(false);
+  const logoRef = useRef(null);
 
   useEffect(() => {
     API.companies().then((d) => {
@@ -7775,9 +7778,10 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   }, []);
   useEffect(() => {
     if (!profileCompany) { setC({}); return; }
-    setC(null);
+    setC(null); setLogoV(null);
     API.companyProfile(profileCompany).then((d) => {
       const p = d.profile || {};
+      setLogoV(d.logo_v || null);
       // Seed sensible default texts for any of these fields that were never filled in,
       // so the field shows a ready-to-use draft instead of an empty box. Not saved
       // until the user hits "Speichern".
@@ -7786,6 +7790,18 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
   }, [profileCompany]);
   const set = (k, v) => setC((s) => ({ ...s, [k]: v }));
   const accountingMode = (c?.legal_form === 'GmbH' || c?.legal_form === 'AG') ? 'double_entry' : 'single_entry';
+
+  const pickLogo = async (file) => {
+    if (!file || !profileCompany) return;
+    setLogoBusy(true);
+    try { const r = await API.uploadCompanyLogo(profileCompany, file); setLogoV(r.logo_v || String(Date.now())); toast('Rechnungs-Logo gespeichert', 'success'); }
+    catch (e) { toast(e.message, 'error'); } finally { setLogoBusy(false); }
+  };
+  const removeLogo = async () => {
+    setLogoBusy(true);
+    try { await API.deleteCompanyLogo(profileCompany); setLogoV(null); }
+    catch (e) { toast(e.message, 'error'); } finally { setLogoBusy(false); }
+  };
 
   const save = async () => {
     if (!profileCompany) { toast('Keine Firma gewählt', 'error'); return; }
@@ -7897,6 +7913,28 @@ function SettingsApp({ user, onBack, onProfile, onSecurity }) {
                 {row(field('Firmenname (rechtlich)', 'legal_name', { ph: 'Globify GmbH' }), field('Markenname', 'brand_name', { ph: 'Nyza' }))}
                 {row(field('Inhaber / Geschäftsführer', 'owner', { ph: 'Vor- und Nachname' }), field('Firmenbuchgericht', 'commercial_court', { ph: 'Handelsgericht Wien' }))}
                 {row(field('UID / USt-IdNr.', 'uid', { ph: 'ATU…' }), field('Steuernummer', 'tax_number', {}), field('Firmenbuchnr.', 'firmenbuch_nr', { ph: 'FN …' }))}
+              </>)}
+
+              {card('Logo auf Rechnungen & Angeboten', <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                  {/* White preview box = the PDF page, so a white logo shows up as the problem it is. */}
+                  <div style={{ width: 200, height: 80, borderRadius: 'var(--r-sm)', background: '#fff', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 10, boxSizing: 'border-box', flexShrink: 0 }}>
+                    {logoV
+                      ? <img src={API.companyLogoUrl(profileCompany, logoV)} alt="Rechnungs-Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}/>
+                      : <span style={{ fontSize: 11.5, color: '#888', textAlign: 'center' }}>Branding-Logo<br/>(aus Profil)</span>}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ fontSize: 12, color: 'var(--fg-3)', marginBottom: 10, lineHeight: 1.45 }}>
+                      Eigenes Logo nur für die PDFs, z. B. eine dunkle Version, wenn dein Branding-Logo weiß ist. Ohne eigenes Logo wird das Logo aus „Profil &amp; Branding“ verwendet. PNG, JPG oder WebP, max. 2 MB.
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <Btn variant="glass" size="sm" disabled={logoBusy} icon={logoBusy ? Ic.loader(13) : Ic.upload(13)} onClick={() => logoRef.current?.click()}>{logoV ? 'Ersetzen' : 'Logo hochladen'}</Btn>
+                      {logoV && <Btn variant="glass" size="sm" disabled={logoBusy} icon={Ic.trash(13)} onClick={removeLogo}>Entfernen</Btn>}
+                    </div>
+                    <input ref={logoRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" style={{ display: 'none' }}
+                      onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; pickLogo(f); }}/>
+                  </div>
+                </div>
               </>)}
 
               {card('Adresse & Kontakt', <>
